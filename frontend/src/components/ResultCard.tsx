@@ -1,16 +1,13 @@
-export interface Bike {
-  brand: string
-  model: string
-  accessories: string[]
-  match_score: number
-  explanation: string
-}
+import type { Bike } from '../types'
+
+export type { Bike }
 
 interface ResultCardProps {
   bike: Bike
   rank: number
   isTop: boolean
   animationDelay: number
+  onSelect: (bike: Bike) => void
 }
 
 const scoreLabel = (score: number): string => {
@@ -30,27 +27,30 @@ const formatScore = (score: number): string => {
   return score.toFixed(1)
 }
 
-export default function ResultCard({ bike, rank, isTop, animationDelay }: ResultCardProps) {
+export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect }: ResultCardProps) {
   const { brand, model, accessories, match_score, explanation } = bike
   const scoreDisplay = formatScore(match_score)
   const barWidth     = `${match_score * 10}%`
   const label        = scoreLabel(match_score)
 
   return (
-    <article
+    <button
+      type="button"
+      onClick={() => onSelect(bike)}
       className={[
-        'relative bg-card rounded-2xl border overflow-hidden',
+        'relative bg-card rounded-2xl border overflow-hidden w-full text-left group',
         'p-6 md:p-8',
-        'transition-shadow duration-300',
+        'transition-all duration-300',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/50 focus-visible:ring-offset-2 focus-visible:ring-offset-sand',
         isTop
-          ? 'border-border shadow-md hover:shadow-lg'
-          : 'border-border hover:shadow-sm',
+          ? 'border-border shadow-md hover:shadow-xl'
+          : 'border-border hover:shadow-md',
       ].join(' ')}
       style={{
         opacity: 0,
         animation: `slideUp 420ms cubic-bezier(0.22,1,0.36,1) ${animationDelay}ms forwards`,
       }}
-      aria-label={`${brand} ${model}: match score ${match_score} out of 10 — ${label}`}
+      aria-label={`View specifications for ${brand} ${model}, match score ${match_score} out of 10`}
     >
       {/* Left accent bar (top result only) */}
       {isTop && (
@@ -97,7 +97,7 @@ export default function ResultCard({ bike, rank, isTop, animationDelay }: Result
             <div className="min-w-0">
               <h2
                 className={[
-                  'font-display font-bold leading-tight',
+                  'font-display font-bold leading-tight group-hover:text-terra transition-colors duration-200',
                   isTop
                     ? 'text-charcoal text-[24px] md:text-[28px]'
                     : 'text-charcoal text-[19px] md:text-[22px]',
@@ -128,7 +128,7 @@ export default function ResultCard({ bike, rank, isTop, animationDelay }: Result
           {accessories.length > 0 && (
             <ul
               className="flex flex-wrap gap-1.5 mt-3 mb-3"
-              aria-label="Included accessories"
+              aria-label="Key features"
             >
               {accessories.map((acc) => (
                 <li key={acc}>
@@ -182,6 +182,16 @@ export default function ResultCard({ bike, rank, isTop, animationDelay }: Result
           />
         </div>
       </div>
-    </article>
+
+      {/* View specs cue */}
+      <div
+        className={`mt-3 flex justify-end ${isTop ? 'ml-2' : ''}`}
+        aria-hidden="true"
+      >
+        <span className="font-mono text-[10px] uppercase tracking-wider text-muted group-hover:text-terra transition-colors duration-200">
+          View specs →
+        </span>
+      </div>
+    </button>
   )
 }

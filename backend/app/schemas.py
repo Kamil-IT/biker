@@ -12,6 +12,45 @@ class SearchRequest(BaseModel):
         return v.strip()
 
 
+class BikeDetailsRequest(BaseModel):
+    company: str
+    model: str
+
+    @field_validator("company", "model")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()
+
+
+class SpecItem(BaseModel):
+    key: str
+    value: str
+
+
+class ComponentElement(BaseModel):
+    name: str
+    description: str = ""
+    specs: list[SpecItem] = []
+
+
+class BikeSubcategory(BaseModel):
+    subcategory: str
+    elements: list[ComponentElement] = []
+
+
+class BikeCategory(BaseModel):
+    category: str
+    subcategories: list[BikeSubcategory] = []
+
+
+class BikeDetailsResponse(BaseModel):
+    company: str
+    model: str
+    components: list[BikeCategory]
+
+
 class CategoryResult(BaseModel):
     category: str
     score: int
