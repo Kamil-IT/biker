@@ -1,0 +1,6 @@
+{
+  "enabledPlugins": {
+    "bencium-innovative-ux-designer@bencium-marketplace": true,
+    "example-skills@anthropic-agent-skills": true
+  }
+}

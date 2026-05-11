@@ -78,3 +78,5 @@ class BikeResult(BaseModel):
 class BikeSearchResponse(BaseModel):
     search: str
     bikes: list[BikeResult]
+
+

@@ -52,5 +52,5 @@ Content-Type: application/json
 ```
 
 **Flow:**
-1. `POST https://api.anthropic.com/v1/messages` — Claude Haiku with `web_search_20250305` tool fetches raw spec text
-2. `POST https://api.anthropic.com/v1/messages` — Claude Haiku formats raw text into structured JSON
+1. `POST https://api.anthropic.com/v1/messages` × 8 — Claude Haiku with `web_search_20250305` tool, one focused search per component category (sequential): Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories
+2. Results aggregated in memory; token usage logged per iteration and in total
