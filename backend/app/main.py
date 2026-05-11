@@ -5,9 +5,10 @@ from dotenv import load_dotenv
 load_dotenv()  # must run before anthropic_scorer imports AsyncAnthropic
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
-from .schemas import SearchRequest, SearchResponse, CategoryResult  # noqa: E402
+from .schemas import SearchRequest, BikeSearchResponse, CategoryResult  # noqa: E402
 from .categories import BIKE_CATEGORIES, CATEGORY_PROMPTS  # noqa: E402
 from .anthropic_scorer import score_category  # noqa: E402
+from .bike_finder import filter_top_categories, allocate_bikes, find_all_bikes  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,10 +20,10 @@ logger = logging.getLogger("biker.search")
 app = FastAPI(title="Biker API", version="1.0.0")
 
 
-@app.post("/v1/bike/search", response_model=SearchResponse)
-async def bike_search(req: SearchRequest) -> SearchResponse:
+@app.post("/v1/bike/search", response_model=BikeSearchResponse)
+async def bike_search(req: SearchRequest) -> BikeSearchResponse:
     logger.info("search request received | query=%r", req.search)
-    results: list[CategoryResult] = []
+    category_results: list[CategoryResult] = []
     t_total = time.perf_counter()
 
     for name, _ in BIKE_CATEGORIES:
@@ -38,7 +39,7 @@ async def bike_search(req: SearchRequest) -> SearchResponse:
                 elapsed,
                 result.explanation,
             )
-            results.append(result)
+            category_results.append(result)
         except Exception as exc:
             logger.error("scoring failed | category=%r error=%s", name, exc)
             raise HTTPException(
@@ -46,13 +47,20 @@ async def bike_search(req: SearchRequest) -> SearchResponse:
                 detail=f"Upstream error for category {name!r}: {exc}",
             ) from exc
 
-    results.sort(key=lambda r: r.score, reverse=True)
+    category_results.sort(key=lambda r: r.score, reverse=True)
+
+    top = filter_top_categories(category_results)
+    allocation = allocate_bikes(top)
+    logger.info(
+        "allocation | top_categories=%s",
+        [(a["category"], a["count"]) for a in allocation],
+    )
+
+    bikes = await find_all_bikes(allocation, req.search)
     total_elapsed = time.perf_counter() - t_total
     logger.info(
-        "search complete | categories=%d top=%r score=%d total_elapsed=%.2fs",
-        len(results),
-        results[0].category if results else "n/a",
-        results[0].score if results else 0,
+        "search complete | bikes=%d total_elapsed=%.2fs",
+        len(bikes),
         total_elapsed,
     )
-    return SearchResponse(search=req.search, results=results)
+    return BikeSearchResponse(search=req.search, bikes=bikes)
