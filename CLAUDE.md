@@ -2,11 +2,23 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Documentation Update Policy
+
+After **every code change**, review and update the relevant documentation before considering the task done:
+
+| What changed | Files to review & update |
+|---|---|
+| Any change | `CLAUDE.md` · `README.md` |
+| Backend (`/backend/**`) | `backend/README.md` · `README.md` · `CLAUDE.md` |
+| Frontend (`/frontend/**`) | `frontend/README.md` · `README.md` · `CLAUDE.md` |
+
+Update only the sections that are actually affected — do not rewrite docs that remain accurate.
+
 ## Project Overview
 
 Monorepo with separate backend and frontend applications:
 - `/backend` — Python REST API (FastAPI)
-- `/frontend` — Frontend application (TBD)
+- `/frontend` — React + TypeScript + Tailwind v4 SPA (Vite)
 
 ## Backend Setup
 
@@ -28,9 +40,18 @@ python scripts/test_search.py
 
 ## Frontend Setup
 
-- **Install dependencies**: `cd frontend && npm install`
-- **Run development server**: `cd frontend && npm run dev`
-- **Run tests**: `cd frontend && npm test`
+```bash
+cd frontend
+npm install
+npm run dev       # dev server on http://localhost:5173
+```
+
+```bash
+npm run build     # production build → dist/
+npm run preview   # serve production build locally
+```
+
+- **Dev server**: http://localhost:5173 — requires the backend to be running on port 8000 (Vite proxies `/v1/*` → `http://localhost:8000`)
 - **Node version**: v24 / npm 11
 
 ## Architecture
@@ -40,23 +61,44 @@ python scripts/test_search.py
 | Layer | File | Responsibility |
 |-------|------|----------------|
 | Entry point | `app/main.py` | FastAPI app, `POST /v1/bike/search` route, request logging |
-| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse` |
+| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse` |
 | Categories | `app/categories.py` | 11 bike category registry; loads prompt files at startup |
-| Prompts | `app/prompts/*.md` | Per-category system prompts (one `.md` file per category) |
+| Prompts | `app/prompts/*.md` | Per-category scoring prompts + `bike_search_{slug}.md` per-category bike-finding prompts |
 | Scorer | `app/anthropic_scorer.py` | Calls Claude Haiku per category, strips code fences, parses JSON |
+| Bike finder | `app/bike_finder.py` | Filters top categories, allocates 5 bikes by score weight, finds real bikes via Claude in parallel |
 | Test script | `scripts/test_search.py` | POSTs a sample search, prints response, asserts HTTP 200 |
 
 **Endpoint** `POST /v1/bike/search`
 - Request: `{"search": "free text description"}`
-- Calls `claude-haiku-4-5-20251001` once per category (11 sequential calls)
-- Returns all categories ranked by score (highest first)
-- On parse error: `score=0`, raw response in `explanation` — never returns 502 for bad JSON
+- Phase 1: Calls `claude-haiku-4-5-20251001` once per category (11 sequential calls) to score relevance
+- Phase 2: Filters to categories with score ≥ 5 (minimum 2); allocates exactly 5 bikes weighted by score
+- Phase 3: Calls Claude in parallel (one call per qualifying category) to find real bikes
+- Returns 5 bike results with brand, model, accessories, match score, and explanation
+- On parse error: returns empty list for that category — never returns 502 for bad JSON
 
 **Bike categories** (defined in `app/categories.py`):
 Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser, Touring, Folding, Cyclocross, Kids
 
 **To add a category**: add an entry to `BIKE_CATEGORIES` in `app/categories.py` and create the matching `app/prompts/<slug>.md`.
 
-### Frontend
+### Frontend (`/frontend`)
 
-TBD
+| Layer | File | Responsibility |
+|-------|------|----------------|
+| Entry point | `src/main.tsx` | React root, mounts `<App>` |
+| App shell | `src/App.tsx` | State machine (`idle → loading → results/error`), layout, API call |
+| Search form | `src/components/SearchInput.tsx` | Controlled input + submit button, loading state |
+| Result card | `src/components/ResultCard.tsx` | Per-bike card: match score numeral, brand + model, accessories chips, explanation, animated score bar |
+| Loading card | `src/components/LoadingCard.tsx` | Shimmer skeleton matching result card dimensions |
+| Styles | `src/index.css` | Tailwind v4 `@theme` tokens, Google Fonts import, keyframe animations |
+| Vite config | `vite.config.ts` | Tailwind v4 plugin, `/v1` proxy to backend |
+
+**Design system — Direction 5 "Café Rider":**
+- Background `#EDE7DC` · Cards `#F5F1EA` · Accent `#C45C38` (terracotta)
+- Display font: Barlow Condensed Bold · Body: Lora · Data labels: JetBrains Mono
+- All theme tokens live in `src/index.css` under `@theme { --color-*, --font-* }`
+
+**API integration:**
+- `POST /v1/bike/search` with `{ "search": "..." }` — proxied to backend via Vite
+- Response: `{ search: string, bikes: [{ brand, model, accessories, match_score, explanation }] }` (5 bikes total)
+- No CORS configuration needed in development (Vite proxy handles it)

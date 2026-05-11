@@ -26,3 +26,16 @@ class CategoryResult(BaseModel):
 class SearchResponse(BaseModel):
     search: str
     results: list[CategoryResult]
+
+
+class BikeResult(BaseModel):
+    brand: str
+    model: str
+    accessories: list[str]
+    match_score: float
+    explanation: str
+
+
+class BikeSearchResponse(BaseModel):
+    search: str
+    bikes: list[BikeResult]
