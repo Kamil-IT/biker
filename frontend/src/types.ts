@@ -32,3 +32,9 @@ export interface BikeDetailsResponse {
   model: string
   components: BikeCategory[]
 }
+
+export interface BikeReviewResponse {
+  score: number
+  explanation: string
+  ref: string[]
+}

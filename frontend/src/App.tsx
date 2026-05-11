@@ -3,11 +3,12 @@ import SearchInput from './components/SearchInput'
 import ResultCard from './components/ResultCard'
 import LoadingCard from './components/LoadingCard'
 import BikeDetailsView from './components/BikeDetailsView'
-import type { Bike, BikeCategory, BikeDetailsResponse } from './types'
+import type { Bike, BikeCategory, BikeDetailsResponse, BikeReviewResponse } from './types'
 
-type AppState    = 'idle' | 'loading' | 'results' | 'error'
-type AppView     = 'search' | 'details'
+type AppState     = 'idle' | 'loading' | 'results' | 'error'
+type AppView      = 'search' | 'details'
 type DetailsState = 'loading' | 'loaded' | 'error'
+type ReviewState  = 'loading' | 'loaded' | 'error'
 
 interface SearchResponse {
   search: string
@@ -29,6 +30,10 @@ export default function App() {
   const [detailsState, setDetailsState]     = useState<DetailsState>('loading')
   const [bikeCategories, setBikeCategories] = useState<BikeCategory[] | null>(null)
   const [detailsError, setDetailsError]     = useState<string | null>(null)
+
+  // Review state
+  const [reviewState, setReviewState]       = useState<ReviewState>('loading')
+  const [review, setReview]                 = useState<BikeReviewResponse | null>(null)
 
   /* ── Handlers ─────────────────────────────────────── */
 
@@ -88,11 +93,30 @@ export default function App() {
     }
   }
 
+  const fetchReview = async (bike: Bike) => {
+    setReviewState('loading')
+    setReview(null)
+    try {
+      const res = await fetch('/v1/bike/review', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ company: bike.brand, model: bike.model }),
+      })
+      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      const data: BikeReviewResponse = await res.json()
+      setReview(data)
+      setReviewState('loaded')
+    } catch {
+      setReviewState('error')
+    }
+  }
+
   const handleBikeSelect = (bike: Bike) => {
     setSelectedBike(bike)
     setView('details')
     window.scrollTo({ top: 0, behavior: 'smooth' })
     fetchDetails(bike)
+    fetchReview(bike)
   }
 
   const handleBackToResults = () => {
@@ -112,6 +136,8 @@ export default function App() {
     setBikeCategories(null)
     setDetailsState('loading')
     setDetailsError(null)
+    setReviewState('loading')
+    setReview(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -272,6 +298,8 @@ export default function App() {
             categories={bikeCategories}
             state={detailsState}
             error={detailsError}
+            review={review}
+            reviewState={reviewState}
             onBack={handleBackToResults}
             onRetry={() => fetchDetails(selectedBike)}
           />
