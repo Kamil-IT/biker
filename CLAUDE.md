@@ -71,10 +71,10 @@ npm run preview   # serve production build locally
 | Entry point | `app/main.py` | FastAPI app, routes, request logging |
 | Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse`, `BikeDetailsRequest`, `BikeDetailsResponse`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem` |
 | Categories | `app/categories.py` | 11 bike category registry; loads prompt files at startup |
-| Prompts | `app/prompts/*.md` | Per-category scoring prompts + `bike_search_{slug}.md` per-category bike-finding prompts + `bike_details.md` component extraction prompt |
+| Prompts | `app/prompts/*.md` | Per-category scoring prompts + `bike_search_{slug}.md` per-category bike-finding prompts + `bike_details_{slug}.md` per-category component search prompts (8 categories) + `bike_details.md` JSON format reference |
 | Scorer | `app/anthropic_scorer.py` | Calls Claude Haiku per category, strips code fences, parses JSON |
 | Bike finder | `app/bike_finder.py` | Filters top categories, allocates 5 bikes by score weight, finds real bikes via Claude in parallel |
-| Details finder | `app/bike_details_finder.py` | Calls Claude Sonnet with web_search tool to fetch full component specs; validates and maps JSON to schema |
+| Details finder | `app/bike_details_finder.py` | Loops through 8 component categories (Frame → Accessories), runs one focused `web_search` call per category, aggregates results; logs per-iteration and total token usage |
 | Test scripts | `scripts/test_search.py` · `scripts/test_details.py` | Smoke tests for each endpoint |
 
 **Endpoint** `POST /v1/bike/search`
@@ -87,9 +87,9 @@ npm run preview   # serve production build locally
 
 **Endpoint** `POST /v1/bike/details`
 - Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
-- Calls `claude-haiku-4-5-20251001` with the built-in `web_search_20250305` tool to look up the official spec sheet
+- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **8 times** sequentially — one focused search per component category (Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories), each using a dedicated `app/prompts/bike_details_{slug}.md` system prompt
 - Returns a structured component tree: `{ company, model, components: [{ category, subcategories: [{ subcategory, elements: [{ name, description, specs: [{ key, value }] }] }] }] }`
-- On JSON parse/schema error: logs the error, maps missing fields to empty strings, never returns 502
+- On JSON parse error for a category: logs the error and skips that category — never returns 502
 
 **Bike categories** (defined in `app/categories.py`):
 Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser, Touring, Folding, Cyclocross, Kids

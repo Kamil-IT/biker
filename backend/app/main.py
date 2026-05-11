@@ -5,7 +5,10 @@ from dotenv import load_dotenv
 load_dotenv()  # must run before anthropic_scorer imports AsyncAnthropic
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
-from .schemas import SearchRequest, BikeSearchResponse, CategoryResult, BikeDetailsRequest, BikeDetailsResponse  # noqa: E402
+from .schemas import (  # noqa: E402
+    SearchRequest, BikeSearchResponse, CategoryResult,
+    BikeDetailsRequest, BikeDetailsResponse,
+)
 from .categories import BIKE_CATEGORIES, CATEGORY_PROMPTS  # noqa: E402
 from .anthropic_scorer import score_category  # noqa: E402
 from .bike_finder import filter_top_categories, allocate_bikes, find_all_bikes  # noqa: E402
@@ -79,3 +82,5 @@ async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
         elapsed,
     )
     return BikeDetailsResponse(company=req.company, model=req.model, components=components)
+
+

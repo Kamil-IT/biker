@@ -46,6 +46,14 @@ Open **http://localhost:5173** in your browser.
 | `cd frontend && npm run preview` | Serve the production bundle locally |
 | http://localhost:8000/docs | Interactive OpenAPI UI for the backend |
 
+## Marketplace integrations
+
+| Marketplace | Status | Notes |
+|---|---|---|
+| Allegro | **Blocked** | Offer listing requires a verified app — not implementing for now. Dev portal: https://apps.developer.allegro.pl/ · [Restriction details](https://developer.allegro.pl/news/get-offers-listing-tylko-dla-zweryfikowanych-aplikacji-GRax4oVgrs1) |
+| OLX | Waiting | Pending account approval |
+| Amazon | Todo | — |
+
 ## Stack
 
 | Layer | Technology |
