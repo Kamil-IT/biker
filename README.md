@@ -42,6 +42,7 @@ Open **http://localhost:5173** in your browser.
 |---|---|
 | `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` |
 | `cd backend && python scripts/test_details.py` | Smoke-test `POST /v1/bike/details` |
+| `cd backend && python scripts/test_review.py` | Smoke-test `POST /v1/bike/review` |
 | `cd frontend && npm run build` | TypeScript check + production bundle → `dist/` |
 | `cd frontend && npm run preview` | Serve the production bundle locally |
 | http://localhost:8000/docs | Interactive OpenAPI UI for the backend |
@@ -75,13 +76,16 @@ biker/
 │   │   ├── anthropic_scorer.py   # Claude Haiku category scoring
 │   │   ├── bike_finder.py        # Filter, allocate, find real bikes
 │   │   ├── bike_details_finder.py# Fetch full component specs via web search
+│   │   ├── bike_review_finder.py # Aggregate web reviews into score + explanation
 │   │   └── prompts/
 │   │       ├── *.md              # Per-category scoring prompts
 │   │       ├── bike_search_*.md  # Per-category bike-finding prompts
-│   │       └── bike_details.md   # Component extraction prompt
+│   │       ├── bike_details.md   # Component extraction prompt
+│   │       └── bike_review.md    # Review aggregation prompt
 │   └── scripts/
 │       ├── test_search.py        # Smoke test for /v1/bike/search
-│       └── test_details.py       # Smoke test for /v1/bike/details
+│       ├── test_details.py       # Smoke test for /v1/bike/details
+│       └── test_review.py        # Smoke test for /v1/bike/review
 └── frontend/
     └── src/
         ├── App.tsx               # App shell, state machine, API call

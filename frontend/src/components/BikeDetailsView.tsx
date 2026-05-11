@@ -1,11 +1,15 @@
 import { ArrowLeft } from '@phosphor-icons/react'
-import type { Bike, BikeCategory, BikeSubcategory, ComponentElement } from '../types'
+import type { Bike, BikeCategory, BikeSubcategory, ComponentElement, BikeReviewResponse } from '../types'
+
+type ReviewState = 'loading' | 'loaded' | 'error'
 
 interface BikeDetailsViewProps {
   bike: Bike
   categories: BikeCategory[] | null
   state: 'loading' | 'loaded' | 'error'
   error: string | null
+  review: BikeReviewResponse | null
+  reviewState: ReviewState
   onBack: () => void
   onRetry: () => void
 }
@@ -15,6 +19,8 @@ export default function BikeDetailsView({
   categories,
   state,
   error,
+  review,
+  reviewState,
   onBack,
   onRetry,
 }: BikeDetailsViewProps) {
@@ -77,6 +83,9 @@ export default function BikeDetailsView({
             ))}
           </ul>
         )}
+
+        {/* Review */}
+        <ReviewSection review={review} state={reviewState} />
       </div>
 
       {/* Divider */}
@@ -118,6 +127,66 @@ export default function BikeDetailsView({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/* ── Expert review ──────────────────────────────────── */
+
+function ReviewSection({ review, state }: { review: BikeReviewResponse | null; state: ReviewState }) {
+  if (state === 'loading') {
+    return (
+      <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="shimmer h-3 w-24 rounded" />
+          <div className="shimmer h-5 w-10 rounded" />
+        </div>
+        <div className="space-y-2">
+          <div className="shimmer h-3 w-full rounded" />
+          <div className="shimmer h-3 w-5/6 rounded" />
+          <div className="shimmer h-3 w-4/6 rounded" />
+        </div>
+      </div>
+    )
+  }
+
+  if (state === 'error' || !review) return null
+
+  const clean = review.explanation.replace(/<\/?cite[^>]*>/g, '')
+  const sourceUrl = review.ref[0] ?? null
+  let sourceHost: string | null = null
+  try { sourceHost = sourceUrl ? new URL(sourceUrl).hostname.replace(/^www\./, '') : null } catch { sourceHost = sourceUrl }
+
+  return (
+    <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
+      <div className="flex items-center justify-between mb-3">
+        <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
+          Expert review
+        </span>
+        <div className="flex items-baseline gap-1">
+          <span
+            className="font-display font-bold text-charcoal tabular-nums leading-none text-[22px]"
+            aria-label={`Review score ${review.score} out of 10`}
+          >
+            {review.score}
+          </span>
+          <span className="font-mono text-[11px] text-muted">/10</span>
+        </div>
+      </div>
+      <p className="font-body italic text-ink text-[13px] leading-relaxed">
+        {clean}
+      </p>
+      {sourceHost && sourceUrl && (
+        <a
+          href={sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 inline-flex items-center gap-1 font-mono text-[11px] text-terra hover:text-terra-dark transition-colors duration-150 focus-visible:outline-none focus-visible:underline"
+        >
+          {sourceHost}
+          <span aria-hidden="true">→</span>
+        </a>
+      )}
     </div>
   )
 }

@@ -8,11 +8,13 @@ from fastapi import FastAPI, HTTPException  # noqa: E402
 from .schemas import (  # noqa: E402
     SearchRequest, BikeSearchResponse, CategoryResult,
     BikeDetailsRequest, BikeDetailsResponse,
+    BikeReviewRequest, BikeReviewResponse,
 )
 from .categories import BIKE_CATEGORIES, CATEGORY_PROMPTS  # noqa: E402
 from .anthropic_scorer import score_category  # noqa: E402
 from .bike_finder import filter_top_categories, allocate_bikes, find_all_bikes  # noqa: E402
 from .bike_details_finder import find_bike_details  # noqa: E402
+from .bike_review_finder import find_bike_review  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -82,5 +84,15 @@ async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
         elapsed,
     )
     return BikeDetailsResponse(company=req.company, model=req.model, components=components)
+
+
+@app.post("/v1/bike/review", response_model=BikeReviewResponse)
+async def bike_review(req: BikeReviewRequest) -> BikeReviewResponse:
+    logger.info("review request | company=%r model=%r", req.company, req.model)
+    t_start = time.perf_counter()
+    result = await find_bike_review(req.company, req.model)
+    elapsed = time.perf_counter() - t_start
+    logger.info("review complete | score=%d elapsed=%.2fs", result.score, elapsed)
+    return result
 
 

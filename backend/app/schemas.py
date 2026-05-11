@@ -80,3 +80,31 @@ class BikeSearchResponse(BaseModel):
     bikes: list[BikeResult]
 
 
+class BikeReviewRequest(BaseModel):
+    company: str
+    model: str
+
+    @field_validator("company", "model")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()
+
+
+class BikeReviewResponse(BaseModel):
+    score: int
+    explanation: str
+    ref: list[str]
+
+    @field_validator("score")
+    @classmethod
+    def clamp_score(cls, v: int) -> int:
+        return max(0, min(10, v))
+
+    @field_validator("ref")
+    @classmethod
+    def single_ref(cls, v: list[str]) -> list[str]:
+        return v[:1]
+
+

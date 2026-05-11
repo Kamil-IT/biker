@@ -14,6 +14,7 @@ uvicorn app.main:app --reload --port 8000
 # In a second terminal:
 python scripts/test_search.py   # smoke-test POST /v1/bike/search
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
+python scripts/test_review.py   # smoke-test POST /v1/bike/review
 ```
 
 ## Endpoints
@@ -54,3 +55,31 @@ Content-Type: application/json
 **Flow:**
 1. `POST https://api.anthropic.com/v1/messages` × 8 — Claude Haiku with `web_search_20250305` tool, one focused search per component category (sequential): Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories
 2. Results aggregated in memory; token usage logged per iteration and in total
+
+---
+
+### `POST /v1/bike/review`
+
+Return an aggregated review score, explanation, and source links for a specific bike model.
+
+```http
+POST http://localhost:8000/v1/bike/review
+Content-Type: application/json
+
+{
+  "company": "Canyon",
+  "model": "Grizl CF 7 ESC"
+}
+```
+
+**Response:**
+```json
+{
+  "score": 8,
+  "explanation": "The Canyon Grizl CF 7 ESC is widely praised for its...",
+  "ref": ["https://...", "https://..."]
+}
+```
+
+**Flow:**
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches for 3–5 reviews, then synthesises a score 0–10, a 5–10 sentence explanation, and a list of source URLs
