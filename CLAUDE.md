@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Development Rules
+
+**New backend endpoint** → add a smoke test for it in `backend/scripts/test_search.py`. This is the single file for all smoke tests. Each test must call the endpoint against a running local server and assert HTTP 200.
+
 ## Documentation Update Policy
 
 After **every code change**, review and update the relevant documentation before considering the task done:
@@ -13,6 +17,10 @@ After **every code change**, review and update the relevant documentation before
 | Frontend (`/frontend/**`) | `frontend/README.md` · `README.md` · `CLAUDE.md` |
 
 Update only the sections that are actually affected — do not rewrite docs that remain accurate.
+
+**`backend/README.md` must always contain an `## Endpoints` section** with every endpoint listed, including:
+- A raw HTTP request example (`POST http://localhost:8000/...` with `Content-Type` and JSON body)
+- A **Flow** list of every outbound HTTP call made (exact URL, service name, and how many times / in what order)
 
 ## Project Overview
 
@@ -60,13 +68,14 @@ npm run preview   # serve production build locally
 
 | Layer | File | Responsibility |
 |-------|------|----------------|
-| Entry point | `app/main.py` | FastAPI app, `POST /v1/bike/search` route, request logging |
-| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse` |
+| Entry point | `app/main.py` | FastAPI app, routes, request logging |
+| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse`, `BikeDetailsRequest`, `BikeDetailsResponse`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem` |
 | Categories | `app/categories.py` | 11 bike category registry; loads prompt files at startup |
-| Prompts | `app/prompts/*.md` | Per-category scoring prompts + `bike_search_{slug}.md` per-category bike-finding prompts |
+| Prompts | `app/prompts/*.md` | Per-category scoring prompts + `bike_search_{slug}.md` per-category bike-finding prompts + `bike_details.md` component extraction prompt |
 | Scorer | `app/anthropic_scorer.py` | Calls Claude Haiku per category, strips code fences, parses JSON |
 | Bike finder | `app/bike_finder.py` | Filters top categories, allocates 5 bikes by score weight, finds real bikes via Claude in parallel |
-| Test script | `scripts/test_search.py` | POSTs a sample search, prints response, asserts HTTP 200 |
+| Details finder | `app/bike_details_finder.py` | Calls Claude Sonnet with web_search tool to fetch full component specs; validates and maps JSON to schema |
+| Test scripts | `scripts/test_search.py` · `scripts/test_details.py` | Smoke tests for each endpoint |
 
 **Endpoint** `POST /v1/bike/search`
 - Request: `{"search": "free text description"}`
@@ -75,6 +84,12 @@ npm run preview   # serve production build locally
 - Phase 3: Calls Claude in parallel (one call per qualifying category) to find real bikes
 - Returns 5 bike results with brand, model, accessories, match score, and explanation
 - On parse error: returns empty list for that category — never returns 502 for bad JSON
+
+**Endpoint** `POST /v1/bike/details`
+- Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
+- Calls `claude-haiku-4-5-20251001` with the built-in `web_search_20250305` tool to look up the official spec sheet
+- Returns a structured component tree: `{ company, model, components: [{ category, subcategories: [{ subcategory, elements: [{ name, description, specs: [{ key, value }] }] }] }] }`
+- On JSON parse/schema error: logs the error, maps missing fields to empty strings, never returns 502
 
 **Bike categories** (defined in `app/categories.py`):
 Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser, Touring, Folding, Cyclocross, Kids
@@ -86,10 +101,12 @@ Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser
 | Layer | File | Responsibility |
 |-------|------|----------------|
 | Entry point | `src/main.tsx` | React root, mounts `<App>` |
-| App shell | `src/App.tsx` | State machine (`idle → loading → results/error`), layout, API call |
+| App shell | `src/App.tsx` | View router (`search` / `details`), search & details state, both API calls |
 | Search form | `src/components/SearchInput.tsx` | Controlled input + submit button, loading state |
-| Result card | `src/components/ResultCard.tsx` | Per-bike card: match score numeral, brand + model, accessories chips, explanation, animated score bar |
+| Result card | `src/components/ResultCard.tsx` | Clickable per-bike card: match score, brand + model, accessories chips, explanation, score bar |
 | Loading card | `src/components/LoadingCard.tsx` | Shimmer skeleton matching result card dimensions |
+| Details view | `src/components/BikeDetailsView.tsx` | Full spec sheet: back nav, bike header, category/subcategory/element/spec tree, shimmer skeleton, error + retry |
+| Shared types | `src/types.ts` | `Bike`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeDetailsResponse` |
 | Styles | `src/index.css` | Tailwind v4 `@theme` tokens, Google Fonts import, keyframe animations |
 | Vite config | `vite.config.ts` | Tailwind v4 plugin, `/v1` proxy to backend |
 
@@ -99,6 +116,6 @@ Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser
 - All theme tokens live in `src/index.css` under `@theme { --color-*, --font-* }`
 
 **API integration:**
-- `POST /v1/bike/search` with `{ "search": "..." }` — proxied to backend via Vite
-- Response: `{ search: string, bikes: [{ brand, model, accessories, match_score, explanation }] }` (5 bikes total)
-- No CORS configuration needed in development (Vite proxy handles it)
+- `POST /v1/bike/search` `{ "search": "..." }` → `{ search, bikes: [{ brand, model, accessories, match_score, explanation }] }` (5 bikes)
+- `POST /v1/bike/details` `{ "company": "...", "model": "..." }` → `{ company, model, components: BikeCategory[] }`
+- Both endpoints proxied to backend via Vite — no CORS config needed in development

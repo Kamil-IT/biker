@@ -40,7 +40,8 @@ Open **http://localhost:5173** in your browser.
 
 | Command | What it does |
 |---|---|
-| `cd backend && python scripts/test_search.py` | Smoke-test the backend API |
+| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` |
+| `cd backend && python scripts/test_details.py` | Smoke-test `POST /v1/bike/details` |
 | `cd frontend && npm run build` | TypeScript check + production bundle → `dist/` |
 | `cd frontend && npm run preview` | Serve the production bundle locally |
 | http://localhost:8000/docs | Interactive OpenAPI UI for the backend |
@@ -50,7 +51,7 @@ Open **http://localhost:5173** in your browser.
 | Layer | Technology |
 |---|---|
 | Backend | Python 3.14, FastAPI, Uvicorn |
-| AI | Anthropic Claude Haiku (`claude-haiku-4-5-20251001`) |
+| AI | Anthropic Claude Haiku (`claude-haiku-4-5-20251001`) — used for all API calls |
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS v4 |
 | Fonts | Barlow Condensed · Lora · JetBrains Mono |
 
@@ -60,15 +61,19 @@ Open **http://localhost:5173** in your browser.
 biker/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py               # FastAPI app, POST /v1/bike/search
+│   │   ├── main.py               # FastAPI app, routes
 │   │   ├── schemas.py            # Pydantic models
 │   │   ├── categories.py         # 11 bike category registry
 │   │   ├── anthropic_scorer.py   # Claude Haiku category scoring
 │   │   ├── bike_finder.py        # Filter, allocate, find real bikes
+│   │   ├── bike_details_finder.py# Fetch full component specs via web search
 │   │   └── prompts/
 │   │       ├── *.md              # Per-category scoring prompts
-│   │       └── bike_search_*.md  # Per-category bike-finding prompts
-│   └── scripts/test_search.py    # Integration smoke test
+│   │       ├── bike_search_*.md  # Per-category bike-finding prompts
+│   │       └── bike_details.md   # Component extraction prompt
+│   └── scripts/
+│       ├── test_search.py        # Smoke test for /v1/bike/search
+│       └── test_details.py       # Smoke test for /v1/bike/details
 └── frontend/
     └── src/
         ├── App.tsx               # App shell, state machine, API call
