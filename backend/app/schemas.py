@@ -45,10 +45,27 @@ class BikeCategory(BaseModel):
     subcategories: list[BikeSubcategory] = []
 
 
+class DescriptionCitation(BaseModel):
+    url: str
+    title: str
+    cited_text: str
+
+
+class TextSegment(BaseModel):
+    text: str
+    citations: list[DescriptionCitation] = []
+
+
+class BikeDescription(BaseModel):
+    text: str
+    segments: list[TextSegment]
+    citations: list[DescriptionCitation]
+
+
 class BikeDetailsResponse(BaseModel):
     company: str
     model: str
-    description: str
+    description: BikeDescription
     components: list[BikeCategory]
 
 

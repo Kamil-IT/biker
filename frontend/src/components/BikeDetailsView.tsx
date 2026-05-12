@@ -1,12 +1,13 @@
+import { useState } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react'
-import type { Bike, BikeCategory, BikeSubcategory, ComponentElement, BikeReviewResponse } from '../types'
+import type { Bike, BikeCategory, BikeSubcategory, ComponentElement, BikeDescription, BikeReviewResponse } from '../types'
 
 type ReviewState = 'loading' | 'loaded' | 'error'
 
 interface BikeDetailsViewProps {
   bike: Bike
   categories: BikeCategory[] | null
-  description: string | null
+  description: BikeDescription | null
   state: 'loading' | 'loaded' | 'error'
   error: string | null
   review: BikeReviewResponse | null
@@ -138,7 +139,9 @@ export default function BikeDetailsView({
 
 /* ── Description ────────────────────────────────────── */
 
-function DescriptionCard({ description, state }: { description: string | null; state: 'loading' | 'loaded' | 'error' }) {
+function DescriptionCard({ description, state }: { description: BikeDescription | null; state: 'loading' | 'loaded' | 'error' }) {
+  const [activeIdx, setActiveIdx] = useState<number | null>(null)
+
   if (state === 'loading') {
     return (
       <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
@@ -155,14 +158,69 @@ function DescriptionCard({ description, state }: { description: string | null; s
 
   if (!description) return null
 
+  const activeCitations = activeIdx !== null ? (description.segments[activeIdx]?.citations ?? []) : []
+
   return (
     <div className="mt-5 bg-card rounded-2xl border-l-2 border border-terra/40 px-5 py-4 md:px-6 md:py-5">
       <span className="font-mono text-[10px] text-muted uppercase tracking-widest block mb-2">
         Overview
       </span>
+
       <p className="font-body text-ink text-[13px] leading-relaxed">
-        {description}
+        {description.segments.map((seg, i) =>
+          seg.citations.length === 0 ? (
+            <span key={i}>{seg.text}</span>
+          ) : (
+            <span
+              key={i}
+              role="button"
+              tabIndex={0}
+              onClick={() => setActiveIdx(activeIdx === i ? null : i)}
+              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setActiveIdx(activeIdx === i ? null : i) }}
+              className={`cursor-pointer border-b border-dashed transition-colors duration-150 ${
+                activeIdx === i
+                  ? 'text-terra border-terra'
+                  : 'text-terra/80 border-terra/50 hover:text-terra hover:border-terra'
+              }`}
+            >
+              {seg.text}
+            </span>
+          )
+        )}
       </p>
+
+      {/* Source card for the active segment */}
+      {activeCitations.length > 0 && (
+        <div
+          className="mt-3 bg-sand rounded-xl border border-border divide-y divide-border overflow-hidden"
+          style={{ animation: 'slideUp 200ms ease-out' }}
+        >
+          {activeCitations.map(c => {
+            let host: string
+            try { host = new URL(c.url).hostname.replace(/^www\./, '') } catch { host = c.url }
+            return (
+              <a
+                key={c.url}
+                href={c.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-start gap-3 px-4 py-3 group hover:bg-parchment transition-colors duration-150"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="font-mono text-[11px] text-terra group-hover:text-terra-dark truncate">{host}</p>
+                  {c.title && (
+                    <p className="font-body text-[12px] text-charcoal font-medium leading-tight mt-0.5">{c.title}</p>
+                  )}
+                  {c.cited_text && (
+                    <p className="font-body italic text-[11px] text-muted mt-1 line-clamp-2">{c.cited_text}</p>
+                  )}
+                </div>
+                <span className="shrink-0 font-mono text-[11px] text-terra mt-0.5" aria-hidden="true">→</span>
+              </a>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

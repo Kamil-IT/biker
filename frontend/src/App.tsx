@@ -3,7 +3,7 @@ import SearchInput from './components/SearchInput'
 import ResultCard from './components/ResultCard'
 import LoadingCard from './components/LoadingCard'
 import BikeDetailsView from './components/BikeDetailsView'
-import type { Bike, BikeCategory, BikeDetailsResponse, BikeReviewResponse } from './types'
+import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikeReviewResponse } from './types'
 
 type AppState     = 'idle' | 'loading' | 'results' | 'error'
 type AppView      = 'search' | 'details'
@@ -29,7 +29,7 @@ export default function App() {
   const [selectedBike, setSelectedBike]         = useState<Bike | null>(null)
   const [detailsState, setDetailsState]         = useState<DetailsState>('loading')
   const [bikeCategories, setBikeCategories]     = useState<BikeCategory[] | null>(null)
-  const [bikeDescription, setBikeDescription]   = useState<string | null>(null)
+  const [bikeDescription, setBikeDescription]   = useState<BikeDescription | null>(null)
   const [detailsError, setDetailsError]         = useState<string | null>(null)
 
   // Review state
