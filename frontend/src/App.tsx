@@ -25,11 +25,12 @@ export default function App() {
   const resultsRef                          = useRef<HTMLElement>(null)
 
   // Details state
-  const [view, setView]                     = useState<AppView>('search')
-  const [selectedBike, setSelectedBike]     = useState<Bike | null>(null)
-  const [detailsState, setDetailsState]     = useState<DetailsState>('loading')
-  const [bikeCategories, setBikeCategories] = useState<BikeCategory[] | null>(null)
-  const [detailsError, setDetailsError]     = useState<string | null>(null)
+  const [view, setView]                         = useState<AppView>('search')
+  const [selectedBike, setSelectedBike]         = useState<Bike | null>(null)
+  const [detailsState, setDetailsState]         = useState<DetailsState>('loading')
+  const [bikeCategories, setBikeCategories]     = useState<BikeCategory[] | null>(null)
+  const [bikeDescription, setBikeDescription]   = useState<string | null>(null)
+  const [detailsError, setDetailsError]         = useState<string | null>(null)
 
   // Review state
   const [reviewState, setReviewState]       = useState<ReviewState>('loading')
@@ -71,6 +72,7 @@ export default function App() {
     setDetailsState('loading')
     setDetailsError(null)
     setBikeCategories(null)
+    setBikeDescription(null)
 
     try {
       const res = await fetch('/v1/bike/details', {
@@ -86,6 +88,7 @@ export default function App() {
 
       const data: BikeDetailsResponse = await res.json()
       setBikeCategories(data.components)
+      setBikeDescription(data.description ?? null)
       setDetailsState('loaded')
     } catch (err) {
       setDetailsError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
@@ -134,6 +137,7 @@ export default function App() {
     setView('search')
     setSelectedBike(null)
     setBikeCategories(null)
+    setBikeDescription(null)
     setDetailsState('loading')
     setDetailsError(null)
     setReviewState('loading')
@@ -296,6 +300,7 @@ export default function App() {
           <BikeDetailsView
             bike={selectedBike}
             categories={bikeCategories}
+            description={bikeDescription}
             state={detailsState}
             error={detailsError}
             review={review}

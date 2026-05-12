@@ -48,6 +48,7 @@ class BikeCategory(BaseModel):
 class BikeDetailsResponse(BaseModel):
     company: str
     model: str
+    description: str
     components: list[BikeCategory]
 
 

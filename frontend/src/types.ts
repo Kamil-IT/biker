@@ -30,6 +30,7 @@ export interface BikeCategory {
 export interface BikeDetailsResponse {
   company: string
   model: string
+  description: string
   components: BikeCategory[]
 }
 

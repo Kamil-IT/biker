@@ -75,6 +75,7 @@ npm run preview   # serve production build locally
 | Scorer | `app/anthropic_scorer.py` | Calls Claude Haiku per category, strips code fences, parses JSON |
 | Bike finder | `app/bike_finder.py` | Filters top categories, allocates 5 bikes by score weight, finds real bikes via Claude in parallel |
 | Details finder | `app/bike_details_finder.py` | Loops through 8 component categories (Frame → Accessories), runs one focused `web_search` call per category, aggregates results; logs per-iteration and total token usage |
+| Description finder | `app/bike_description_finder.py` | Single `web_search` call with prompt caching to generate a 4–5 sentence plain-text bike overview; runs in parallel with details finder |
 | Review finder | `app/bike_review_finder.py` | Single `web_search` call to find 3–5 reviews, synthesises score 0–10, explanation, and source URLs |
 | Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` | Smoke tests for each endpoint |
 
@@ -88,8 +89,10 @@ npm run preview   # serve production build locally
 
 **Endpoint** `POST /v1/bike/details`
 - Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
-- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **8 times** sequentially — one focused search per component category (Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories), each using a dedicated `app/prompts/bike_details_{slug}.md` system prompt
-- Returns a structured component tree: `{ company, model, components: [{ category, subcategories: [{ subcategory, elements: [{ name, description, specs: [{ key, value }] }] }] }] }`
+- Runs two calls in parallel via `asyncio.gather`:
+  1. `claude-haiku-4-5-20251001` with `web_search_20250305` **8 times** sequentially — one focused search per component category (Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories), each using a dedicated `app/prompts/bike_details_{slug}.md` system prompt
+  2. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — generates a 4–5 sentence plain-text overview using `app/prompts/bike_description.md` with prompt caching on the system prompt
+- Returns: `{ company, model, description: str, components: [{ category, subcategories: [{ subcategory, elements: [{ name, description, specs: [{ key, value }] }] }] }] }`
 - On JSON parse error for a category: logs the error and skips that category — never returns 502
 
 **Endpoint** `POST /v1/bike/review`
@@ -124,5 +127,5 @@ Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser
 
 **API integration:**
 - `POST /v1/bike/search` `{ "search": "..." }` → `{ search, bikes: [{ brand, model, accessories, match_score, explanation }] }` (5 bikes)
-- `POST /v1/bike/details` `{ "company": "...", "model": "..." }` → `{ company, model, components: BikeCategory[] }`
+- `POST /v1/bike/details` `{ "company": "...", "model": "..." }` → `{ company, model, description: string, components: BikeCategory[] }`
 - Both endpoints proxied to backend via Vite — no CORS config needed in development
