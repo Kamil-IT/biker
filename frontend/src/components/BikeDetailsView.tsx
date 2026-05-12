@@ -170,12 +170,12 @@ function DescriptionCard({ description, state }: { description: BikeDescription 
         {description.segments.map((seg, i) => (
           <span key={i}>
             {seg.text}
-            {seg.citations.map((c, j) => {
-              let host: string
-              try { host = new URL(c.url).hostname.replace(/^www\./, '') } catch { host = c.url }
+            {seg.citations.length > 0 && (() => {
+              const hosts = seg.citations.map(c => {
+                try { return new URL(c.url).hostname.replace(/^www\./, '') } catch { return c.url }
+              })
               return (
                 <span
-                  key={j}
                   role="button"
                   tabIndex={0}
                   onClick={() => setActiveIdx(activeIdx === i ? null : i)}
@@ -184,10 +184,10 @@ function DescriptionCard({ description, state }: { description: BikeDescription 
                     activeIdx === i ? 'text-terra' : 'text-terra/60 hover:text-terra'
                   }`}
                 >
-                  [{host}]
+                  [{hosts.join(', ')}]
                 </span>
               )
-            })}
+            })()}
           </span>
         ))}
       </p>
