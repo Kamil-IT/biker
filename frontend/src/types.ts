@@ -27,10 +27,27 @@ export interface BikeCategory {
   subcategories: BikeSubcategory[]
 }
 
+export interface DescriptionCitation {
+  url: string
+  title: string
+  cited_text: string
+}
+
+export interface TextSegment {
+  text: string
+  citations: DescriptionCitation[]
+}
+
+export interface BikeDescription {
+  text: string
+  segments: TextSegment[]
+  citations: DescriptionCitation[]
+}
+
 export interface BikeDetailsResponse {
   company: string
   model: string
-  description: string
+  description: BikeDescription
   components: BikeCategory[]
 }
 
