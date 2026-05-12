@@ -52,9 +52,11 @@ Content-Type: application/json
 }
 ```
 
-**Flow:**
-1. `POST https://api.anthropic.com/v1/messages` × 8 — Claude Haiku with `web_search_20250305` tool, one focused search per component category (sequential): Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories
-2. Results aggregated in memory; token usage logged per iteration and in total
+**Response includes:** `description` (4–5 sentence plain-text overview), `components` (category tree).
+
+**Flow (parallel):**
+1. `POST https://api.anthropic.com/v1/messages` × 8 — Claude Haiku with `web_search_20250305` tool, one focused search per component category (sequential): Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories — runs concurrently with step 2
+2. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool + prompt caching, generates a 4–5 sentence bike overview — runs concurrently with step 1
 
 ---
 

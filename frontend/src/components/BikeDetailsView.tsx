@@ -6,6 +6,7 @@ type ReviewState = 'loading' | 'loaded' | 'error'
 interface BikeDetailsViewProps {
   bike: Bike
   categories: BikeCategory[] | null
+  description: string | null
   state: 'loading' | 'loaded' | 'error'
   error: string | null
   review: BikeReviewResponse | null
@@ -17,6 +18,7 @@ interface BikeDetailsViewProps {
 export default function BikeDetailsView({
   bike,
   categories,
+  description,
   state,
   error,
   review,
@@ -84,6 +86,9 @@ export default function BikeDetailsView({
           </ul>
         )}
 
+        {/* Description */}
+        <DescriptionCard description={description} state={state} />
+
         {/* Review */}
         <ReviewSection review={review} state={reviewState} />
       </div>
@@ -127,6 +132,37 @@ export default function BikeDetailsView({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/* ── Description ────────────────────────────────────── */
+
+function DescriptionCard({ description, state }: { description: string | null; state: 'loading' | 'loaded' | 'error' }) {
+  if (state === 'loading') {
+    return (
+      <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
+        <div className="shimmer h-3 w-16 rounded mb-3" />
+        <div className="space-y-2">
+          <div className="shimmer h-3 w-full rounded" />
+          <div className="shimmer h-3 w-5/6 rounded" />
+          <div className="shimmer h-3 w-4/6 rounded" />
+          <div className="shimmer h-3 w-3/4 rounded" />
+        </div>
+      </div>
+    )
+  }
+
+  if (!description) return null
+
+  return (
+    <div className="mt-5 bg-card rounded-2xl border-l-2 border border-terra/40 px-5 py-4 md:px-6 md:py-5">
+      <span className="font-mono text-[10px] text-muted uppercase tracking-widest block mb-2">
+        Overview
+      </span>
+      <p className="font-body text-ink text-[13px] leading-relaxed">
+        {description}
+      </p>
     </div>
   )
 }
