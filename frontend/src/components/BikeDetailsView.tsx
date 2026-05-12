@@ -167,26 +167,29 @@ function DescriptionCard({ description, state }: { description: BikeDescription 
       </span>
 
       <p className="font-body text-ink text-[13px] leading-relaxed">
-        {description.segments.map((seg, i) =>
-          seg.citations.length === 0 ? (
-            <span key={i}>{seg.text}</span>
-          ) : (
-            <span
-              key={i}
-              role="button"
-              tabIndex={0}
-              onClick={() => setActiveIdx(activeIdx === i ? null : i)}
-              onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setActiveIdx(activeIdx === i ? null : i) }}
-              className={`cursor-pointer border-b border-dashed transition-colors duration-150 ${
-                activeIdx === i
-                  ? 'text-terra border-terra'
-                  : 'text-terra/80 border-terra/50 hover:text-terra hover:border-terra'
-              }`}
-            >
-              {seg.text}
-            </span>
-          )
-        )}
+        {description.segments.map((seg, i) => (
+          <span key={i}>
+            {seg.text}
+            {seg.citations.map((c, j) => {
+              let host: string
+              try { host = new URL(c.url).hostname.replace(/^www\./, '') } catch { host = c.url }
+              return (
+                <span
+                  key={j}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setActiveIdx(activeIdx === i ? null : i)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setActiveIdx(activeIdx === i ? null : i) }}
+                  className={`ml-1 font-mono text-[10px] cursor-pointer transition-colors duration-150 ${
+                    activeIdx === i ? 'text-terra' : 'text-terra/60 hover:text-terra'
+                  }`}
+                >
+                  [{host}]
+                </span>
+              )
+            })}
+          </span>
+        ))}
       </p>
 
       {/* Source card for the active segment */}
