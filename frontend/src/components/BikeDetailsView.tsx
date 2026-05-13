@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react'
-import type { Bike, BikeCategory, BikeSubcategory, ComponentElement, BikeDescription, BikeReviewResponse } from '../types'
+import type { Bike, BikeCategory, BikeSubcategory, ComponentElement, BikeDescription, BikeReviewResponse, BikeOffer, BikeOfferResponse } from '../types'
 
 type ReviewState = 'loading' | 'loaded' | 'error'
 
@@ -12,6 +12,8 @@ interface BikeDetailsViewProps {
   error: string | null
   review: BikeReviewResponse | null
   reviewState: ReviewState
+  offers: BikeOfferResponse | null
+  offerState: 'loading' | 'loaded' | 'error'
   onBack: () => void
   onRetry: () => void
 }
@@ -24,6 +26,8 @@ export default function BikeDetailsView({
   error,
   review,
   reviewState,
+  offers,
+  offerState,
   onBack,
   onRetry,
 }: BikeDetailsViewProps) {
@@ -89,6 +93,9 @@ export default function BikeDetailsView({
 
         {/* Description */}
         <DescriptionCard description={description} state={state} />
+
+        {/* Offers */}
+        <OffersSection offers={offers} state={offerState} />
 
         {/* Review */}
         <ReviewSection review={review} state={reviewState} />
@@ -285,6 +292,79 @@ function ReviewSection({ review, state }: { review: BikeReviewResponse | null; s
         </a>
       )}
     </div>
+  )
+}
+
+/* ── Offers ─────────────────────────────────────────── */
+
+function OffersSection({ offers, state }: { offers: BikeOfferResponse | null; state: 'loading' | 'loaded' | 'error' }) {
+  if (state === 'loading') {
+    return (
+      <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
+        <div className="shimmer h-3 w-24 rounded mb-4" />
+        <div className="space-y-3">
+          {[0, 1, 2].map(i => (
+            <div key={i} className="flex items-center justify-between gap-4">
+              <div className="space-y-1.5 flex-1">
+                <div className="shimmer h-2.5 w-16 rounded" style={{ animationDelay: `${i * 40}ms` }} />
+                <div className="shimmer h-3.5 w-40 rounded" style={{ animationDelay: `${i * 40 + 20}ms` }} />
+              </div>
+              <div className="shimmer h-4 w-20 rounded" style={{ animationDelay: `${i * 40 + 40}ms` }} />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (state === 'error' || !offers || offers.offers.length === 0) return null
+
+  return (
+    <div className="mt-5 bg-card rounded-2xl border border-border overflow-hidden">
+      <div className="px-5 py-4 md:px-6 md:py-5 border-b border-border">
+        <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
+          Current Offers
+        </span>
+      </div>
+      <div className="divide-y divide-border">
+        {offers.offers.map((offer, i) => (
+          <OfferRow key={i} offer={offer} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function OfferRow({ offer }: { offer: BikeOffer }) {
+  return (
+    <a
+      href={offer.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center gap-4 px-5 py-4 md:px-6 group hover:bg-sand transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/40"
+    >
+      <div className="flex-1 min-w-0">
+        <p className="font-mono text-[10px] text-muted mb-0.5">{offer.source}</p>
+        <p className="font-display font-bold text-charcoal text-[14px] leading-tight truncate">
+          {offer.brand} {offer.model}
+        </p>
+      </div>
+      <div className="shrink-0 flex items-center gap-2">
+        <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full border leading-4 ${
+          offer.is_new
+            ? 'text-green-700 border-green-300 bg-green-50'
+            : 'text-muted border-border bg-sand'
+        }`}>
+          {offer.is_new ? 'New' : 'Used'}
+        </span>
+        <span className="font-display font-bold text-terra tabular-nums text-[15px]">
+          {offer.price}
+        </span>
+      </div>
+      <span className="shrink-0 font-mono text-[13px] text-terra group-hover:text-terra-dark transition-colors duration-150" aria-hidden="true">
+        →
+      </span>
+    </a>
   )
 }
 
