@@ -10,6 +10,7 @@ from .schemas import (  # noqa: E402
     SearchRequest, BikeSearchResponse, CategoryResult,
     BikeDetailsRequest, BikeDetailsResponse,
     BikeReviewRequest, BikeReviewResponse,
+    BikeOfferRequest, BikeOfferResponse,
 )
 from .categories import BIKE_CATEGORIES, CATEGORY_PROMPTS  # noqa: E402
 from .anthropic_scorer import score_category  # noqa: E402
@@ -17,6 +18,7 @@ from .bike_finder import filter_top_categories, allocate_bikes, find_all_bikes  
 from .bike_details_finder import find_bike_details  # noqa: E402
 from .bike_description_finder import find_bike_description  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
+from .bike_offer_finder import find_bike_offers  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -103,6 +105,16 @@ async def bike_review(req: BikeReviewRequest) -> BikeReviewResponse:
     result = await find_bike_review(req.company, req.model)
     elapsed = time.perf_counter() - t_start
     logger.info("review complete | score=%d elapsed=%.2fs", result.score, elapsed)
+    return result
+
+
+@app.post("/v1/bike/offer", response_model=BikeOfferResponse)
+async def bike_offer(req: BikeOfferRequest) -> BikeOfferResponse:
+    logger.info("offer request | company=%r model=%r", req.company, req.model)
+    t_start = time.perf_counter()
+    result = await find_bike_offers(req.company, req.model)
+    elapsed = time.perf_counter() - t_start
+    logger.info("offer complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     return result
 
 

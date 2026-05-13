@@ -126,3 +126,30 @@ class BikeReviewResponse(BaseModel):
         return v[:1]
 
 
+class BikeOffer(BaseModel):
+    brand: str
+    model: str
+    price: str
+    is_new: bool
+    url: str
+    photos: list[str] = []
+    source: str
+
+
+class BikeOfferRequest(BaseModel):
+    company: str
+    model: str
+
+    @field_validator("company", "model")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()
+
+
+class BikeOfferResponse(BaseModel):
+    offers: list[BikeOffer]
+    info: str = ""
+
+

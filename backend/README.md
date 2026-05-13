@@ -15,6 +15,7 @@ uvicorn app.main:app --reload --port 8000
 python scripts/test_search.py   # smoke-test POST /v1/bike/search
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
 python scripts/test_review.py   # smoke-test POST /v1/bike/review
+python scripts/test_offer.py    # smoke-test POST /v1/bike/offer
 ```
 
 ## Endpoints
@@ -85,3 +86,39 @@ Content-Type: application/json
 
 **Flow:**
 1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches for 3–5 reviews, then synthesises a score 0–10, a 5–10 sentence explanation, and a list of source URLs
+
+---
+
+### `POST /v1/bike/offer`
+
+Return current buying offers from Polish cycling marketplaces for a specific bike model.
+
+```http
+POST http://localhost:8000/v1/bike/offer
+Content-Type: application/json
+
+{
+  "company": "Canyon",
+  "model": "Grizl CF 7 ESC"
+}
+```
+
+**Response:**
+```json
+{
+  "offers": [
+    {
+      "brand": "Canyon",
+      "model": "Grizl CF 7",
+      "price": "8 999 zł",
+      "is_new": false,
+      "url": "https://www.olx.pl/oferta/...",
+      "photos": ["https://img.olx.pl/...jpg"],
+      "source": "olx.pl"
+    }
+  ]
+}
+```
+
+**Flow:**
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches olx.pl, allegro.pl, decathlon.pl, and centrumrowerowe.pl; returns 5–8 offers with price, condition, direct link, and photo URLs
