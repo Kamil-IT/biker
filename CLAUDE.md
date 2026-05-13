@@ -77,7 +77,7 @@ npm run preview   # serve production build locally
 | Details finder | `app/bike_details_finder.py` | Loops through 8 component categories (Frame → Accessories), runs one focused `web_search` call per category, aggregates results; logs per-iteration and total token usage |
 | Description finder | `app/bike_description_finder.py` | Single `web_search` call with prompt caching to generate a 4–5 sentence plain-text bike overview; runs in parallel with details finder |
 | Review finder | `app/bike_review_finder.py` | Single `web_search` call to find 3–5 reviews, synthesises score 0–10, explanation, and source URLs |
-| Offer finder | `app/bike_offer_finder.py` | Single `web_search` call to find 5–8 current offers on olx.pl, allegro.pl, decathlon.pl, centrumrowerowe.pl |
+| Offer finder | `app/bike_offer_finder.py` | Single `web_search` call to find 1 current offer on allegro.pl |
 | Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` · `scripts/test_offer.py` | Smoke tests for each endpoint |
 
 **Endpoint** `POST /v1/bike/search`
@@ -104,9 +104,9 @@ npm run preview   # serve production build locally
 
 **Endpoint** `POST /v1/bike/offer`
 - Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
-- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches olx.pl, allegro.pl, decathlon.pl, and centrumrowerowe.pl using `app/prompts/bike_offer.md` as the system prompt
-- Returns `{ offers: [{ brand, model, price, is_new, url, photos, source }, ...] }` (5–8 offers)
-- On JSON parse error: returns `{ offers: [] }` — never returns 502
+- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches allegro.pl using `app/prompts/bike_offer_allegro.md` as the system prompt
+- Returns `{ offers: [{ brand, model, price, is_new, url, photos, source }], info: str }` (1 offer)
+- On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
 
 **Bike categories** (defined in `app/categories.py`):
 Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser, Touring, Folding, Cyclocross, Kids
@@ -118,12 +118,12 @@ Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser
 | Layer | File | Responsibility |
 |-------|------|----------------|
 | Entry point | `src/main.tsx` | React root, mounts `<App>` |
-| App shell | `src/App.tsx` | View router (`search` / `details`), search & details state, both API calls |
+| App shell | `src/App.tsx` | View router (`search` / `details`), search, details, review & offer state, all four API calls |
 | Search form | `src/components/SearchInput.tsx` | Controlled input + submit button, loading state |
 | Result card | `src/components/ResultCard.tsx` | Clickable per-bike card: match score, brand + model, accessories chips, explanation, score bar |
 | Loading card | `src/components/LoadingCard.tsx` | Shimmer skeleton matching result card dimensions |
-| Details view | `src/components/BikeDetailsView.tsx` | Full spec sheet: back nav, bike header, category/subcategory/element/spec tree, shimmer skeleton, error + retry |
-| Shared types | `src/types.ts` | `Bike`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeDetailsResponse` |
+| Details view | `src/components/BikeDetailsView.tsx` | Full spec sheet: back nav, bike header, Overview (DescriptionCard), Current Offers (OffersSection), Expert Review (ReviewSection), category/subcategory/element/spec tree, shimmer skeleton, error + retry |
+| Shared types | `src/types.ts` | `Bike`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeDetailsResponse`, `BikeDescription`, `TextSegment`, `DescriptionCitation`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferResponse` |
 | Styles | `src/index.css` | Tailwind v4 `@theme` tokens, Google Fonts import, keyframe animations |
 | Vite config | `vite.config.ts` | Tailwind v4 plugin, `/v1` proxy to backend |
 
@@ -134,5 +134,7 @@ Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser
 
 **API integration:**
 - `POST /v1/bike/search` `{ "search": "..." }` → `{ search, bikes: [{ brand, model, accessories, match_score, explanation }] }` (5 bikes)
-- `POST /v1/bike/details` `{ "company": "...", "model": "..." }` → `{ company, model, description: string, components: BikeCategory[] }`
-- Both endpoints proxied to backend via Vite — no CORS config needed in development
+- `POST /v1/bike/details` `{ "company": "...", "model": "..." }` → `{ company, model, description: BikeDescription, components: BikeCategory[] }`
+- `POST /v1/bike/review` `{ "company": "...", "model": "..." }` → `{ score, explanation, ref: string[] }`
+- `POST /v1/bike/offer` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }`
+- All endpoints proxied to backend via Vite — no CORS config needed in development

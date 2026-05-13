@@ -8,7 +8,7 @@ AI-powered bike finder. Describe what you're looking for in plain English and ge
 2. The backend calls Claude Haiku once per category (11 total) to score relevance
 3. Top-scoring categories (score ≥ 5, minimum 2) are selected; 5 bikes are allocated proportionally by score
 4. Claude finds real bikes for each qualifying category in parallel
-5. Results (brand, model, accessories, match score, explanation) are returned
+5. Click a result to open the details page — the backend fetches specs, description, review score, and current Allegro offers in parallel via Claude web search
 
 ## Running the project
 
@@ -43,6 +43,7 @@ Open **http://localhost:5173** in your browser.
 | `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` |
 | `cd backend && python scripts/test_details.py` | Smoke-test `POST /v1/bike/details` |
 | `cd backend && python scripts/test_review.py` | Smoke-test `POST /v1/bike/review` |
+| `cd backend && python scripts/test_offer.py` | Smoke-test `POST /v1/bike/offer` |
 | `cd frontend && npm run build` | TypeScript check + production bundle → `dist/` |
 | `cd frontend && npm run preview` | Serve the production bundle locally |
 | http://localhost:8000/docs | Interactive OpenAPI UI for the backend |
@@ -51,7 +52,7 @@ Open **http://localhost:5173** in your browser.
 
 | Marketplace | Status | Notes |
 |---|---|---|
-| Allegro | **Blocked** | Offer listing requires a verified app — not implementing for now. Dev portal: https://apps.developer.allegro.pl/ · [Restriction details](https://developer.allegro.pl/news/get-offers-listing-tylko-dla-zweryfikowanych-aplikacji-GRax4oVgrs1) |
+| Allegro | **Working** | Offers fetched via Claude web search (`bike_offer_allegro.md`). Official API requires a verified app — dev portal: https://apps.developer.allegro.pl/ |
 | OLX | Waiting | Pending account approval |
 | Amazon | Todo | — |
 
@@ -70,27 +71,34 @@ Open **http://localhost:5173** in your browser.
 biker/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py               # FastAPI app, routes
-│   │   ├── schemas.py            # Pydantic models
-│   │   ├── categories.py         # 11 bike category registry
-│   │   ├── anthropic_scorer.py   # Claude Haiku category scoring
-│   │   ├── bike_finder.py        # Filter, allocate, find real bikes
-│   │   ├── bike_details_finder.py# Fetch full component specs via web search
-│   │   ├── bike_review_finder.py # Aggregate web reviews into score + explanation
+│   │   ├── main.py                    # FastAPI app, routes
+│   │   ├── schemas.py                 # Pydantic models
+│   │   ├── categories.py              # 11 bike category registry
+│   │   ├── anthropic_scorer.py        # Claude Haiku category scoring
+│   │   ├── bike_finder.py             # Filter, allocate, find real bikes
+│   │   ├── bike_details_finder.py     # Fetch full component specs via web search
+│   │   ├── bike_description_finder.py # Generate plain-text overview via web search
+│   │   ├── bike_review_finder.py      # Aggregate web reviews into score + explanation
+│   │   ├── bike_offer_finder.py       # Find current Allegro offers via web search
 │   │   └── prompts/
-│   │       ├── *.md              # Per-category scoring prompts
-│   │       ├── bike_search_*.md  # Per-category bike-finding prompts
-│   │       ├── bike_details.md   # Component extraction prompt
-│   │       └── bike_review.md    # Review aggregation prompt
+│   │       ├── *.md                   # Per-category scoring prompts
+│   │       ├── bike_search_*.md       # Per-category bike-finding prompts
+│   │       ├── bike_details.md        # Component extraction prompt
+│   │       ├── bike_review.md         # Review aggregation prompt
+│   │       ├── bike_offer.md          # Multi-marketplace offer prompt (unused)
+│   │       └── bike_offer_allegro.md  # Allegro offer search prompt
 │   └── scripts/
-│       ├── test_search.py        # Smoke test for /v1/bike/search
-│       ├── test_details.py       # Smoke test for /v1/bike/details
-│       └── test_review.py        # Smoke test for /v1/bike/review
+│       ├── test_search.py             # Smoke test for /v1/bike/search
+│       ├── test_details.py            # Smoke test for /v1/bike/details
+│       ├── test_review.py             # Smoke test for /v1/bike/review
+│       └── test_offer.py              # Smoke test for /v1/bike/offer
 └── frontend/
     └── src/
-        ├── App.tsx               # App shell, state machine, API call
+        ├── App.tsx                    # App shell, state machine, all four API calls
+        ├── types.ts                   # Shared TypeScript interfaces
         └── components/
-            ├── SearchInput.tsx   # Search form
-            ├── ResultCard.tsx    # Per-bike result card (brand, model, accessories, match score)
-            └── LoadingCard.tsx   # Shimmer skeleton
+            ├── SearchInput.tsx        # Search form
+            ├── ResultCard.tsx         # Per-bike result card
+            ├── LoadingCard.tsx        # Shimmer skeleton for search results
+            └── BikeDetailsView.tsx    # Details page: Overview, Offers, Review, Specs
 ```

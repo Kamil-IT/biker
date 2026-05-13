@@ -114,11 +114,11 @@ Content-Type: application/json
       "is_new": false,
       "url": "https://www.olx.pl/oferta/...",
       "photos": ["https://img.olx.pl/...jpg"],
-      "source": "olx.pl"
+      "source": "allegro.pl"
     }
   ]
 }
 ```
 
 **Flow:**
-1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches olx.pl, allegro.pl, decathlon.pl, and centrumrowerowe.pl; returns 5–8 offers with price, condition, direct link, and photo URLs
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches allegro.pl; returns 1 offer with price, condition, direct link, and photo URLs
