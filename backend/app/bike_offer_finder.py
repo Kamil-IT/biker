@@ -6,6 +6,7 @@ from pathlib import Path
 from anthropic import AsyncAnthropic
 
 from .schemas import BikeOffer, BikeOfferResponse
+from .allegro_image_fetcher import fetch_images_for_offers
 
 logger = logging.getLogger("biker.offer")
 
@@ -103,4 +104,5 @@ async def find_bike_offers(company: str, model: str) -> BikeOfferResponse:
     if len(offers) < 1:
         logger.warning("no offers returned")
 
+    offers = await fetch_images_for_offers(offers)
     return BikeOfferResponse(offers=offers, info=info_text)
