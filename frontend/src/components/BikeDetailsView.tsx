@@ -335,6 +335,57 @@ function OffersSection({ offers, state }: { offers: BikeOfferResponse | null; st
   )
 }
 
+function OfferImageGallery({ photos }: { photos: string[] }) {
+  const [idx, setIdx] = useState(0)
+  if (!photos.length) return null
+
+  const visible = photos.slice(idx, idx + 4)
+  const canPrev = idx > 0
+  const canNext = idx + 4 < photos.length
+
+  const prev = (e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation()
+    setIdx(i => Math.max(0, i - 1))
+  }
+  const next = (e: React.MouseEvent) => {
+    e.preventDefault(); e.stopPropagation()
+    setIdx(i => Math.min(photos.length - 1, i + 1))
+  }
+
+  return (
+    <div className="shrink-0 flex items-center gap-1">
+      <button
+        onClick={prev}
+        disabled={!canPrev}
+        className="font-mono text-[13px] text-terra disabled:opacity-20 hover:text-terra-dark transition-colors leading-none px-0.5"
+        aria-label="Previous image"
+      >
+        ‹
+      </button>
+      <div className="flex gap-1">
+        {visible.map((src, i) => (
+          <img
+            key={idx + i}
+            src={src}
+            alt=""
+            className={`w-9 h-9 object-cover rounded-sm border transition-all ${
+              i === 0 ? 'border-terra ring-1 ring-terra' : 'border-border opacity-75'
+            }`}
+          />
+        ))}
+      </div>
+      <button
+        onClick={next}
+        disabled={!canNext}
+        className="font-mono text-[13px] text-terra disabled:opacity-20 hover:text-terra-dark transition-colors leading-none px-0.5"
+        aria-label="Next image"
+      >
+        ›
+      </button>
+    </div>
+  )
+}
+
 function OfferRow({ offer }: { offer: BikeOffer }) {
   return (
     <a
@@ -349,6 +400,7 @@ function OfferRow({ offer }: { offer: BikeOffer }) {
           {offer.brand} {offer.model}
         </p>
       </div>
+      <OfferImageGallery photos={offer.photos} />
       <div className="shrink-0 flex items-center gap-2">
         <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full border leading-4 ${
           offer.is_new

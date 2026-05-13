@@ -3,3 +3,9 @@ name = "biker-backend"
 version = "0.1.0"
 requires-python = ">=3.14"
 description = "Bike search backend service"
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "patchright>=1.59.1",
+    "playwright>=1.59.0",
+    "playwright-stealth>=2.0.3",
+]
