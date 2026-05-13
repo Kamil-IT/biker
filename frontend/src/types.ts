@@ -56,3 +56,18 @@ export interface BikeReviewResponse {
   explanation: string
   ref: string[]
 }
+
+export interface BikeOffer {
+  brand: string
+  model: string
+  price: string
+  is_new: boolean
+  url: string
+  photos: string[]
+  source: string
+}
+
+export interface BikeOfferResponse {
+  offers: BikeOffer[]
+  info: string
+}

@@ -3,12 +3,13 @@ import SearchInput from './components/SearchInput'
 import ResultCard from './components/ResultCard'
 import LoadingCard from './components/LoadingCard'
 import BikeDetailsView from './components/BikeDetailsView'
-import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikeReviewResponse } from './types'
+import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikeReviewResponse, BikeOfferResponse } from './types'
 
 type AppState     = 'idle' | 'loading' | 'results' | 'error'
 type AppView      = 'search' | 'details'
 type DetailsState = 'loading' | 'loaded' | 'error'
 type ReviewState  = 'loading' | 'loaded' | 'error'
+type OfferState   = 'loading' | 'loaded' | 'error'
 
 interface SearchResponse {
   search: string
@@ -35,6 +36,10 @@ export default function App() {
   // Review state
   const [reviewState, setReviewState]       = useState<ReviewState>('loading')
   const [review, setReview]                 = useState<BikeReviewResponse | null>(null)
+
+  // Offer state
+  const [offerState, setOfferState]         = useState<OfferState>('loading')
+  const [offers, setOffers]                 = useState<BikeOfferResponse | null>(null)
 
   /* ── Handlers ─────────────────────────────────────── */
 
@@ -114,12 +119,31 @@ export default function App() {
     }
   }
 
+  const fetchOffer = async (bike: Bike) => {
+    setOfferState('loading')
+    setOffers(null)
+    try {
+      const res = await fetch('/v1/bike/offer', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ company: bike.brand, model: bike.model }),
+      })
+      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      const data: BikeOfferResponse = await res.json()
+      setOffers(data)
+      setOfferState('loaded')
+    } catch {
+      setOfferState('error')
+    }
+  }
+
   const handleBikeSelect = (bike: Bike) => {
     setSelectedBike(bike)
     setView('details')
     window.scrollTo({ top: 0, behavior: 'smooth' })
     fetchDetails(bike)
     fetchReview(bike)
+    fetchOffer(bike)
   }
 
   const handleBackToResults = () => {
@@ -142,6 +166,8 @@ export default function App() {
     setDetailsError(null)
     setReviewState('loading')
     setReview(null)
+    setOfferState('loading')
+    setOffers(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -305,6 +331,8 @@ export default function App() {
             error={detailsError}
             review={review}
             reviewState={reviewState}
+            offers={offers}
+            offerState={offerState}
             onBack={handleBackToResults}
             onRetry={() => fetchDetails(selectedBike)}
           />
