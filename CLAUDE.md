@@ -69,7 +69,7 @@ npm run preview   # serve production build locally
 | Layer | File | Responsibility |
 |-------|------|----------------|
 | Entry point | `app/main.py` | FastAPI app, routes, request logging |
-| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse`, `BikeDetailsRequest`, `BikeDetailsResponse`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeReviewRequest`, `BikeReviewResponse` |
+| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse`, `BikeDetailsRequest`, `BikeDetailsResponse`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeReviewRequest`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferRequest`, `BikeOfferResponse` |
 | Categories | `app/categories.py` | 11 bike category registry; loads prompt files at startup |
 | Prompts | `app/prompts/*.md` | Per-category scoring prompts + `bike_search_{slug}.md` per-category bike-finding prompts + `bike_details_{slug}.md` per-category component search prompts (8 categories) + `bike_details.md` JSON format reference |
 | Scorer | `app/anthropic_scorer.py` | Calls Claude Haiku per category, strips code fences, parses JSON |
@@ -77,7 +77,8 @@ npm run preview   # serve production build locally
 | Details finder | `app/bike_details_finder.py` | Loops through 8 component categories (Frame → Accessories), runs one focused `web_search` call per category, aggregates results; logs per-iteration and total token usage |
 | Description finder | `app/bike_description_finder.py` | Single `web_search` call with prompt caching to generate a 4–5 sentence plain-text bike overview; runs in parallel with details finder |
 | Review finder | `app/bike_review_finder.py` | Single `web_search` call to find 3–5 reviews, synthesises score 0–10, explanation, and source URLs |
-| Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` | Smoke tests for each endpoint |
+| Offer finder | `app/bike_offer_finder.py` | Single `web_search` call to find 5–8 current offers on olx.pl, allegro.pl, decathlon.pl, centrumrowerowe.pl |
+| Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` · `scripts/test_offer.py` | Smoke tests for each endpoint |
 
 **Endpoint** `POST /v1/bike/search`
 - Request: `{"search": "free text description"}`
@@ -100,6 +101,12 @@ npm run preview   # serve production build locally
 - Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches for 3–5 professional and user reviews, using `app/prompts/bike_review.md` as the system prompt
 - Returns `{ score: int (0–10), explanation: str (5–10 sentences), ref: [url, ...] }`
 - On JSON parse error: returns `{ score: 0, explanation: "Review unavailable.", ref: [] }` — never returns 502
+
+**Endpoint** `POST /v1/bike/offer`
+- Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
+- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches olx.pl, allegro.pl, decathlon.pl, and centrumrowerowe.pl using `app/prompts/bike_offer.md` as the system prompt
+- Returns `{ offers: [{ brand, model, price, is_new, url, photos, source }, ...] }` (5–8 offers)
+- On JSON parse error: returns `{ offers: [] }` — never returns 502
 
 **Bike categories** (defined in `app/categories.py`):
 Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser, Touring, Folding, Cyclocross, Kids
