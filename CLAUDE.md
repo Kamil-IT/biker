@@ -6,6 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **New backend endpoint** → add a smoke test for it in `backend/scripts/test_search.py`. This is the single file for all smoke tests. Each test must call the endpoint against a running local server and assert HTTP 200.
 
+**New backend endpoint using the Anthropic API** → must use the SQLite cache in `app/cache.py`. Pattern:
+```python
+_fields = {"key_field": req.key_field}  # only fields that uniquely identify the response
+cached = get_cached("/v1/your/route", _fields, YourResponseModel)
+if cached is not None:
+    return cached
+# ... existing logic ...
+set_cached("/v1/your/route", _fields, result)
+return result
+```
+Only call `set_cached` on the happy path — never cache error/fallback responses.
+
 ## Documentation Update Policy
 
 After **every code change**, review and update the relevant documentation before considering the task done:
