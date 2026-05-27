@@ -13,6 +13,7 @@ from .schemas import (  # noqa: E402
     BikeReviewRequest, BikeReviewResponse,
     BikeOfferRequest, BikeOfferResponse,
     UsedBikeRequest, UsedBikeResponse,
+    ParseRequest, ParseResponse,
 )
 from .categories import BIKE_CATEGORIES, CATEGORY_PROMPTS  # noqa: E402
 from .anthropic_scorer import score_category  # noqa: E402
@@ -23,6 +24,7 @@ from .bike_photos_finder import find_bike_photos  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_finder import find_bike_offers  # noqa: E402
 from .bike_used_finder import find_used_bikes  # noqa: E402
+from .bike_parser import parse_free_text  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
 
 logging.basicConfig(
@@ -45,11 +47,18 @@ app = FastAPI(title="Biker API", version="1.0.0", lifespan=lifespan)
 
 @app.post("/v1/bike/search", response_model=BikeSearchResponse)
 async def bike_search(req: SearchRequest) -> BikeSearchResponse:
-    logger.info("search request received | query=%r", req.search)
-    _fields = {"search": req.search}
+    _fields = {k: str(v) for k, v in {
+        "search": req.search, "brand": req.brand, "model": req.model,
+        "year": req.year, "wheel_size": req.wheel_size,
+        "is_electric": req.is_electric, "has_suspension": req.has_suspension,
+        "is_kids": req.is_kids,
+    }.items() if v is not None}
     cached = get_cached("/v1/bike/search", _fields, BikeSearchResponse)
     if cached is not None:
         return cached
+
+    enriched = req.enriched_query()
+    logger.info("search request | enriched_query=%r", enriched)
 
     category_results: list[CategoryResult] = []
     t_total = time.perf_counter()
@@ -58,7 +67,7 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         t_cat = time.perf_counter()
         logger.info("scoring category | category=%r", name)
         try:
-            result = await score_category(req.search, name, CATEGORY_PROMPTS[name])
+            result = await score_category(enriched, name, CATEGORY_PROMPTS[name])
             elapsed = time.perf_counter() - t_cat
             logger.info(
                 "category scored   | category=%-20s score=%2d  elapsed=%.2fs  explanation=%r",
@@ -84,14 +93,14 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         [(a["category"], a["count"]) for a in allocation],
     )
 
-    bikes = await find_all_bikes(allocation, req.search)
+    bikes = await find_all_bikes(allocation, enriched)
     total_elapsed = time.perf_counter() - t_total
     logger.info(
         "search complete | bikes=%d total_elapsed=%.2fs",
         len(bikes),
         total_elapsed,
     )
-    response = BikeSearchResponse(search=req.search, bikes=bikes)
+    response = BikeSearchResponse(search=enriched, bikes=bikes)
     set_cached("/v1/bike/search", _fields, response)
     return response
 
@@ -173,4 +182,20 @@ async def bike_used(req: UsedBikeRequest) -> UsedBikeResponse:
     elapsed = time.perf_counter() - t_start
     logger.info("used bikes complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     set_cached("/v1/bike/used", _fields, result)
+    return result
+
+
+@app.post("/v1/bike/parse", response_model=ParseResponse)
+async def bike_parse(req: ParseRequest) -> ParseResponse:
+    logger.info("parse request | text=%r", req.text[:80])
+    _fields = {"text": req.text}
+    cached = get_cached("/v1/bike/parse", _fields, ParseResponse)
+    if cached is not None:
+        return cached
+
+    t_start = time.perf_counter()
+    result = await parse_free_text(req.text)
+    elapsed = time.perf_counter() - t_start
+    logger.info("parse complete | elapsed=%.2fs result=%s", elapsed, result.model_dump(exclude_none=True))
+    set_cached("/v1/bike/parse", _fields, result)
     return result

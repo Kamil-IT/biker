@@ -1,17 +1,71 @@
-import { ArrowRight, MagnifyingGlass } from '@phosphor-icons/react'
+import { ArrowRight, CaretDown, MagnifyingGlass } from '@phosphor-icons/react'
+import type { SearchPayload } from '../types'
 
 interface SearchInputProps {
   value: string
   onChange: (value: string) => void
-  onSubmit: (query: string) => void
+  brand: string
+  onBrandChange: (v: string) => void
+  model: string
+  onModelChange: (v: string) => void
+  year: string
+  onYearChange: (v: string) => void
+  wheelSize: string
+  onWheelSizeChange: (v: string) => void
+  isElectric: boolean | undefined
+  onIsElectricChange: (v: boolean | undefined) => void
+  hasSuspension: boolean | undefined
+  onHasSuspensionChange: (v: boolean | undefined) => void
+  isKids: boolean | undefined
+  onIsKidsChange: (v: boolean | undefined) => void
+  showAdvanced: boolean
+  onShowAdvancedChange: (v: boolean) => void
+  isParsing: boolean
+  onSubmit: (payload: SearchPayload) => void
   isLoading: boolean
 }
 
-export default function SearchInput({ value, onChange, onSubmit, isLoading }: SearchInputProps) {
+const fieldClass =
+  'w-full px-3 py-2.5 bg-parchment text-charcoal border border-border rounded-xl font-body text-sm placeholder:text-muted focus:outline-none focus:border-terra focus:ring-2 focus:ring-terra/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200'
+
+const labelClass = 'block font-mono text-[10px] text-muted uppercase tracking-wider mb-1'
+
+export default function SearchInput({
+  value, onChange,
+  brand, onBrandChange,
+  model, onModelChange,
+  year, onYearChange,
+  wheelSize, onWheelSizeChange,
+  isElectric, onIsElectricChange,
+  hasSuspension, onHasSuspensionChange,
+  isKids, onIsKidsChange,
+  showAdvanced, onShowAdvancedChange,
+  isParsing,
+  onSubmit, isLoading,
+}: SearchInputProps) {
+
+  const hasAny = !!(
+    value.trim() || brand.trim() || model.trim() || year.trim() ||
+    wheelSize || isElectric !== undefined || hasSuspension !== undefined || isKids !== undefined
+  )
+
+  const buildPayload = (): SearchPayload => {
+    const p: SearchPayload = {}
+    if (value.trim())                p.search          = value.trim()
+    if (brand.trim())                p.brand           = brand.trim()
+    if (model.trim())                p.model           = model.trim()
+    if (year.trim())                 p.year            = parseInt(year, 10)
+    if (wheelSize)                   p.wheel_size      = wheelSize
+    if (isElectric !== undefined)    p.is_electric     = isElectric
+    if (hasSuspension !== undefined) p.has_suspension  = hasSuspension
+    if (isKids !== undefined)        p.is_kids         = isKids
+    return p
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    const trimmed = value.trim()
-    if (trimmed && !isLoading) onSubmit(trimmed)
+    if (!hasAny || isLoading || isParsing) return
+    onSubmit(buildPayload())
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -20,7 +74,7 @@ export default function SearchInput({ value, onChange, onSubmit, isLoading }: Se
 
   return (
     <form onSubmit={handleSubmit} noValidate>
-      {/* Input row */}
+      {/* Main search input */}
       <div className="relative">
         <label htmlFor="bike-search" className="sr-only">
           Describe your ideal bike
@@ -53,11 +107,124 @@ export default function SearchInput({ value, onChange, onSubmit, isLoading }: Se
         />
       </div>
 
+      {/* Advanced toggle */}
+      <button
+        type="button"
+        onClick={() => onShowAdvancedChange(!showAdvanced)}
+        className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-muted uppercase tracking-wider hover:text-terra transition-colors duration-150"
+      >
+        <CaretDown
+          size={12}
+          aria-hidden="true"
+          style={{ transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 150ms' }}
+        />
+        {showAdvanced ? 'Fewer options' : 'More options'}
+      </button>
+
+      {/* Advanced fields */}
+      {showAdvanced && (
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="bike-brand" className={labelClass}>Brand</label>
+            <input
+              id="bike-brand"
+              type="text"
+              value={brand}
+              onChange={e => onBrandChange(e.target.value)}
+              placeholder="e.g. Trek, Specialized"
+              disabled={isLoading}
+              autoComplete="off"
+              className={fieldClass}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="bike-model" className={labelClass}>Model</label>
+            <input
+              id="bike-model"
+              type="text"
+              value={model}
+              onChange={e => onModelChange(e.target.value)}
+              placeholder="e.g. Marlin 7, Diverge"
+              disabled={isLoading}
+              autoComplete="off"
+              className={fieldClass}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="bike-year" className={labelClass}>Year</label>
+            <input
+              id="bike-year"
+              type="number"
+              value={year}
+              onChange={e => onYearChange(e.target.value)}
+              placeholder="e.g. 2022"
+              min={1990}
+              max={2030}
+              disabled={isLoading}
+              className={fieldClass}
+            />
+          </div>
+
+          <div>
+            <label htmlFor="bike-wheel" className={labelClass}>Wheel size</label>
+            <select
+              id="bike-wheel"
+              value={wheelSize}
+              onChange={e => onWheelSizeChange(e.target.value)}
+              disabled={isLoading}
+              className={`${fieldClass} appearance-none`}
+            >
+              <option value="">Any</option>
+              <option value='26"'>26"</option>
+              <option value='27.5"'>27.5"</option>
+              <option value='29"'>29"</option>
+              <option value="700c">700c</option>
+              <option value="650b">650b</option>
+            </select>
+          </div>
+
+          <div className="sm:col-span-2 flex flex-col gap-2.5 pt-0.5">
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={isElectric === true}
+                onChange={e => onIsElectricChange(e.target.checked ? true : undefined)}
+                disabled={isLoading}
+                className="w-4 h-4 accent-terra rounded"
+              />
+              <span className="font-body text-sm text-ink">Electric bike (e-bike) only</span>
+            </label>
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={hasSuspension === true}
+                onChange={e => onHasSuspensionChange(e.target.checked ? true : undefined)}
+                disabled={isLoading}
+                className="w-4 h-4 accent-terra rounded"
+              />
+              <span className="font-body text-sm text-ink">Has suspension (front or full)</span>
+            </label>
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={isKids === true}
+                onChange={e => onIsKidsChange(e.target.checked ? true : undefined)}
+                disabled={isLoading}
+                className="w-4 h-4 accent-terra rounded"
+              />
+              <span className="font-body text-sm text-ink">Kids bike</span>
+            </label>
+          </div>
+        </div>
+      )}
+
       {/* Submit button */}
       <button
         type="submit"
-        disabled={!value.trim() || isLoading}
-        aria-label={isLoading ? 'Searching for bike recommendations' : 'Find bike recommendations'}
+        disabled={!hasAny || isLoading || isParsing}
+        aria-label={isLoading ? 'Searching for bike recommendations' : isParsing ? 'Extracting fields from your text' : 'Find bike recommendations'}
         className="
           mt-3 w-full flex items-center justify-center gap-2.5
           py-4 px-8
@@ -78,6 +245,14 @@ export default function SearchInput({ value, onChange, onSubmit, isLoading }: Se
               aria-hidden="true"
             />
             Analysing…
+          </>
+        ) : isParsing ? (
+          <>
+            <span
+              className="spin w-4 h-4 rounded-full border-2 border-parchment/30 border-t-parchment"
+              aria-hidden="true"
+            />
+            Extracting fields…
           </>
         ) : (
           <>

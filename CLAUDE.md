@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Agent Policy
+
+**Before implementing any multi-step task**, always call `mcp__ruflo__hooks_pre-task` with the task ID and description. It returns agent role suggestions — spawn those agents via `mcp__ruflo__agent_spawn` before writing code. Example flow:
+
+1. `mcp__ruflo__hooks_pre-task` — get agent suggestions for this task
+2. `mcp__ruflo__agent_spawn` — spawn one agent per suggested role (e.g. `backend-impl`, `tester`)
+3. `mcp__ruflo__task_create` — register the task
+4. Implement, then `mcp__ruflo__task_complete` when done
+
 ## Development Rules
 
 **New backend endpoint** → add a smoke test for it in `backend/scripts/test_search.py`. This is the single file for all smoke tests. Each test must call the endpoint against a running local server and assert HTTP 200.
@@ -74,6 +83,32 @@ npm run preview   # serve production build locally
 - **Dev server**: http://localhost:5173 — requires the backend to be running on port 8000 (Vite proxies `/v1/*` → `http://localhost:8000`)
 - **Node version**: v24 / npm 11
 
+## Parallel Development (Worktrees)
+
+Work on multiple features simultaneously — each in its own directory, its own branch, without stashing.
+
+```
+C:\Users\kamil_wolny\Projects\
+├── biker\             ← main branch (always here)
+└── biker-wt\
+    ├── feature-xyz\   ← feature/xyz branch
+    └── fix-abc\       ← fix/abc branch
+```
+
+**Create a new worktree:** `/new-worktree feature/my-feature`
+**Check what's running:** `/worktree-status`
+**Remove when done:** `git worktree remove C:\Users\kamil_wolny\Projects\biker-wt\feature-my-feature`
+
+Each worktree shares `node_modules` and `.venv` via Junction symlinks (created automatically by `/new-worktree`). If your branch adds new packages, break the junction and run install fresh — the command output explains how.
+
+**Port convention** (for running two worktrees simultaneously):
+
+| Worktree | Backend | Frontend |
+|----------|---------|----------|
+| `biker\` (main) | 8000 | 5173 |
+| first worktree | 8001 | 5174 |
+| second worktree | 8002 | 5175 |
+
 ## Architecture
 
 ### Backend (`/backend`)
@@ -96,11 +131,12 @@ npm run preview   # serve production build locally
 | Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` · `scripts/test_offer.py` | Smoke tests for each endpoint |
 
 **Endpoint** `POST /v1/bike/search`
-- Request: `{"search": "free text description"}`
-- Phase 1: Calls `claude-haiku-4-5-20251001` once per category (11 sequential calls) to score relevance
+- Request: all fields optional, at least one required — `search` (free text), `brand`, `model`, `year` (int), `wheel_size` (string), `is_electric` (bool), `has_suspension` (bool), `is_kids` (bool)
+- Structured fields are assembled into an enriched query string via `SearchRequest.enriched_query()` (e.g. `"Brand: Trek, Year: 2023 — trail riding"`), then passed through the existing pipeline
+- Phase 1: Calls `claude-haiku-4-5-20251001` once per category (11 sequential calls) to score relevance against the enriched query
 - Phase 2: Filters to categories with score ≥ 5 (minimum 2); allocates exactly 5 bikes weighted by score
 - Phase 3: Calls Claude in parallel (one call per qualifying category) to find real bikes
-- Returns 5 bike results with brand, model, accessories, match score, and explanation
+- Returns 5 bike results with brand, model, accessories, match score, and explanation; `search` field in response contains the enriched query
 - On parse error: returns empty list for that category — never returns 502 for bad JSON
 
 **Endpoint** `POST /v1/bike/details`

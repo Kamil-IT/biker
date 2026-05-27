@@ -1,15 +1,60 @@
-from pydantic import BaseModel, field_validator
+from typing import Optional
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class SearchRequest(BaseModel):
-    search: str
+    search:          Optional[str]  = None
+    brand:           Optional[str]  = None
+    model:           Optional[str]  = None
+    year:            Optional[int]  = None
+    wheel_size:      Optional[str]  = None
+    is_electric:     Optional[bool] = None
+    has_suspension:  Optional[bool] = None
+    is_kids:         Optional[bool] = None
 
-    @field_validator("search")
+    @field_validator("search", "brand", "model", "wheel_size", mode="before")
     @classmethod
-    def search_not_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("search must not be empty")
-        return v.strip()
+    def strip_and_none(cls, v):
+        if v is None:
+            return None
+        s = str(v).strip()
+        return s if s else None
+
+    @field_validator("year", mode="before")
+    @classmethod
+    def validate_year(cls, v):
+        if v is None:
+            return None
+        y = int(v)
+        if not (1900 <= y <= 2100):
+            raise ValueError("year must be between 1900 and 2100")
+        return y
+
+    @model_validator(mode="after")
+    def at_least_one_field(self) -> "SearchRequest":
+        if not any(v is not None for v in [
+            self.search, self.brand, self.model, self.year,
+            self.wheel_size, self.is_electric, self.has_suspension, self.is_kids,
+        ]):
+            raise ValueError("Provide at least one search field")
+        return self
+
+    def enriched_query(self) -> str:
+        parts: list[str] = []
+        if self.brand:              parts.append(f"Brand: {self.brand}")
+        if self.model:              parts.append(f"Model: {self.model}")
+        if self.year is not None:   parts.append(f"Year: {self.year}")
+        if self.wheel_size:         parts.append(f"Wheel size: {self.wheel_size}")
+        if self.is_electric is not None:
+            parts.append(f"Electric: {'yes' if self.is_electric else 'no'}")
+        if self.has_suspension is not None:
+            parts.append(f"Suspension: {'yes' if self.has_suspension else 'no'}")
+        if self.is_kids is not None:
+            parts.append(f"Kids bike: {'yes' if self.is_kids else 'no'}")
+        prefix = ", ".join(parts)
+        if prefix and self.search:
+            return f"{prefix} — {self.search}"
+        return prefix or self.search or ""
 
 
 class BikeDetailsRequest(BaseModel):
@@ -170,5 +215,26 @@ class UsedBikeRequest(BaseModel):
 class UsedBikeResponse(BaseModel):
     offers: list[BikeOffer]
     info: str = ""
+
+
+class ParseRequest(BaseModel):
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("text must not be empty")
+        return v.strip()
+
+
+class ParseResponse(BaseModel):
+    brand:           Optional[str]  = None
+    model:           Optional[str]  = None
+    year:            Optional[int]  = None
+    wheel_size:      Optional[str]  = None
+    is_electric:     Optional[bool] = None
+    has_suspension:  Optional[bool] = None
+    is_kids:         Optional[bool] = None
 
 

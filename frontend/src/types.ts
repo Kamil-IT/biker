@@ -78,3 +78,24 @@ export interface UsedBikeResponse {
   offers: BikeOffer[]
   info: string
 }
+
+export interface SearchPayload {
+  search?:         string
+  brand?:          string
+  model?:          string
+  year?:           number
+  wheel_size?:     string
+  is_electric?:    boolean
+  has_suspension?: boolean
+  is_kids?:        boolean
+}
+
+export interface ParseResponse {
+  brand?:          string
+  model?:          string
+  year?:           number
+  wheel_size?:     string
+  is_electric?:    boolean
+  has_suspension?: boolean
+  is_kids?:        boolean
+}
