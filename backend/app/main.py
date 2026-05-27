@@ -12,6 +12,7 @@ from .schemas import (  # noqa: E402
     BikeDetailsRequest, BikeDetailsResponse,
     BikeReviewRequest, BikeReviewResponse,
     BikeOfferRequest, BikeOfferResponse,
+    UsedBikeRequest, UsedBikeResponse,
 )
 from .categories import BIKE_CATEGORIES, CATEGORY_PROMPTS  # noqa: E402
 from .anthropic_scorer import score_category  # noqa: E402
@@ -21,6 +22,7 @@ from .bike_description_finder import find_bike_description  # noqa: E402
 from .bike_photos_finder import find_bike_photos  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_finder import find_bike_offers  # noqa: E402
+from .bike_used_finder import find_used_bikes  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
 
 logging.basicConfig(
@@ -155,4 +157,20 @@ async def bike_offer(req: BikeOfferRequest) -> BikeOfferResponse:
     elapsed = time.perf_counter() - t_start
     logger.info("offer complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     set_cached("/v1/bike/offer", _fields, result)
+    return result
+
+
+@app.post("/v1/bike/used", response_model=UsedBikeResponse)
+async def bike_used(req: UsedBikeRequest) -> UsedBikeResponse:
+    logger.info("used bikes request | company=%r model=%r", req.company, req.model)
+    _fields = {"company": req.company, "model": req.model}
+    cached = get_cached("/v1/bike/used", _fields, UsedBikeResponse)
+    if cached is not None:
+        return cached
+
+    t_start = time.perf_counter()
+    result = await find_used_bikes(req.company, req.model)
+    elapsed = time.perf_counter() - t_start
+    logger.info("used bikes complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
+    set_cached("/v1/bike/used", _fields, result)
     return result

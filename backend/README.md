@@ -123,3 +123,42 @@ Content-Type: application/json
 
 **Flow:**
 1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches allegro.pl; returns 1 offer with price, condition, direct link, and photo URLs
+
+---
+
+### `POST /v1/bike/used`
+
+Return current used-bike listings from OLX.pl for a specific bike model.
+
+```http
+POST http://localhost:8000/v1/bike/used
+Content-Type: application/json
+
+{
+  "company": "Trek",
+  "model": "Marlin 5"
+}
+```
+
+**Response:**
+```json
+{
+  "offers": [
+    {
+      "brand": "Trek",
+      "model": "Marlin 5 2022",
+      "price": "2 500 zł",
+      "is_new": false,
+      "url": "https://www.olx.pl/d/oferta/...",
+      "photos": ["https://ireland.apollo.olxcdn.com/...jpg"],
+      "source": "olx.pl",
+      "city": "Warsaw"
+    }
+  ],
+  "info": "Exact match found on OLX.pl"
+}
+```
+
+**Flow:**
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches olx.pl with cascade fallback (exact → model-family → brand/category); returns up to 5 used listings with price, city, direct link
+2. Playwright (headless=False) navigates each listing URL and extracts up to 4 `<img>` URLs matching the OLX CDN pattern (`*.apollo.olxcdn.com`)

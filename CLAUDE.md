@@ -81,7 +81,7 @@ npm run preview   # serve production build locally
 | Layer | File | Responsibility |
 |-------|------|----------------|
 | Entry point | `app/main.py` | FastAPI app, routes, request logging |
-| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse`, `BikeDetailsRequest`, `BikeDetailsResponse`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeReviewRequest`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferRequest`, `BikeOfferResponse` |
+| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse`, `BikeDetailsRequest`, `BikeDetailsResponse`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeReviewRequest`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferRequest`, `BikeOfferResponse`, `UsedBikeRequest`, `UsedBikeResponse` |
 | Categories | `app/categories.py` | 11 bike category registry; loads prompt files at startup |
 | Prompts | `app/prompts/*.md` | Per-category scoring prompts + `bike_search_{slug}.md` per-category bike-finding prompts + `bike_details_{slug}.md` per-category component search prompts (8 categories) + `bike_details.md` JSON format reference |
 | Scorer | `app/anthropic_scorer.py` | Calls Claude Haiku per category, strips code fences, parses JSON |
@@ -90,6 +90,8 @@ npm run preview   # serve production build locally
 | Description finder | `app/bike_description_finder.py` | Single `web_search` call with prompt caching to generate a 4–5 sentence plain-text bike overview; runs in parallel with details finder |
 | Review finder | `app/bike_review_finder.py` | Single `web_search` call to find 3–5 reviews, synthesises score 0–10, explanation, and source URLs |
 | Offer finder | `app/bike_offer_finder.py` | Single `web_search` call to find 1 current offer on allegro.pl |
+| Used bikes finder | `app/bike_used_finder.py` | Single `web_search` call to find up to 5 used listings on olx.pl with cascade fallback; then Playwright scrapes photos via `olx_image_fetcher.py` |
+| OLX image fetcher | `app/olx_image_fetcher.py` | Playwright (headless=False) scrapes up to 4 `<img>` URLs from each OLX listing URL using `*.apollo.olxcdn.com` regex |
 | Photos finder | `app/bike_photos_finder.py` | Two-step: (1) Claude `web_search` to find manufacturer product page URL, (2) Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs from rendered page; runs in parallel with details and description finders |
 | Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` · `scripts/test_offer.py` | Smoke tests for each endpoint |
 
@@ -122,6 +124,13 @@ npm run preview   # serve production build locally
 - Returns `{ offers: [{ brand, model, price, is_new, url, photos, source }], info: str }` (1 offer)
 - On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
 
+**Endpoint** `POST /v1/bike/used`
+- Request: `{"company": "Trek", "model": "Marlin 5"}`
+- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches olx.pl using `app/prompts/bike_offer_olx.md` as the system prompt; cascade fallback (exact → model-family → brand/category)
+- Then Playwright (headless=False) fetches up to 4 photo URLs per listing from OLX CDN
+- Returns `{ offers: [{ brand, model, price, is_new, url, photos, source, city }], info: str }` (up to 5 listings, always used)
+- On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
+
 **Bike categories** (defined in `app/categories.py`):
 Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser, Touring, Folding, Cyclocross, Kids
 
@@ -132,12 +141,12 @@ Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser
 | Layer | File | Responsibility |
 |-------|------|----------------|
 | Entry point | `src/main.tsx` | React root, mounts `<App>` |
-| App shell | `src/App.tsx` | View router (`search` / `details`), search, details, review & offer state, all four API calls |
+| App shell | `src/App.tsx` | View router (`search` / `details`), search, details, review, offer & used-bike state, all five API calls |
 | Search form | `src/components/SearchInput.tsx` | Controlled input + submit button, loading state |
 | Result card | `src/components/ResultCard.tsx` | Clickable per-bike card: match score, brand + model, accessories chips, explanation, score bar |
 | Loading card | `src/components/LoadingCard.tsx` | Shimmer skeleton matching result card dimensions |
-| Details view | `src/components/BikeDetailsView.tsx` | Full spec sheet: back nav, bike header, Overview (DescriptionCard), Current Offers (OffersSection), Expert Review (ReviewSection), category/subcategory/element/spec tree, shimmer skeleton, error + retry |
-| Shared types | `src/types.ts` | `Bike`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeDetailsResponse`, `BikeDescription`, `TextSegment`, `DescriptionCitation`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferResponse` |
+| Details view | `src/components/BikeDetailsView.tsx` | Full spec sheet: back nav, bike header, Overview (DescriptionCard), Current Offers (OffersSection), Used Bikes OLX (UsedBikesSection), Expert Review (ReviewSection), category/subcategory/element/spec tree, shimmer skeleton, error + retry |
+| Shared types | `src/types.ts` | `Bike`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeDetailsResponse`, `BikeDescription`, `TextSegment`, `DescriptionCitation`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferResponse`, `UsedBikeResponse` |
 | Styles | `src/index.css` | Tailwind v4 `@theme` tokens, Google Fonts import, keyframe animations |
 | Vite config | `vite.config.ts` | Tailwind v4 plugin, `/v1` proxy to backend |
 
@@ -151,4 +160,5 @@ Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser
 - `POST /v1/bike/details` `{ "company": "...", "model": "..." }` → `{ company, model, description: BikeDescription, components: BikeCategory[] }`
 - `POST /v1/bike/review` `{ "company": "...", "model": "..." }` → `{ score, explanation, ref: string[] }`
 - `POST /v1/bike/offer` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }`
+- `POST /v1/bike/used` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (used bikes from OLX, each with optional `city`)
 - All endpoints proxied to backend via Vite — no CORS config needed in development

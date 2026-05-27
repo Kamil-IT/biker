@@ -66,9 +66,15 @@ export interface BikeOffer {
   url: string
   photos: string[]
   source: string
+  city?: string
 }
 
 export interface BikeOfferResponse {
+  offers: BikeOffer[]
+  info: string
+}
+
+export interface UsedBikeResponse {
   offers: BikeOffer[]
   info: string
 }

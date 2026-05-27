@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react'
-import type { Bike, BikeCategory, BikeSubcategory, ComponentElement, BikeDescription, BikeReviewResponse, BikeOffer, BikeOfferResponse } from '../types'
+import type { Bike, BikeCategory, BikeSubcategory, ComponentElement, BikeDescription, BikeReviewResponse, BikeOffer, BikeOfferResponse, UsedBikeResponse } from '../types'
 
 type ReviewState = 'loading' | 'loaded' | 'error'
 
@@ -15,6 +15,8 @@ interface BikeDetailsViewProps {
   reviewState: ReviewState
   offers: BikeOfferResponse | null
   offerState: 'loading' | 'loaded' | 'error'
+  usedBikes: UsedBikeResponse | null
+  usedBikeState: 'loading' | 'loaded' | 'error'
   onBack: () => void
   onRetry: () => void
 }
@@ -30,6 +32,8 @@ export default function BikeDetailsView({
   reviewState,
   offers,
   offerState,
+  usedBikes,
+  usedBikeState,
   onBack,
   onRetry,
 }: BikeDetailsViewProps) {
@@ -104,6 +108,9 @@ export default function BikeDetailsView({
 
         {/* Offers */}
         <OffersSection offers={offers} state={offerState} />
+
+        {/* Used bikes (OLX) */}
+        <UsedBikesSection usedBikes={usedBikes} state={usedBikeState} />
 
         {/* Review */}
         <ReviewSection review={review} state={reviewState} />
@@ -388,6 +395,47 @@ function OffersSection({ offers, state }: { offers: BikeOfferResponse | null; st
   )
 }
 
+/* ── Used bikes (OLX) ──────────────────────────────── */
+
+function UsedBikesSection({ usedBikes, state }: { usedBikes: UsedBikeResponse | null; state: 'loading' | 'loaded' | 'error' }) {
+  if (state === 'loading') {
+    return (
+      <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
+        <div className="shimmer h-3 w-32 rounded mb-4" />
+        <div className="space-y-3">
+          {[0, 1, 2].map(i => (
+            <div key={i} className="flex items-center justify-between gap-4">
+              <div className="space-y-1.5 flex-1">
+                <div className="shimmer h-2.5 w-16 rounded" style={{ animationDelay: `${i * 40}ms` }} />
+                <div className="shimmer h-3.5 w-40 rounded" style={{ animationDelay: `${i * 40 + 20}ms` }} />
+                <div className="shimmer h-2.5 w-20 rounded" style={{ animationDelay: `${i * 40 + 30}ms` }} />
+              </div>
+              <div className="shimmer h-4 w-20 rounded" style={{ animationDelay: `${i * 40 + 40}ms` }} />
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  if (state === 'error' || !usedBikes || usedBikes.offers.length === 0) return null
+
+  return (
+    <div className="mt-5 bg-card rounded-2xl border border-border overflow-hidden">
+      <div className="px-5 py-4 md:px-6 md:py-5 border-b border-border">
+        <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
+          Used Bikes · OLX
+        </span>
+      </div>
+      <div className="divide-y divide-border">
+        {usedBikes.offers.map((offer, i) => (
+          <OfferRow key={i} offer={offer} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function OfferImageGallery({ photos }: { photos: string[] }) {
   const [idx, setIdx] = useState(0)
   if (!photos.length) return null
@@ -452,6 +500,9 @@ function OfferRow({ offer }: { offer: BikeOffer }) {
         <p className="font-display font-bold text-charcoal text-[14px] leading-tight truncate">
           {offer.brand} {offer.model}
         </p>
+        {offer.city && (
+          <p className="font-mono text-[10px] text-muted mt-0.5">{offer.city}</p>
+        )}
       </div>
       <OfferImageGallery photos={offer.photos} />
       <div className="shrink-0 flex items-center gap-2">
