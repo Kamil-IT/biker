@@ -22,16 +22,25 @@ python scripts/test_offer.py    # smoke-test POST /v1/bike/offer
 
 ### `POST /v1/bike/search`
 
-Find 5 matching bikes from a free-text description.
+Find 5 matching bikes. All fields are optional but at least one must be provided. The structured fields are combined into an enriched query string and fed to Claude alongside the free-text description.
 
 ```http
 POST http://localhost:8000/v1/bike/search
 Content-Type: application/json
 
 {
-  "search": "comfortable bike for daily 10 km city commute, mostly paved roads"
+  "search": "comfortable bike for daily 10 km city commute, mostly paved roads",
+  "brand": "Trek",
+  "model": "FX 3",
+  "year": 2023,
+  "wheel_size": "29\"",
+  "is_electric": false,
+  "has_suspension": false,
+  "is_kids": false
 }
 ```
+
+All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Model: FX 3, Year: 2023 — comfortable bike…"` and passes it through the existing scoring and bike-finding pipeline.
 
 **Flow:**
 1. `POST https://api.anthropic.com/v1/messages` × 11 — score each bike category (sequential)
