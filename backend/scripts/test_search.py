@@ -220,6 +220,34 @@ resp_bad_year = httpx.post(URL, json={"year": 1800}, timeout=10)
 assert resp_bad_year.status_code == 422, f"Expected 422 for year=1800, got {resp_bad_year.status_code}"
 print("OK — out-of-range year correctly rejected with 422")
 
+# ── [TC-12b] Search: new structured filters in enriched query ──
+print("\n── [TC-12b] Search: new filter fields (bike_type, price_max, frame_size, etc.) ──")
+filters_payload = {
+    "bike_type": "Gravel",
+    "price_max": 6000,
+    "frame_size": "M",
+    "rider_height_cm": 178,
+    "gender": "Universal",
+    "frame_material": "Carbon",
+    "brake_type": "Hydraulic Disc",
+    "drivetrain": "2x",
+    "belt_drive": False,
+    "is_electric": True,
+    "battery_capacity_wh": 500,
+}
+resp_filters = httpx.post(URL, json=filters_payload, timeout=120)
+assert resp_filters.status_code == 200, f"Expected 200, got {resp_filters.status_code}"
+data_filters = resp_filters.json()
+eq = data_filters["search"]
+for expected in [
+    "Type: Gravel", "Max price: 6000 PLN", "Frame size: M", "Rider height: 178 cm",
+    "Gender: Universal", "Frame material: Carbon", "Brakes: Hydraulic Disc",
+    "Drivetrain: 2x", "Belt drive: no", "Electric: yes", "Battery: 500 Wh",
+]:
+    assert expected in eq, f"Expected {expected!r} in enriched query, got: {eq!r}"
+assert isinstance(data_filters["bikes"], list) and len(data_filters["bikes"]) > 0, "Expected at least one bike"
+print(f"OK — new filters enriched query: {eq!r}")
+
 # ── [TC-13] Details: empty company string → 422 ──
 print("\n── [TC-13] Details: empty company string → 422 ──")
 resp_details_empty = httpx.post(DETAILS_URL, json={"company": "", "model": "Grizl CF 7"}, timeout=10)

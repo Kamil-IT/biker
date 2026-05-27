@@ -36,11 +36,21 @@ Content-Type: application/json
   "wheel_size": "29\"",
   "is_electric": false,
   "has_suspension": false,
-  "is_kids": false
+  "is_kids": false,
+  "bike_type": "Gravel",
+  "price_max": 6000,
+  "frame_size": "M",
+  "rider_height_cm": 178,
+  "gender": "Universal",
+  "frame_material": "Carbon",
+  "brake_type": "Hydraulic Disc",
+  "drivetrain": "2x",
+  "belt_drive": false,
+  "battery_capacity_wh": 500
 }
 ```
 
-All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Model: FX 3, Year: 2023 — comfortable bike…"` and passes it through the existing scoring and bike-finding pipeline.
+All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M, Max price: 6000 PLN — comfortable bike…"` and passes it through the existing scoring and bike-finding pipeline. All fields participate in the SQLite cache key, so two searches that differ only in a filter return distinct results.
 
 **Flow:**
 1. `POST https://api.anthropic.com/v1/messages` × 11 — score each bike category (sequential)
