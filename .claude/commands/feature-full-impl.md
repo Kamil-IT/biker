@@ -45,8 +45,57 @@ Use Playwright (already installed as `patchright`) to take a screenshot of the f
 
 Example: after saving `backend/scripts/ss_3_details_loaded.png`, read it with the Read tool and show it inline as proof.
 
-## 4 — Ship
+## 4 — Create PR with screenshots
 
-Ask the user: **"All checks passed. Do you want to ship this to main?"**
+Once the user approves, create a feature branch, commit all changes (including the `ss_*.png` screenshots), push, and open a PR whose description embeds the screenshots inline.
 
-If yes, invoke `/ship-to-main`.
+```bash
+# 1. Create and switch to branch
+git checkout -b feature/<slug>
+
+# 2. Stage all changed files + screenshots
+git add backend/app/... frontend/src/... CLAUDE.md backend/README.md \
+        .claude/commands/feature-full-impl.md \
+        backend/scripts/ss_*.png
+
+# 3. Commit
+git commit -m "Short description of the feature"
+
+# 4. Push
+git push -u origin feature/<slug>
+
+# 5. Create PR — embed screenshots using raw GitHub URLs on the branch
+BRANCH="feature/<slug>"
+REPO="Kamil-IT/biker"   # adjust if different
+
+gh pr create \
+  --title "..." \
+  --body "$(cat <<'EOF'
+## Summary
+- bullet 1
+- bullet 2
+
+## Screenshots
+
+### <Caption for ss_1>
+![ss_1](https://raw.githubusercontent.com/${REPO}/${BRANCH}/backend/scripts/ss_1_<name>.png)
+
+### <Caption for ss_2>
+![ss_2](https://raw.githubusercontent.com/${REPO}/${BRANCH}/backend/scripts/ss_2_<name>.png)
+
+## Test plan
+- [ ] smoke tests pass
+- [ ] UI works end-to-end
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+EOF
+)"
+```
+
+GitHub renders the `raw.githubusercontent.com` URLs as inline images in the PR description. The screenshots live on the branch and are cleaned up when the PR is merged.
+
+After creating the PR, share the link with the user.
+
+## 5 — Ship
+
+When the user confirms, invoke `/ship-to-main`.
