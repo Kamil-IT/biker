@@ -3,13 +3,14 @@ import SearchInput from './components/SearchInput'
 import ResultCard from './components/ResultCard'
 import LoadingCard from './components/LoadingCard'
 import BikeDetailsView from './components/BikeDetailsView'
-import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikeReviewResponse, BikeOfferResponse, SearchPayload, ParseResponse } from './types'
+import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse, SearchPayload, ParseResponse } from './types'
 
 type AppState     = 'idle' | 'loading' | 'results' | 'error'
 type AppView      = 'search' | 'details'
 type DetailsState = 'loading' | 'loaded' | 'error'
 type ReviewState  = 'loading' | 'loaded' | 'error'
 type OfferState   = 'loading' | 'loaded' | 'error'
+type UsedBikeState = 'loading' | 'loaded' | 'error'
 
 interface SearchResponse {
   search: string
@@ -50,6 +51,10 @@ export default function App() {
   // Offer state
   const [offerState, setOfferState]         = useState<OfferState>('loading')
   const [offers, setOffers]                 = useState<BikeOfferResponse | null>(null)
+
+  // Used bikes (OLX) state
+  const [usedBikeState, setUsedBikeState]   = useState<UsedBikeState>('loading')
+  const [usedBikes, setUsedBikes]           = useState<UsedBikeResponse | null>(null)
 
   /* ── Handlers ─────────────────────────────────────── */
 
@@ -200,6 +205,24 @@ export default function App() {
     }
   }
 
+  const fetchUsedBikes = async (bike: Bike) => {
+    setUsedBikeState('loading')
+    setUsedBikes(null)
+    try {
+      const res = await fetch('/v1/bike/used', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ company: bike.brand, model: bike.model }),
+      })
+      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      const data: UsedBikeResponse = await res.json()
+      setUsedBikes(data)
+      setUsedBikeState('loaded')
+    } catch {
+      setUsedBikeState('error')
+    }
+  }
+
   const handleBikeSelect = (bike: Bike) => {
     setSelectedBike(bike)
     setView('details')
@@ -207,6 +230,7 @@ export default function App() {
     fetchDetails(bike)
     fetchReview(bike)
     fetchOffer(bike)
+    fetchUsedBikes(bike)
   }
 
   const handleBackToResults = () => {
@@ -241,6 +265,8 @@ export default function App() {
     setReview(null)
     setOfferState('loading')
     setOffers(null)
+    setUsedBikeState('loading')
+    setUsedBikes(null)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -424,6 +450,8 @@ export default function App() {
             reviewState={reviewState}
             offers={offers}
             offerState={offerState}
+            usedBikes={usedBikes}
+            usedBikeState={usedBikeState}
             onBack={handleBackToResults}
             onRetry={() => fetchDetails(selectedBike)}
           />
