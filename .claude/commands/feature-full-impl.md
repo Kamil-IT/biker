@@ -39,37 +39,66 @@ mcp__ruflo__terminal_execute: cd /d C:\...\backend && .venv\Scripts\python.exe s
 
 ## 3 — Screenshot proof
 
-Use Playwright (already installed as `patchright`) to take a screenshot of the frontend after the feature loads. Save to `backend/scripts/ss_*.png` and read the file so the image is visible in the conversation.
+Use Playwright (already installed as `patchright`) to take screenshots of the frontend. Save to `backend/scripts/ss_*.png`, read the files to show them inline in the conversation, then **delete them** — they will be hosted on GitHub, not committed to the repo.
 
-**Do NOT delete the screenshots.** Leave all `backend/scripts/ss_*.png` files in place until `/ship-to-main` is triggered — the ship step cleans them up as part of the commit.
+Example:
+```python
+from patchright.async_api import async_playwright
+import asyncio
 
-Example: after saving `backend/scripts/ss_3_details_loaded.png`, read it with the Read tool and show it inline as proof.
+async def shoot():
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1280, "height": 900})
+        await page.goto("http://localhost:5174", wait_until="domcontentloaded")
+        await page.wait_for_selector("#bike-search", timeout=12000)
+        await page.screenshot(path="scripts/ss_1_default.png")
+        # ... more states ...
+        await browser.close()
+
+asyncio.run(shoot())
+```
+
+After reading/showing the images inline, delete the local files — they stay out of the repo.
 
 ## 4 — Create PR with screenshots
 
-Screenshots must **not** stay in the repo. The workflow uses a two-commit trick so the images appear in the PR description but are gone from the final branch HEAD:
+Screenshots are hosted on a GitHub release (not committed to the repo). The flow:
 
 ```bash
-# 1. Create branch
+TOKEN=$(gh auth token)
+REPO="Kamil-IT/biker"
+PR_NUM=<number>   # fill in after creating the PR, or use a label like "pr-<slug>"
+
+# 1. Create a published release to host the images (one release per PR)
+RELEASE_ID=$(curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  -H "Content-Type: application/json" \
+  -d "{\"tag_name\":\"screenshots-pr-${PR_NUM}\",\"name\":\"PR #${PR_NUM} screenshots\",\"draft\":false,\"body\":\"\"}" \
+  "https://api.github.com/repos/${REPO}/releases" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+
+# 2. Upload each screenshot as a release asset
+upload_asset() {
+  local file=$1; local name=$(basename "$file")
+  curl -s -X POST \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: image/png" \
+    --data-binary @"$file" \
+    "https://uploads.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['browser_download_url'])"
+}
+
+BASE="https://github.com/${REPO}/releases/download/screenshots-pr-${PR_NUM}"
+# after uploading: BASE/ss_1_<name>.png, BASE/ss_2_<name>.png, etc.
+
+# 3. Create branch, commit code (no screenshots), push
 git checkout -b feature/<slug>
-
-# 2. Commit code changes + screenshots together (gives them a permanent SHA)
-git add backend/app/... frontend/src/... CLAUDE.md backend/README.md \
-        .claude/commands/feature-full-impl.md \
-        backend/scripts/ss_*.png
+git add backend/app/... frontend/src/... CLAUDE.md backend/README.md .claude/commands/feature-full-impl.md
 git commit -m "Short description of the feature"
-SHA=$(git rev-parse HEAD)   # capture this SHA — needed for image URLs
-
-# 3. Immediately remove screenshots in a second commit
-git rm backend/scripts/ss_*.png
-git commit -m "Remove screenshots from repo (images pinned by SHA in PR)"
-
-# 4. Push
 git push -u origin feature/<slug>
 
-# 5. Create PR — embed screenshots using the SHA from step 2 (permanent, never changes)
-REPO="Kamil-IT/biker"   # adjust if different
-
+# 4. Create PR with release-hosted images embedded
 gh pr create \
   --title "..." \
   --body "$(cat <<'EOF'
@@ -79,11 +108,11 @@ gh pr create \
 
 ## Screenshots
 
-### <Caption for ss_1>
-![ss_1](https://raw.githubusercontent.com/${REPO}/${SHA}/backend/scripts/ss_1_<name>.png)
+### <Caption 1>
+![ss_1](https://github.com/REPO/releases/download/screenshots-pr-NUM/ss_1_<name>.png)
 
-### <Caption for ss_2>
-![ss_2](https://raw.githubusercontent.com/${REPO}/${SHA}/backend/scripts/ss_2_<name>.png)
+### <Caption 2>
+![ss_2](https://github.com/REPO/releases/download/screenshots-pr-NUM/ss_2_<name>.png)
 
 ## Test plan
 - [ ] smoke tests pass
@@ -94,7 +123,7 @@ EOF
 )"
 ```
 
-The SHA-pinned `raw.githubusercontent.com` URLs are permanent — git history is immutable so the images are always accessible even though the files are absent from the branch tip.
+GitHub renders release asset URLs as inline images. The release persists so images stay visible in the PR history. Screenshots never touch the repo.
 
 After creating the PR, share the link with the user.
 
