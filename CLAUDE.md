@@ -90,6 +90,7 @@ npm run preview   # serve production build locally
 | Description finder | `app/bike_description_finder.py` | Single `web_search` call with prompt caching to generate a 4–5 sentence plain-text bike overview; runs in parallel with details finder |
 | Review finder | `app/bike_review_finder.py` | Single `web_search` call to find 3–5 reviews, synthesises score 0–10, explanation, and source URLs |
 | Offer finder | `app/bike_offer_finder.py` | Single `web_search` call to find 1 current offer on allegro.pl |
+| Photos finder | `app/bike_photos_finder.py` | Two-step: (1) Claude `web_search` to find manufacturer product page URL, (2) Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs from rendered page; runs in parallel with details and description finders |
 | Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` · `scripts/test_offer.py` | Smoke tests for each endpoint |
 
 **Endpoint** `POST /v1/bike/search`
@@ -102,10 +103,11 @@ npm run preview   # serve production build locally
 
 **Endpoint** `POST /v1/bike/details`
 - Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
-- Runs two calls in parallel via `asyncio.gather`:
+- Runs three calls in parallel via `asyncio.gather`:
   1. `claude-haiku-4-5-20251001` with `web_search_20250305` **8 times** sequentially — one focused search per component category (Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories), each using a dedicated `app/prompts/bike_details_{slug}.md` system prompt
   2. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — generates a 4–5 sentence plain-text overview using `app/prompts/bike_description.md` with prompt caching on the system prompt
-- Returns: `{ company, model, description: str, components: [{ category, subcategories: [{ subcategory, elements: [{ name, description, specs: [{ key, value }] }] }] }] }`
+  3. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — finds the official manufacturer product page URL, then Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs from the rendered page; uses `app/prompts/bike_photos.md`
+- Returns: `{ company, model, description: str, components: [...], photos: [url, ...] }`
 - On JSON parse error for a category: logs the error and skips that category — never returns 502
 
 **Endpoint** `POST /v1/bike/review`

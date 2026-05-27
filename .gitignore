@@ -1,1 +1,8 @@
 .idea/
+
+# Ruflo / Claude Code runtime
+.claude/settings.local.json
+.swarm/
+ruvector.db
+backend/cache.db-shm
+backend/cache.db-wal

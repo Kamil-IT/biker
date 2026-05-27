@@ -18,6 +18,7 @@ from .anthropic_scorer import score_category  # noqa: E402
 from .bike_finder import filter_top_categories, allocate_bikes, find_all_bikes  # noqa: E402
 from .bike_details_finder import find_bike_details  # noqa: E402
 from .bike_description_finder import find_bike_description  # noqa: E402
+from .bike_photos_finder import find_bike_photos  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_finder import find_bike_offers  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
@@ -102,14 +103,16 @@ async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
         return cached
 
     t_start = time.perf_counter()
-    components, description = await asyncio.gather(
+    components, description, photos = await asyncio.gather(
         find_bike_details(req.company, req.model),
         find_bike_description(req.company, req.model),
+        find_bike_photos(req.company, req.model),
     )
     elapsed = time.perf_counter() - t_start
     logger.info(
-        "details complete | categories=%d elapsed=%.2fs",
+        "details complete | categories=%d photos=%d elapsed=%.2fs",
         len(components),
+        len(photos),
         elapsed,
     )
     response = BikeDetailsResponse(
@@ -117,6 +120,7 @@ async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
         model=req.model,
         description=description,
         components=components,
+        photos=photos,
     )
     set_cached("/v1/bike/details", _fields, response)
     return response

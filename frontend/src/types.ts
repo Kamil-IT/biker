@@ -49,6 +49,7 @@ export interface BikeDetailsResponse {
   model: string
   description: BikeDescription
   components: BikeCategory[]
+  photos: string[]
 }
 
 export interface BikeReviewResponse {
