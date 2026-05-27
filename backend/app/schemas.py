@@ -199,3 +199,24 @@ class BikeOfferResponse(BaseModel):
     info: str = ""
 
 
+class ParseRequest(BaseModel):
+    text: str
+
+    @field_validator("text")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("text must not be empty")
+        return v.strip()
+
+
+class ParseResponse(BaseModel):
+    brand:           Optional[str]  = None
+    model:           Optional[str]  = None
+    year:            Optional[int]  = None
+    wheel_size:      Optional[str]  = None
+    is_electric:     Optional[bool] = None
+    has_suspension:  Optional[bool] = None
+    is_kids:         Optional[bool] = None
+
+

@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { ArrowRight, CaretDown, MagnifyingGlass } from '@phosphor-icons/react'
 import type { SearchPayload } from '../types'
 
@@ -19,6 +18,9 @@ interface SearchInputProps {
   onHasSuspensionChange: (v: boolean | undefined) => void
   isKids: boolean | undefined
   onIsKidsChange: (v: boolean | undefined) => void
+  showAdvanced: boolean
+  onShowAdvancedChange: (v: boolean) => void
+  isParsing: boolean
   onSubmit: (payload: SearchPayload) => void
   isLoading: boolean
 }
@@ -37,9 +39,10 @@ export default function SearchInput({
   isElectric, onIsElectricChange,
   hasSuspension, onHasSuspensionChange,
   isKids, onIsKidsChange,
+  showAdvanced, onShowAdvancedChange,
+  isParsing,
   onSubmit, isLoading,
 }: SearchInputProps) {
-  const [showAdvanced, setShowAdvanced] = useState(false)
 
   const hasAny = !!(
     value.trim() || brand.trim() || model.trim() || year.trim() ||
@@ -61,7 +64,7 @@ export default function SearchInput({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!hasAny || isLoading) return
+    if (!hasAny || isLoading || isParsing) return
     onSubmit(buildPayload())
   }
 
@@ -107,7 +110,7 @@ export default function SearchInput({
       {/* Advanced toggle */}
       <button
         type="button"
-        onClick={() => setShowAdvanced(p => !p)}
+        onClick={() => onShowAdvancedChange(!showAdvanced)}
         className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-muted uppercase tracking-wider hover:text-terra transition-colors duration-150"
       >
         <CaretDown
@@ -220,8 +223,8 @@ export default function SearchInput({
       {/* Submit button */}
       <button
         type="submit"
-        disabled={!hasAny || isLoading}
-        aria-label={isLoading ? 'Searching for bike recommendations' : 'Find bike recommendations'}
+        disabled={!hasAny || isLoading || isParsing}
+        aria-label={isLoading ? 'Searching for bike recommendations' : isParsing ? 'Extracting fields from your text' : 'Find bike recommendations'}
         className="
           mt-3 w-full flex items-center justify-center gap-2.5
           py-4 px-8
@@ -242,6 +245,14 @@ export default function SearchInput({
               aria-hidden="true"
             />
             Analysing…
+          </>
+        ) : isParsing ? (
+          <>
+            <span
+              className="spin w-4 h-4 rounded-full border-2 border-parchment/30 border-t-parchment"
+              aria-hidden="true"
+            />
+            Extracting fields…
           </>
         ) : (
           <>
