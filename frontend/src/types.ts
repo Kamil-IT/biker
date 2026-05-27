@@ -80,14 +80,66 @@ export interface UsedBikeResponse {
 }
 
 export interface SearchPayload {
-  search?:         string
-  brand?:          string
-  model?:          string
-  year?:           number
-  wheel_size?:     string
-  is_electric?:    boolean
-  has_suspension?: boolean
-  is_kids?:        boolean
+  search?:              string
+  brand?:               string
+  model?:               string
+  year?:                number
+  wheel_size?:          string
+  is_electric?:         boolean
+  has_suspension?:      boolean
+  is_kids?:             boolean
+  bike_type?:           string
+  price_max?:           number
+  frame_size?:          string
+  rider_height_cm?:     number
+  gender?:              string
+  frame_material?:      string
+  brake_type?:          string
+  drivetrain?:          string
+  belt_drive?:          boolean
+  battery_capacity_wh?: number
+}
+
+// Form state for the search filters panel. Text/number inputs and
+// dropdowns are kept as strings; toggles are tri-state booleans.
+export interface SearchFilters {
+  brand:               string
+  model:               string
+  year:                string
+  wheel_size:          string
+  bike_type:           string
+  frame_size:          string
+  rider_height_cm:     string
+  price_max:           string
+  gender:              string
+  frame_material:      string
+  brake_type:          string
+  drivetrain:          string
+  battery_capacity_wh: string
+  is_electric:         boolean | undefined
+  has_suspension:      boolean | undefined
+  is_kids:             boolean | undefined
+  belt_drive:          boolean | undefined
+}
+
+export const EMPTY_FILTERS: SearchFilters = {
+  brand:               '',
+  model:               '',
+  year:                '',
+  wheel_size:          '',
+  bike_type:           '',
+  frame_size:          '',
+  rider_height_cm:     '',
+  price_max:           '',
+  gender:              '',
+  frame_material:      '',
+  brake_type:          '',
+  drivetrain:          '',
+  battery_capacity_wh: '',
+  is_electric:         undefined,
+  has_suspension:      undefined,
+  is_kids:             undefined,
+  belt_drive:          undefined,
 }
 
 export interface ParseResponse {
