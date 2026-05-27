@@ -152,5 +152,142 @@ resp_parse2 = httpx.post(PARSE_URL, json=parse_payload, timeout=10)
 elapsed_parse2 = _time.perf_counter() - t0
 assert resp_parse2.status_code == 200, f"Expected 200, got {resp_parse2.status_code}"
 assert resp_parse2.json() == data_parse, "Cached parse response differs from original"
-assert elapsed_parse2 < 5.0, f"Parse cache hit took {elapsed_parse2:.2f}s -- expected < 5s"
-print(f"OK -- parse cache hit in {elapsed_parse2:.3f}s")
+assert elapsed_parse2 < 5.0, f"Parse cache hit took {elapsed_parse2:.2f}s — expected < 5s"
+print(f"OK — parse cache hit in {elapsed_parse2:.3f}s")
+
+# ── Ceneo offer endpoint ──
+print("\n── Ceneo: find offers on ceneo.pl ──")
+CENEO_URL = "http://localhost:8000/v1/bike/ceneo"
+ceneo_payload = {"company": "INDIANA", "model": "Rock Jr 24"}
+resp_ceneo = httpx.post(CENEO_URL, json=ceneo_payload, timeout=120)
+assert resp_ceneo.status_code == 200, f"Expected 200, got {resp_ceneo.status_code}"
+ceneo_data = resp_ceneo.json()
+assert isinstance(ceneo_data["offers"], list), "Expected offers to be a list"
+assert len(ceneo_data["offers"]) >= 1, f"Expected at least 1 offer, got {len(ceneo_data['offers'])}"
+for offer in ceneo_data["offers"]:
+    assert offer["brand"], "offer.brand must be non-empty"
+    assert offer["model"], "offer.model must be non-empty"
+    assert offer["price"], "offer.price must be non-empty"
+    assert isinstance(offer["is_new"], bool), "offer.is_new must be bool"
+    assert offer["url"], "offer.url must be non-empty"
+    assert isinstance(offer["photos"], list), "offer.photos must be a list"
+    assert offer["source"] == "ceneo.pl", f"Expected source 'ceneo.pl', got {offer['source']!r}"
+print(f"OK — ceneo returned {len(ceneo_data['offers'])} offer(s)")
+
+# ── Ceneo: cache hit ──
+print("\n── Ceneo: cache hit ──")
+t0 = _time.perf_counter()
+resp_ceneo2 = httpx.post(CENEO_URL, json=ceneo_payload, timeout=10)
+elapsed_ceneo2 = _time.perf_counter() - t0
+assert resp_ceneo2.status_code == 200, f"Expected 200 on cached ceneo call, got {resp_ceneo2.status_code}"
+assert resp_ceneo2.json() == ceneo_data, "Cached ceneo response differs from original"
+assert elapsed_ceneo2 < 5.0, f"Ceneo cache hit took {elapsed_ceneo2:.2f}s — expected < 5s"
+print(f"OK — ceneo cache hit in {elapsed_ceneo2:.3f}s")
+
+# ── Ceneo: fallback for unknown bike ──
+print("\n── Ceneo: fallback for unknown bike ──")
+resp_ceneo_fake = httpx.post(CENEO_URL, json={"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=120)
+assert resp_ceneo_fake.status_code == 200, f"Expected 200 for fallback, got {resp_ceneo_fake.status_code}"
+fallback_data = resp_ceneo_fake.json()
+assert isinstance(fallback_data["offers"], list), "Fallback offers must be a list"
+print(f"OK — ceneo fallback returned {len(fallback_data['offers'])} offers (expected 0 or empty)")
+
+# ── [TC-10] Search response schema shape ──
+print("\n── [TC-10] Search response schema: bikes have required fields ──")
+first_bike = resp.json()["bikes"][0]
+assert isinstance(first_bike["brand"], str) and first_bike["brand"], "brand must be non-empty string"
+assert isinstance(first_bike["model"], str) and first_bike["model"], "model must be non-empty string"
+assert isinstance(first_bike["accessories"], list), "accessories must be list"
+assert isinstance(first_bike["match_score"], (int, float)), "match_score must be numeric"
+assert 0 <= first_bike["match_score"] <= 10, "match_score must be 0–10"
+assert isinstance(first_bike["explanation"], str) and first_bike["explanation"], "explanation must be non-empty string"
+print("OK — bike result schema is correct")
+
+# ── [TC-11] Search: is_kids=True structured flag ──
+print("\n── [TC-11] Search: is_kids=True flag ──")
+kids_payload = {"is_kids": True}
+resp_kids = httpx.post(URL, json=kids_payload, timeout=120)
+assert resp_kids.status_code == 200, f"Expected 200, got {resp_kids.status_code}"
+data_kids = resp_kids.json()
+assert "Kids bike: yes" in data_kids["search"], \
+    f"Expected 'Kids bike: yes' in enriched query, got: {data_kids['search']!r}"
+assert isinstance(data_kids["bikes"], list) and len(data_kids["bikes"]) > 0, "Expected at least one bike"
+print(f"OK — kids flag search, enriched query: {data_kids['search']!r}")
+
+# ── [TC-12] Search: invalid year → 422 ──
+print("\n── [TC-12] Search: year out of range → 422 ──")
+resp_bad_year = httpx.post(URL, json={"year": 1800}, timeout=10)
+assert resp_bad_year.status_code == 422, f"Expected 422 for year=1800, got {resp_bad_year.status_code}"
+print("OK — out-of-range year correctly rejected with 422")
+
+# ── [TC-13] Details: empty company string → 422 ──
+print("\n── [TC-13] Details: empty company string → 422 ──")
+resp_details_empty = httpx.post(DETAILS_URL, json={"company": "", "model": "Grizl CF 7"}, timeout=10)
+assert resp_details_empty.status_code == 422, \
+    f"Expected 422 for empty company, got {resp_details_empty.status_code}"
+print("OK — empty company correctly rejected with 422")
+
+# ── [TC-14] Review: basic 200 + schema ──
+REVIEW_URL = "http://localhost:8000/v1/bike/review"
+review_payload = {"company": "Canyon", "model": "Grizl CF 7 ESC"}
+print(f"\n── [TC-14] Review: POST {REVIEW_URL} ──")
+resp_review = httpx.post(REVIEW_URL, json=review_payload, timeout=120)
+assert resp_review.status_code == 200, f"Expected 200, got {resp_review.status_code}"
+review_data = resp_review.json()
+assert isinstance(review_data["score"], int), "score must be int"
+assert 0 <= review_data["score"] <= 10, "score must be 0–10"
+assert isinstance(review_data["explanation"], str) and review_data["explanation"], "explanation must be non-empty"
+assert isinstance(review_data["ref"], list), "ref must be a list"
+print(f"OK — review score={review_data['score']}, refs={len(review_data['ref'])}")
+
+# ── [TC-15] Review: cache hit ──
+print("\n── [TC-15] Review: cache hit ──")
+t0 = _time.perf_counter()
+resp_review2 = httpx.post(REVIEW_URL, json=review_payload, timeout=10)
+elapsed_review2 = _time.perf_counter() - t0
+assert resp_review2.status_code == 200, f"Expected 200 on cached review, got {resp_review2.status_code}"
+assert resp_review2.json() == review_data, "Cached review response differs from original"
+assert elapsed_review2 < 5.0, f"Review cache hit took {elapsed_review2:.2f}s — expected < 5s"
+print(f"OK — review cache hit in {elapsed_review2:.3f}s")
+
+# ── [TC-16] Review: empty company → 422 ──
+print("\n── [TC-16] Review: empty company → 422 ──")
+resp_review_empty = httpx.post(REVIEW_URL, json={"company": "", "model": "Grizl"}, timeout=10)
+assert resp_review_empty.status_code == 422, \
+    f"Expected 422 for empty company, got {resp_review_empty.status_code}"
+print("OK — empty company in review correctly rejected with 422")
+
+# ── [TC-17] Offer (allegro): basic 200 + schema ──
+OFFER_URL = "http://localhost:8000/v1/bike/offer"
+offer_payload = {"company": "Canyon", "model": "Grizl CF 7 ESC"}
+print(f"\n── [TC-17] Offer: POST {OFFER_URL} ──")
+resp_offer = httpx.post(OFFER_URL, json=offer_payload, timeout=120)
+assert resp_offer.status_code == 200, f"Expected 200, got {resp_offer.status_code}"
+offer_data = resp_offer.json()
+assert isinstance(offer_data["offers"], list), "offers must be a list"
+assert isinstance(offer_data["info"], str), "info must be a string"
+for o in offer_data["offers"]:
+    assert isinstance(o["brand"], str), "offer brand must be string"
+    assert isinstance(o["model"], str), "offer model must be string"
+    assert isinstance(o["price"], str), "offer price must be string"
+    assert isinstance(o["is_new"], bool), "offer is_new must be bool"
+    assert isinstance(o["url"], str) and o["url"], "offer url must be non-empty string"
+    assert isinstance(o["photos"], list), "offer photos must be list"
+print(f"OK — allegro offer returned {len(offer_data['offers'])} offer(s)")
+
+# ── [TC-18] Offer: cache hit ──
+print("\n── [TC-18] Offer: cache hit ──")
+t0 = _time.perf_counter()
+resp_offer2 = httpx.post(OFFER_URL, json=offer_payload, timeout=10)
+elapsed_offer2 = _time.perf_counter() - t0
+assert resp_offer2.status_code == 200, f"Expected 200 on cached offer, got {resp_offer2.status_code}"
+assert resp_offer2.json() == offer_data, "Cached offer response differs from original"
+assert elapsed_offer2 < 5.0, f"Offer cache hit took {elapsed_offer2:.2f}s — expected < 5s"
+print(f"OK — offer cache hit in {elapsed_offer2:.3f}s")
+
+# ── [TC-19] Offer: empty model → 422 ──
+print("\n── [TC-19] Offer: empty model → 422 ──")
+resp_offer_empty = httpx.post(OFFER_URL, json={"company": "Canyon", "model": ""}, timeout=10)
+assert resp_offer_empty.status_code == 422, \
+    f"Expected 422 for empty model, got {resp_offer_empty.status_code}"
+print("OK — empty model in offer correctly rejected with 422")

@@ -168,8 +168,8 @@ class BikeReviewResponse(BaseModel):
 
     @field_validator("ref")
     @classmethod
-    def single_ref(cls, v: list[str]) -> list[str]:
-        return v[:1]
+    def validate_ref(cls, v: list[str]) -> list[str]:
+        return v
 
 
 class BikeOffer(BaseModel):

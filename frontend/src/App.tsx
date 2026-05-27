@@ -51,6 +51,8 @@ export default function App() {
   // Offer state
   const [offerState, setOfferState]         = useState<OfferState>('loading')
   const [offers, setOffers]                 = useState<BikeOfferResponse | null>(null)
+  const [ceneoState, setCeneoState]         = useState<OfferState>('loading')
+  const [ceneoOffers, setCeneoOffers]       = useState<BikeOfferResponse | null>(null)
 
   // Used bikes (OLX) state
   const [usedBikeState, setUsedBikeState]   = useState<UsedBikeState>('loading')
@@ -223,6 +225,24 @@ export default function App() {
     }
   }
 
+  const fetchCeneo = async (bike: Bike) => {
+    setCeneoState('loading')
+    setCeneoOffers(null)
+    try {
+      const res = await fetch('/v1/bike/ceneo', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ company: bike.brand, model: bike.model }),
+      })
+      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      const data: BikeOfferResponse = await res.json()
+      setCeneoOffers(data)
+      setCeneoState('loaded')
+    } catch {
+      setCeneoState('error')
+    }
+  }
+
   const handleBikeSelect = (bike: Bike) => {
     setSelectedBike(bike)
     setView('details')
@@ -231,6 +251,7 @@ export default function App() {
     fetchReview(bike)
     fetchOffer(bike)
     fetchUsedBikes(bike)
+    fetchCeneo(bike)
   }
 
   const handleBackToResults = () => {
@@ -452,6 +473,8 @@ export default function App() {
             offerState={offerState}
             usedBikes={usedBikes}
             usedBikeState={usedBikeState}
+            ceneoOffers={ceneoOffers}
+            ceneoState={ceneoState}
             onBack={handleBackToResults}
             onRetry={() => fetchDetails(selectedBike)}
           />
