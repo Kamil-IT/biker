@@ -3,7 +3,7 @@ import SearchInput from './components/SearchInput'
 import ResultCard from './components/ResultCard'
 import LoadingCard from './components/LoadingCard'
 import BikeDetailsView from './components/BikeDetailsView'
-import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikeReviewResponse, BikeOfferResponse } from './types'
+import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikeReviewResponse, BikeOfferResponse, SearchPayload } from './types'
 
 type AppState     = 'idle' | 'loading' | 'results' | 'error'
 type AppView      = 'search' | 'details'
@@ -20,6 +20,13 @@ export default function App() {
   // Search state
   const [appState, setAppState]             = useState<AppState>('idle')
   const [query, setQuery]                   = useState('')
+  const [brand, setBrand]                   = useState('')
+  const [model, setModel]                   = useState('')
+  const [year, setYear]                     = useState('')
+  const [wheelSize, setWheelSize]           = useState('')
+  const [isElectric, setIsElectric]         = useState<boolean | undefined>(undefined)
+  const [hasSuspension, setHasSuspension]   = useState<boolean | undefined>(undefined)
+  const [isKids, setIsKids]                 = useState<boolean | undefined>(undefined)
   const [bikes, setBikes]                   = useState<Bike[]>([])
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [errorMsg, setErrorMsg]             = useState<string | null>(null)
@@ -44,16 +51,25 @@ export default function App() {
 
   /* ── Handlers ─────────────────────────────────────── */
 
-  const handleSearch = async (searchQuery: string) => {
+  const handleSearch = async (payload: SearchPayload) => {
     setAppState('loading')
     setErrorMsg(null)
-    setSubmittedQuery(searchQuery)
 
     try {
+      const body: SearchPayload = {}
+      if (payload.search)                      body.search          = payload.search
+      if (payload.brand)                       body.brand           = payload.brand
+      if (payload.model)                       body.model           = payload.model
+      if (payload.year !== undefined)          body.year            = payload.year
+      if (payload.wheel_size)                  body.wheel_size      = payload.wheel_size
+      if (payload.is_electric !== undefined)   body.is_electric     = payload.is_electric
+      if (payload.has_suspension !== undefined) body.has_suspension = payload.has_suspension
+      if (payload.is_kids !== undefined)       body.is_kids         = payload.is_kids
+
       const res = await fetch('/v1/bike/search', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ search: searchQuery }),
+        body:    JSON.stringify(body),
       })
 
       if (!res.ok) {
@@ -63,6 +79,7 @@ export default function App() {
 
       const data: SearchResponse = await res.json()
       setBikes(data.bikes)
+      setSubmittedQuery(data.search)
       setAppState('results')
 
       setTimeout(() => {
@@ -161,6 +178,13 @@ export default function App() {
     setBikes([])
     setErrorMsg(null)
     setQuery('')
+    setBrand('')
+    setModel('')
+    setYear('')
+    setWheelSize('')
+    setIsElectric(undefined)
+    setHasSuspension(undefined)
+    setIsKids(undefined)
     setView('search')
     setSelectedBike(null)
     setBikeCategories(null)
@@ -233,6 +257,20 @@ export default function App() {
               <SearchInput
                 value={query}
                 onChange={setQuery}
+                brand={brand}
+                onBrandChange={setBrand}
+                model={model}
+                onModelChange={setModel}
+                year={year}
+                onYearChange={setYear}
+                wheelSize={wheelSize}
+                onWheelSizeChange={setWheelSize}
+                isElectric={isElectric}
+                onIsElectricChange={setIsElectric}
+                hasSuspension={hasSuspension}
+                onHasSuspensionChange={setHasSuspension}
+                isKids={isKids}
+                onIsKidsChange={setIsKids}
                 onSubmit={handleSearch}
                 isLoading={appState === 'loading'}
               />

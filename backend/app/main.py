@@ -43,11 +43,18 @@ app = FastAPI(title="Biker API", version="1.0.0", lifespan=lifespan)
 
 @app.post("/v1/bike/search", response_model=BikeSearchResponse)
 async def bike_search(req: SearchRequest) -> BikeSearchResponse:
-    logger.info("search request received | query=%r", req.search)
-    _fields = {"search": req.search}
+    _fields = {k: str(v) for k, v in {
+        "search": req.search, "brand": req.brand, "model": req.model,
+        "year": req.year, "wheel_size": req.wheel_size,
+        "is_electric": req.is_electric, "has_suspension": req.has_suspension,
+        "is_kids": req.is_kids,
+    }.items() if v is not None}
     cached = get_cached("/v1/bike/search", _fields, BikeSearchResponse)
     if cached is not None:
         return cached
+
+    enriched = req.enriched_query()
+    logger.info("search request | enriched_query=%r", enriched)
 
     category_results: list[CategoryResult] = []
     t_total = time.perf_counter()
@@ -56,7 +63,7 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         t_cat = time.perf_counter()
         logger.info("scoring category | category=%r", name)
         try:
-            result = await score_category(req.search, name, CATEGORY_PROMPTS[name])
+            result = await score_category(enriched, name, CATEGORY_PROMPTS[name])
             elapsed = time.perf_counter() - t_cat
             logger.info(
                 "category scored   | category=%-20s score=%2d  elapsed=%.2fs  explanation=%r",
@@ -82,14 +89,14 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         [(a["category"], a["count"]) for a in allocation],
     )
 
-    bikes = await find_all_bikes(allocation, req.search)
+    bikes = await find_all_bikes(allocation, enriched)
     total_elapsed = time.perf_counter() - t_total
     logger.info(
         "search complete | bikes=%d total_elapsed=%.2fs",
         len(bikes),
         total_elapsed,
     )
-    response = BikeSearchResponse(search=req.search, bikes=bikes)
+    response = BikeSearchResponse(search=enriched, bikes=bikes)
     set_cached("/v1/bike/search", _fields, response)
     return response
 
