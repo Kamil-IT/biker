@@ -11,6 +11,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. `mcp__ruflo__task_create` — register the task
 4. Implement, then `mcp__ruflo__task_complete` when done
 
+## Backlog
+
+Tasks are tracked in `/backlog/`. Naming convention:
+
+- `TODO_<ID>_<TASK_NAME>.md` — task not yet started
+- `DONE_<ID>_<TASK_NAME>.md` — completed task (rename the file, don't delete it)
+
+When picking up a task: read its file, implement, then rename `TODO_` → `DONE_`.
+When creating a new task: ask clarifying questions first, then write the file.
+
 ## Development Rules
 
 **New backend endpoint** → add a smoke test for it in `backend/scripts/test_search.py`. This is the single file for all smoke tests. Each test must call the endpoint against a running local server and assert HTTP 200.
