@@ -174,6 +174,43 @@ Content-Type: application/json
 
 ---
 
+### `POST /v1/bike/ceneo`
+
+Return current buying offers from ceneo.pl for a specific bike model.
+
+```http
+POST http://localhost:8000/v1/bike/ceneo
+Content-Type: application/json
+
+{
+  "company": "Canyon",
+  "model": "Grizl CF 7 ESC"
+}
+```
+
+**Response:**
+```json
+{
+  "offers": [
+    {
+      "brand": "Canyon",
+      "model": "Grizl CF 7",
+      "price": "8 999 zł",
+      "is_new": true,
+      "url": "https://www.ceneo.pl/rowery/canyon-grizl-cf-7",
+      "photos": [],
+      "source": "ceneo.pl"
+    }
+  ],
+  "info": ""
+}
+```
+
+**Flow:**
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches ceneo.pl; returns 1 offer with price, condition, and direct link
+
+---
+
 ### `POST /v1/bike/parse`
 
 Extract structured bike attributes (brand, model, year, wheel size, flags) from a free-text query. Used by the frontend to auto-populate the structured search fields before the user submits their search.

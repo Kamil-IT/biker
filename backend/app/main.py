@@ -24,6 +24,7 @@ from .bike_photos_finder import find_bike_photos  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_finder import find_bike_offers  # noqa: E402
 from .bike_used_finder import find_used_bikes  # noqa: E402
+from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
 from .bike_parser import parse_free_text  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
 
@@ -182,6 +183,22 @@ async def bike_used(req: UsedBikeRequest) -> UsedBikeResponse:
     elapsed = time.perf_counter() - t_start
     logger.info("used bikes complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     set_cached("/v1/bike/used", _fields, result)
+    return result
+
+
+@app.post("/v1/bike/ceneo", response_model=BikeOfferResponse)
+async def bike_ceneo(req: BikeOfferRequest) -> BikeOfferResponse:
+    logger.info("ceneo request | company=%r model=%r", req.company, req.model)
+    _fields = {"company": req.company, "model": req.model}
+    cached = get_cached("/v1/bike/ceneo", _fields, BikeOfferResponse)
+    if cached is not None:
+        return cached
+
+    t_start = time.perf_counter()
+    result = await find_ceneo_offers(req.company, req.model)
+    elapsed = time.perf_counter() - t_start
+    logger.info("ceneo complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
+    set_cached("/v1/bike/ceneo", _fields, result)
     return result
 
 

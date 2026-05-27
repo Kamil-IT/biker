@@ -6,9 +6,8 @@ from pathlib import Path
 from anthropic import AsyncAnthropic
 
 from .schemas import BikeOffer, BikeOfferResponse
-from .allegro_image_fetcher import fetch_images_for_offers
 
-logger = logging.getLogger("biker.offer")
+logger = logging.getLogger("biker.ceneo")
 
 MODEL = "claude-haiku-4-5-20251001"
 _client = AsyncAnthropic()
@@ -24,9 +23,9 @@ def _extract_fenced_json(text: str) -> str:
     return text.strip()
 
 
-async def find_bike_offers(company: str, model: str) -> BikeOfferResponse:
-    system_prompt = (PROMPTS_DIR / "bike_offer_allegro.md").read_text(encoding="utf-8")
-    user_message = f"Find current offers on allegro for: {company} {model}"
+async def find_ceneo_offers(company: str, model: str) -> BikeOfferResponse:
+    system_prompt = (PROMPTS_DIR / "bike_offer_ceneo.md").read_text(encoding="utf-8")
+    user_message = f"Find current offers on ceneo.pl for: {company} {model}"
 
     t = time.perf_counter()
     response = await _client.messages.create(
@@ -43,7 +42,7 @@ async def find_bike_offers(company: str, model: str) -> BikeOfferResponse:
     input_tokens = response.usage.input_tokens
     output_tokens = response.usage.output_tokens
     logger.info(
-        "offer search done | elapsed=%.2fs input_tokens=%d output_tokens=%d stop_reason=%s",
+        "ceneo search done | elapsed=%.2fs input_tokens=%d output_tokens=%d stop_reason=%s",
         elapsed,
         input_tokens,
         output_tokens,
@@ -99,7 +98,6 @@ async def find_bike_offers(company: str, model: str) -> BikeOfferResponse:
             logger.warning("skipping malformed offer: %s | item=%r", exc, item)
 
     if len(offers) < 1:
-        logger.warning("no offers returned")
+        logger.warning("no ceneo offers returned")
 
-    offers = await fetch_images_for_offers(offers)
     return BikeOfferResponse(offers=offers, info=info_text)

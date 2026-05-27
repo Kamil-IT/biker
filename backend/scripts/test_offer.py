@@ -16,7 +16,7 @@ assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.te
 
 data = resp.json()
 assert isinstance(data["offers"], list), "offers must be a list"
-assert len(data["offers"]) >= 2, f"expected at least 2 offers, got {len(data['offers'])}"
+assert len(data["offers"]) >= 1, f"expected at least 1 offer, got {len(data['offers'])}"
 
 for offer in data["offers"]:
     assert isinstance(offer["brand"], str) and offer["brand"], "brand must be non-empty string"

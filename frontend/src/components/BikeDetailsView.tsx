@@ -17,6 +17,8 @@ interface BikeDetailsViewProps {
   offerState: 'loading' | 'loaded' | 'error'
   usedBikes: UsedBikeResponse | null
   usedBikeState: 'loading' | 'loaded' | 'error'
+  ceneoOffers: BikeOfferResponse | null
+  ceneoState: 'loading' | 'loaded' | 'error'
   onBack: () => void
   onRetry: () => void
 }
@@ -34,6 +36,8 @@ export default function BikeDetailsView({
   offerState,
   usedBikes,
   usedBikeState,
+  ceneoOffers,
+  ceneoState,
   onBack,
   onRetry,
 }: BikeDetailsViewProps) {
@@ -107,7 +111,8 @@ export default function BikeDetailsView({
         <DescriptionCard description={description} state={state} />
 
         {/* Offers */}
-        <OffersSection offers={offers} state={offerState} />
+        <OffersSection offers={offers} state={offerState} title="Allegro Offers" />
+        <OffersSection offers={ceneoOffers} state={ceneoState} title="Ceneo Offers" />
 
         {/* Used bikes (OLX) */}
         <UsedBikesSection usedBikes={usedBikes} state={usedBikeState} />
@@ -357,7 +362,7 @@ function ReviewSection({ review, state }: { review: BikeReviewResponse | null; s
 
 /* ── Offers ─────────────────────────────────────────── */
 
-function OffersSection({ offers, state }: { offers: BikeOfferResponse | null; state: 'loading' | 'loaded' | 'error' }) {
+function OffersSection({ offers, state, title = 'Current Offers' }: { offers: BikeOfferResponse | null; state: 'loading' | 'loaded' | 'error'; title?: string }) {
   if (state === 'loading') {
     return (
       <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
@@ -383,7 +388,7 @@ function OffersSection({ offers, state }: { offers: BikeOfferResponse | null; st
     <div className="mt-5 bg-card rounded-2xl border border-border overflow-hidden">
       <div className="px-5 py-4 md:px-6 md:py-5 border-b border-border">
         <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
-          Current Offers
+          {title}
         </span>
       </div>
       <div className="divide-y divide-border">
