@@ -47,25 +47,27 @@ Example: after saving `backend/scripts/ss_3_details_loaded.png`, read it with th
 
 ## 4 — Create PR with screenshots
 
-Once the user approves, create a feature branch, commit all changes (including the `ss_*.png` screenshots), push, and open a PR whose description embeds the screenshots inline.
+Screenshots must **not** stay in the repo. The workflow uses a two-commit trick so the images appear in the PR description but are gone from the final branch HEAD:
 
 ```bash
-# 1. Create and switch to branch
+# 1. Create branch
 git checkout -b feature/<slug>
 
-# 2. Stage all changed files + screenshots
+# 2. Commit code changes + screenshots together (gives them a permanent SHA)
 git add backend/app/... frontend/src/... CLAUDE.md backend/README.md \
         .claude/commands/feature-full-impl.md \
         backend/scripts/ss_*.png
-
-# 3. Commit
 git commit -m "Short description of the feature"
+SHA=$(git rev-parse HEAD)   # capture this SHA — needed for image URLs
+
+# 3. Immediately remove screenshots in a second commit
+git rm backend/scripts/ss_*.png
+git commit -m "Remove screenshots from repo (images pinned by SHA in PR)"
 
 # 4. Push
 git push -u origin feature/<slug>
 
-# 5. Create PR — embed screenshots using raw GitHub URLs on the branch
-BRANCH="feature/<slug>"
+# 5. Create PR — embed screenshots using the SHA from step 2 (permanent, never changes)
 REPO="Kamil-IT/biker"   # adjust if different
 
 gh pr create \
@@ -78,10 +80,10 @@ gh pr create \
 ## Screenshots
 
 ### <Caption for ss_1>
-![ss_1](https://raw.githubusercontent.com/${REPO}/${BRANCH}/backend/scripts/ss_1_<name>.png)
+![ss_1](https://raw.githubusercontent.com/${REPO}/${SHA}/backend/scripts/ss_1_<name>.png)
 
 ### <Caption for ss_2>
-![ss_2](https://raw.githubusercontent.com/${REPO}/${BRANCH}/backend/scripts/ss_2_<name>.png)
+![ss_2](https://raw.githubusercontent.com/${REPO}/${SHA}/backend/scripts/ss_2_<name>.png)
 
 ## Test plan
 - [ ] smoke tests pass
@@ -92,7 +94,7 @@ EOF
 )"
 ```
 
-GitHub renders the `raw.githubusercontent.com` URLs as inline images in the PR description. The screenshots live on the branch and are cleaned up when the PR is merged.
+The SHA-pinned `raw.githubusercontent.com` URLs are permanent — git history is immutable so the images are always accessible even though the files are absent from the branch tip.
 
 After creating the PR, share the link with the user.
 
