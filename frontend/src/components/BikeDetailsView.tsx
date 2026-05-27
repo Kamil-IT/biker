@@ -8,6 +8,7 @@ interface BikeDetailsViewProps {
   bike: Bike
   categories: BikeCategory[] | null
   description: BikeDescription | null
+  photos: string[]
   state: 'loading' | 'loaded' | 'error'
   error: string | null
   review: BikeReviewResponse | null
@@ -22,6 +23,7 @@ export default function BikeDetailsView({
   bike,
   categories,
   description,
+  photos,
   state,
   error,
   review,
@@ -77,6 +79,12 @@ export default function BikeDetailsView({
             <p className="font-mono text-[11px] text-muted">/ 10</p>
           </div>
         </div>
+
+        {/* Photo gallery */}
+        {state === 'loading' && photos.length === 0 && (
+          <div className="mt-4 w-full aspect-[16/9] shimmer rounded-xl" aria-hidden="true" />
+        )}
+        {state !== 'loading' && <PhotoGallery photos={photos} />}
 
         {/* Accessories */}
         {accessories.length > 0 && (
@@ -140,6 +148,51 @@ export default function BikeDetailsView({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/* ── Photo gallery ──────────────────────────────────── */
+
+function PhotoGallery({ photos }: { photos: string[] }) {
+  const [activeIdx, setActiveIdx] = useState(0)
+  if (!photos.length) return null
+
+  return (
+    <div className="mt-4">
+      <div className="w-full aspect-[16/9] bg-parchment rounded-xl border border-border overflow-hidden">
+        <img
+          key={activeIdx}
+          src={photos[activeIdx]}
+          alt=""
+          className="w-full h-full object-cover"
+          style={{ animation: 'slideUp 200ms ease-out' }}
+          onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+        />
+      </div>
+      {photos.length > 1 && (
+        <div className="flex gap-2 mt-2 overflow-x-auto pb-1">
+          {photos.map((src, i) => (
+            <button
+              key={i}
+              onClick={() => setActiveIdx(i)}
+              className={`shrink-0 w-14 h-14 rounded-lg border overflow-hidden transition-all duration-150 ${
+                i === activeIdx
+                  ? 'border-terra ring-1 ring-terra opacity-100'
+                  : 'border-border opacity-60 hover:opacity-100'
+              }`}
+              aria-label={`Photo ${i + 1}`}
+            >
+              <img
+                src={src}
+                alt=""
+                className="w-full h-full object-cover"
+                onError={e => { (e.currentTarget.parentElement as HTMLElement).style.display = 'none' }}
+              />
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

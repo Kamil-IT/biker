@@ -8,7 +8,7 @@ AI-powered bike finder. Describe what you're looking for in plain English and ge
 2. The backend calls Claude Haiku once per category (11 total) to score relevance
 3. Top-scoring categories (score ≥ 5, minimum 2) are selected; 5 bikes are allocated proportionally by score
 4. Claude finds real bikes for each qualifying category in parallel
-5. Click a result to open the details page — the backend fetches specs, description, review score, and current Allegro offers in parallel via Claude web search
+5. Click a result to open the details page — the backend fetches specs, description, manufacturer photos, review score, and current Allegro offers in parallel via Claude web search + Playwright
 
 ## Running the project
 
@@ -80,13 +80,15 @@ biker/
 │   │   ├── bike_description_finder.py # Generate plain-text overview via web search
 │   │   ├── bike_review_finder.py      # Aggregate web reviews into score + explanation
 │   │   ├── bike_offer_finder.py       # Find current Allegro offers via web search
+│   │   ├── bike_photos_finder.py      # Find manufacturer product photos: Claude URL search + Playwright scrape
 │   │   └── prompts/
 │   │       ├── *.md                   # Per-category scoring prompts
 │   │       ├── bike_search_*.md       # Per-category bike-finding prompts
 │   │       ├── bike_details.md        # Component extraction prompt
 │   │       ├── bike_review.md         # Review aggregation prompt
 │   │       ├── bike_offer.md          # Multi-marketplace offer prompt (unused)
-│   │       └── bike_offer_allegro.md  # Allegro offer search prompt
+│   │       ├── bike_offer_allegro.md  # Allegro offer search prompt
+│   │       └── bike_photos.md         # Manufacturer product page URL search prompt
 │   └── scripts/
 │       ├── test_search.py             # Smoke test for /v1/bike/search
 │       ├── test_details.py            # Smoke test for /v1/bike/details

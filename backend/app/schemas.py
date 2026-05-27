@@ -67,6 +67,7 @@ class BikeDetailsResponse(BaseModel):
     model: str
     description: BikeDescription
     components: list[BikeCategory]
+    photos: list[str] = []
 
 
 class CategoryResult(BaseModel):

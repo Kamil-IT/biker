@@ -34,4 +34,9 @@ for cat in data["components"]:
                 assert "key" in spec, f"Missing 'key' in spec {spec}"
                 assert "value" in spec, f"Missing 'value' in spec {spec}"
 
-print(f"OK — {len(data['components'])} categories returned")
+assert "photos" in data, "'photos' field missing from response"
+assert isinstance(data["photos"], list), "'photos' must be a list"
+for p in data["photos"]:
+    assert isinstance(p, str) and p.startswith("http"), f"invalid photo URL: {p!r}"
+
+print(f"OK — {len(data['components'])} categories, {len(data['photos'])} photos returned")
