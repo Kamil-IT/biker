@@ -84,3 +84,33 @@ resp_empty = httpx.post(URL, json={}, timeout=10)
 assert resp_empty.status_code == 422, \
     f"Expected 422 for empty payload, got {resp_empty.status_code}"
 print("OK — empty payload correctly rejected with 422")
+
+# ── Parse endpoint: extract structured fields from free text ──
+PARSE_URL = "http://localhost:8000/v1/bike/parse"
+print("\n── Parse: extract fields from free text ──")
+parse_payload = {"text": "Looking for Trek Marlin 7 2022, 29 inch wheels, with suspension, non-electric"}
+resp_parse = httpx.post(PARSE_URL, json=parse_payload, timeout=30)
+assert resp_parse.status_code == 200, f"Expected 200, got {resp_parse.status_code}"
+data_parse = resp_parse.json()
+assert data_parse.get("brand") == "Trek",  f"Expected brand 'Trek', got: {data_parse.get('brand')!r}"
+assert data_parse.get("year") == 2022,     f"Expected year 2022, got: {data_parse.get('year')!r}"
+assert data_parse.get("has_suspension") is True, f"Expected has_suspension=true, got: {data_parse.get('has_suspension')!r}"
+assert data_parse.get("is_electric") is False,   f"Expected is_electric=false, got: {data_parse.get('is_electric')!r}"
+print(f"OK — parse returned: {data_parse}")
+
+# ── Parse endpoint: empty text must return 422 ──
+print("\n── Parse: empty text → 422 ──")
+resp_parse_empty = httpx.post(PARSE_URL, json={"text": ""}, timeout=10)
+assert resp_parse_empty.status_code == 422, \
+    f"Expected 422 for empty text, got {resp_parse_empty.status_code}"
+print("OK — empty text correctly rejected with 422")
+
+# ── Parse endpoint: cache hit ──
+print("\n── Parse: cache hit ──")
+t0 = _time.perf_counter()
+resp_parse2 = httpx.post(PARSE_URL, json=parse_payload, timeout=10)
+elapsed_parse2 = _time.perf_counter() - t0
+assert resp_parse2.status_code == 200, f"Expected 200, got {resp_parse2.status_code}"
+assert resp_parse2.json() == data_parse, "Cached parse response differs from original"
+assert elapsed_parse2 < 5.0, f"Parse cache hit took {elapsed_parse2:.2f}s — expected < 5s"
+print(f"OK — parse cache hit in {elapsed_parse2:.3f}s")

@@ -12,6 +12,7 @@ from .schemas import (  # noqa: E402
     BikeDetailsRequest, BikeDetailsResponse,
     BikeReviewRequest, BikeReviewResponse,
     BikeOfferRequest, BikeOfferResponse,
+    ParseRequest, ParseResponse,
 )
 from .categories import BIKE_CATEGORIES, CATEGORY_PROMPTS  # noqa: E402
 from .anthropic_scorer import score_category  # noqa: E402
@@ -21,6 +22,7 @@ from .bike_description_finder import find_bike_description  # noqa: E402
 from .bike_photos_finder import find_bike_photos  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_finder import find_bike_offers  # noqa: E402
+from .bike_parser import parse_free_text  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
 
 logging.basicConfig(
@@ -162,4 +164,20 @@ async def bike_offer(req: BikeOfferRequest) -> BikeOfferResponse:
     elapsed = time.perf_counter() - t_start
     logger.info("offer complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     set_cached("/v1/bike/offer", _fields, result)
+    return result
+
+
+@app.post("/v1/bike/parse", response_model=ParseResponse)
+async def bike_parse(req: ParseRequest) -> ParseResponse:
+    logger.info("parse request | text=%r", req.text[:80])
+    _fields = {"text": req.text}
+    cached = get_cached("/v1/bike/parse", _fields, ParseResponse)
+    if cached is not None:
+        return cached
+
+    t_start = time.perf_counter()
+    result = await parse_free_text(req.text)
+    elapsed = time.perf_counter() - t_start
+    logger.info("parse complete | elapsed=%.2fs result=%s", elapsed, result.model_dump(exclude_none=True))
+    set_cached("/v1/bike/parse", _fields, result)
     return result

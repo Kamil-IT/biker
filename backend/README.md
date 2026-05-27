@@ -132,3 +132,36 @@ Content-Type: application/json
 
 **Flow:**
 1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches allegro.pl; returns 1 offer with price, condition, direct link, and photo URLs
+
+---
+
+### `POST /v1/bike/parse`
+
+Extract structured bike attributes (brand, model, year, wheel size, flags) from a free-text query. Used by the frontend to auto-populate the structured search fields before the user submits their search.
+
+```http
+POST http://localhost:8000/v1/bike/parse
+Content-Type: application/json
+
+{
+  "text": "Looking for Trek Marlin 7 2023, 29 inch wheels, with suspension"
+}
+```
+
+**Response:**
+```json
+{
+  "brand": "Trek",
+  "model": "Marlin 7",
+  "year": 2023,
+  "wheel_size": "29\"",
+  "has_suspension": true,
+  "is_electric": null,
+  "is_kids": null
+}
+```
+
+Fields not found in the text are returned as `null`. All fields are optional in the response.
+
+**Flow:**
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no web search, pure text extraction) with `app/prompts/bike_parse.md` system prompt; returns a JSON object with only the confident field extractions
