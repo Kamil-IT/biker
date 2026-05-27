@@ -23,8 +23,8 @@ Render citations on the description (and/or review explanation) as small source 
 - No changes.
 
 ## Acceptance criteria
-- [ ] Description paragraphs with citations show a chip row underneath.
-- [ ] Review explanation shows chips for each URL in `ref[]`.
-- [ ] Chips are clickable external links (open in new tab).
-- [ ] Chip shows domain name, not full URL.
-- [ ] Matches design system colours (terracotta accent, card background).
+- [x] Description paragraphs with citations show a chip row underneath.
+- [x] Review explanation shows chips for each URL in `ref[]`.
+- [x] Chips are clickable external links (open in new tab).
+- [x] Chip shows domain name, not full URL.
+- [x] Matches design system colours (terracotta accent, card background).
