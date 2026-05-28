@@ -221,6 +221,43 @@ Content-Type: application/json
 
 ---
 
+### `POST /v1/bike/decathlon`
+
+Return the current buying offer from decathlon.pl for a specific bike model.
+
+```http
+POST http://localhost:8000/v1/bike/decathlon
+Content-Type: application/json
+
+{
+  "company": "Rockrider",
+  "model": "ST 100"
+}
+```
+
+**Response:**
+```json
+{
+  "offers": [
+    {
+      "brand": "Rockrider",
+      "model": "ST 100",
+      "price": "1199 zł",
+      "is_new": true,
+      "url": "https://www.decathlon.pl/p/rockrider-st-100",
+      "photos": [],
+      "source": "decathlon.pl"
+    }
+  ],
+  "info": ""
+}
+```
+
+**Flow:**
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches decathlon.pl; returns 1 new offer with price and direct link (no photos — pages require JS rendering)
+
+---
+
 ### `POST /v1/bike/parse`
 
 Extract structured bike attributes (brand, model, year, wheel size, flags) from a free-text query. Used by the frontend to auto-populate the structured search fields before the user submits their search.

@@ -52,6 +52,8 @@ export default function App() {
   const [offers, setOffers]                 = useState<BikeOfferResponse | null>(null)
   const [ceneoState, setCeneoState]         = useState<OfferState>('loading')
   const [ceneoOffers, setCeneoOffers]       = useState<BikeOfferResponse | null>(null)
+  const [decathlonState, setDecathlonState] = useState<OfferState>('loading')
+  const [decathlonOffers, setDecathlonOffers] = useState<BikeOfferResponse | null>(null)
 
   // Used bikes (OLX) state
   const [usedBikeState, setUsedBikeState]   = useState<UsedBikeState>('loading')
@@ -235,6 +237,24 @@ export default function App() {
     }
   }
 
+  const fetchDecathlon = async (bike: Bike) => {
+    setDecathlonState('loading')
+    setDecathlonOffers(null)
+    try {
+      const res = await fetch('/v1/bike/decathlon', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ company: bike.brand, model: bike.model }),
+      })
+      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      const data: BikeOfferResponse = await res.json()
+      setDecathlonOffers(data)
+      setDecathlonState('loaded')
+    } catch {
+      setDecathlonState('error')
+    }
+  }
+
   const handleBikeSelect = (bike: Bike) => {
     setSelectedBike(bike)
     setView('details')
@@ -244,6 +264,7 @@ export default function App() {
     fetchOffer(bike)
     fetchUsedBikes(bike)
     fetchCeneo(bike)
+    fetchDecathlon(bike)
   }
 
   const handleBackToResults = () => {
@@ -452,6 +473,8 @@ export default function App() {
             usedBikeState={usedBikeState}
             ceneoOffers={ceneoOffers}
             ceneoState={ceneoState}
+            decathlonOffers={decathlonOffers}
+            decathlonState={decathlonState}
             onBack={handleBackToResults}
             onRetry={() => fetchDetails(selectedBike)}
           />

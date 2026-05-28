@@ -19,6 +19,8 @@ interface BikeDetailsViewProps {
   usedBikeState: 'loading' | 'loaded' | 'error'
   ceneoOffers: BikeOfferResponse | null
   ceneoState: 'loading' | 'loaded' | 'error'
+  decathlonOffers: BikeOfferResponse | null
+  decathlonState: 'loading' | 'loaded' | 'error'
   onBack: () => void
   onRetry: () => void
 }
@@ -38,6 +40,8 @@ export default function BikeDetailsView({
   usedBikeState,
   ceneoOffers,
   ceneoState,
+  decathlonOffers,
+  decathlonState,
   onBack,
   onRetry,
 }: BikeDetailsViewProps) {
@@ -95,10 +99,10 @@ export default function BikeDetailsView({
         {state !== 'loading' && <PhotoGallery photos={photos} />}
 
         {/* Accessories */}
-        {accessories.length > 0 && (
+        {accessories.filter(Boolean).length > 0 && (
           <ul className="flex flex-wrap gap-1.5" aria-label="Key features">
-            {accessories.map(acc => (
-              <li key={acc}>
+            {accessories.filter(Boolean).map((acc, i) => (
+              <li key={`${acc}-${i}`}>
                 <span className="font-mono text-[10px] text-ink px-2 py-0.5 bg-sand rounded-full border border-border inline-block leading-5">
                   {acc}
                 </span>
@@ -113,6 +117,7 @@ export default function BikeDetailsView({
         {/* Offers */}
         <OffersSection offers={offers} state={offerState} title="Allegro Offers" />
         <OffersSection offers={ceneoOffers} state={ceneoState} title="Ceneo Offers" />
+        <OffersSection offers={decathlonOffers} state={decathlonState} title="Decathlon Offers" />
 
         {/* Used bikes (OLX) */}
         <UsedBikesSection usedBikes={usedBikes} state={usedBikeState} />
@@ -270,12 +275,12 @@ function DescriptionCard({ description, state }: { description: BikeDescription 
           className="mt-3 bg-sand rounded-xl border border-border divide-y divide-border overflow-hidden"
           style={{ animation: 'slideUp 200ms ease-out' }}
         >
-          {activeCitations.map(c => {
+          {activeCitations.map((c, i) => {
             let host: string
             try { host = new URL(c.url).hostname.replace(/^www\./, '') } catch { host = c.url }
             return (
               <a
-                key={c.url}
+                key={c.url || i}
                 href={c.url}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -597,8 +602,8 @@ function CategorySection({ category }: { category: BikeCategory }) {
       </div>
 
       <div className="bg-card rounded-2xl border border-border divide-y divide-border overflow-hidden">
-        {category.subcategories.map(sub => (
-          <SubcategorySection key={sub.subcategory} sub={sub} />
+        {category.subcategories.map((sub, i) => (
+          <SubcategorySection key={`${sub.subcategory}-${i}`} sub={sub} />
         ))}
       </div>
     </section>
@@ -612,8 +617,8 @@ function SubcategorySection({ sub }: { sub: BikeSubcategory }) {
         {sub.subcategory}
       </h3>
       <div className="space-y-5">
-        {sub.elements.map(el => (
-          <ElementItem key={el.name} element={el} />
+        {sub.elements.map((el, i) => (
+          <ElementItem key={`${el.name}-${i}`} element={el} />
         ))}
       </div>
     </div>
@@ -634,8 +639,8 @@ function ElementItem({ element }: { element: ComponentElement }) {
       )}
       {specs.length > 0 && (
         <dl className="mt-2 space-y-0.5">
-          {specs.map(({ key, value }) => (
-            <div key={key} className="flex items-baseline gap-3">
+          {specs.map(({ key, value }, i) => (
+            <div key={`${key}-${i}`} className="flex items-baseline gap-3">
               <dt className="font-mono text-[11px] text-muted min-w-[120px] shrink-0">
                 {key}
               </dt>

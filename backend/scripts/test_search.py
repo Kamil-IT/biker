@@ -192,6 +192,43 @@ fallback_data = resp_ceneo_fake.json()
 assert isinstance(fallback_data["offers"], list), "Fallback offers must be a list"
 print(f"OK — ceneo fallback returned {len(fallback_data['offers'])} offers (expected 0 or empty)")
 
+# ── Decathlon offer endpoint ──
+print("\n── Decathlon: find offers on decathlon.pl ──")
+DECATHLON_URL = "http://localhost:8000/v1/bike/decathlon"
+decathlon_payload = {"company": "Rockrider", "model": "ST 100"}
+resp_decathlon = httpx.post(DECATHLON_URL, json=decathlon_payload, timeout=120)
+assert resp_decathlon.status_code == 200, f"Expected 200, got {resp_decathlon.status_code}"
+decathlon_data = resp_decathlon.json()
+assert isinstance(decathlon_data["offers"], list), "Expected offers to be a list"
+assert isinstance(decathlon_data["info"], str), "Expected info to be a string"
+for offer in decathlon_data["offers"]:
+    assert offer["brand"], "offer.brand must be non-empty"
+    assert offer["model"], "offer.model must be non-empty"
+    assert offer["price"], "offer.price must be non-empty"
+    assert isinstance(offer["is_new"], bool), "offer.is_new must be bool"
+    assert offer["url"], "offer.url must be non-empty"
+    assert isinstance(offer["photos"], list), "offer.photos must be a list"
+    assert offer["source"] == "decathlon.pl", f"Expected source 'decathlon.pl', got {offer['source']!r}"
+print(f"OK — decathlon returned {len(decathlon_data['offers'])} offer(s)")
+
+# ── Decathlon: cache hit ──
+print("\n── Decathlon: cache hit ──")
+t0 = _time.perf_counter()
+resp_decathlon2 = httpx.post(DECATHLON_URL, json=decathlon_payload, timeout=10)
+elapsed_decathlon2 = _time.perf_counter() - t0
+assert resp_decathlon2.status_code == 200, f"Expected 200 on cached decathlon call, got {resp_decathlon2.status_code}"
+assert resp_decathlon2.json() == decathlon_data, "Cached decathlon response differs from original"
+assert elapsed_decathlon2 < 5.0, f"Decathlon cache hit took {elapsed_decathlon2:.2f}s — expected < 5s"
+print(f"OK — decathlon cache hit in {elapsed_decathlon2:.3f}s")
+
+# ── Decathlon: fallback for unknown bike ──
+print("\n── Decathlon: fallback for unknown bike ──")
+resp_decathlon_fake = httpx.post(DECATHLON_URL, json={"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=120)
+assert resp_decathlon_fake.status_code == 200, f"Expected 200 for fallback, got {resp_decathlon_fake.status_code}"
+fallback_data = resp_decathlon_fake.json()
+assert isinstance(fallback_data["offers"], list), "Fallback offers must be a list"
+print(f"OK — decathlon fallback returned {len(fallback_data['offers'])} offers (expected 0 or empty)")
+
 # ── [TC-10] Search response schema shape ──
 print("\n── [TC-10] Search response schema: bikes have required fields ──")
 first_bike = resp.json()["bikes"][0]
