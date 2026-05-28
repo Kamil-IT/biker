@@ -187,7 +187,8 @@ async def bike_used(req: UsedBikeRequest) -> UsedBikeResponse:
     result = await find_used_bikes(req.company, req.model)
     elapsed = time.perf_counter() - t_start
     logger.info("used bikes complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
-    set_cached("/v1/bike/used", _fields, result)
+    if result.offers:
+        set_cached("/v1/bike/used", _fields, result)
     return result
 
 
