@@ -1,4 +1,3 @@
-import json
 import logging
 import time
 from pathlib import Path
@@ -6,21 +5,13 @@ from pathlib import Path
 from anthropic import AsyncAnthropic
 
 from .schemas import BikeOffer, BikeOfferResponse
+from .json_extract import extract_json
 
 logger = logging.getLogger("biker.ceneo")
 
 MODEL = "claude-haiku-4-5-20251001"
 _client = AsyncAnthropic()
 PROMPTS_DIR = Path(__file__).parent / "prompts"
-
-def _extract_fenced_json(text: str) -> str:
-    start_marker = "```json"
-    start = text.find(start_marker)
-    if start != -1:
-        after = text[start + len(start_marker):]
-        end = after.find("```")
-        return (after[:end] if end != -1 else after).strip()
-    return text.strip()
 
 
 async def find_ceneo_offers(company: str, model: str) -> BikeOfferResponse:
@@ -65,12 +56,9 @@ async def find_ceneo_offers(company: str, model: str) -> BikeOfferResponse:
     full_text = "".join(texts)
     logger.info("raw anthropic output | text=%r", full_text)
 
-    raw = _extract_fenced_json(full_text)
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        logger.error("JSON decode failed: %s | raw=%r", exc, raw[:300])
+    data = extract_json(full_text)
+    if data is None:
+        logger.error("JSON decode failed | raw=%r", full_text[:300])
         return BikeOfferResponse(offers=[], info=full_text.strip())
 
     info_text = ""

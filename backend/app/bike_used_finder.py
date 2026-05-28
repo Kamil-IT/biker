@@ -1,4 +1,3 @@
-import json
 import logging
 import time
 from pathlib import Path
@@ -7,6 +6,7 @@ from anthropic import AsyncAnthropic
 
 from .schemas import BikeOffer, UsedBikeResponse
 from .olx_image_fetcher import fetch_images_for_offers
+from .json_extract import extract_json
 
 logger = logging.getLogger("biker.used")
 
@@ -15,16 +15,6 @@ _client = AsyncAnthropic()
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 _FALLBACK = UsedBikeResponse(offers=[], info="")
-
-
-def _extract_fenced_json(text: str) -> str:
-    start_marker = "```json"
-    start = text.find(start_marker)
-    if start != -1:
-        after = text[start + len(start_marker):]
-        end = after.find("```")
-        return (after[:end] if end != -1 else after).strip()
-    return text.strip()
 
 
 async def find_used_bikes(company: str, model: str) -> UsedBikeResponse:
@@ -69,12 +59,9 @@ async def find_used_bikes(company: str, model: str) -> UsedBikeResponse:
     full_text = "".join(texts)
     logger.info("raw anthropic output | text=%r", full_text)
 
-    raw = _extract_fenced_json(full_text)
-
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        logger.error("JSON decode failed: %s | raw=%r", exc, raw[:300])
+    data = extract_json(full_text)
+    if data is None:
+        logger.error("JSON decode failed | raw=%r", full_text[:300])
         return UsedBikeResponse(offers=[], info=full_text.strip())
 
     info_text = ""

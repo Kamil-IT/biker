@@ -155,7 +155,8 @@ async def bike_review(req: BikeReviewRequest) -> BikeReviewResponse:
     result = await find_bike_review(req.company, req.model)
     elapsed = time.perf_counter() - t_start
     logger.info("review complete | score=%d elapsed=%.2fs", result.score, elapsed)
-    set_cached("/v1/bike/review", _fields, result)
+    if result.ref:
+        set_cached("/v1/bike/review", _fields, result)
     return result
 
 
@@ -171,7 +172,8 @@ async def bike_offer(req: BikeOfferRequest) -> BikeOfferResponse:
     result = await find_bike_offers(req.company, req.model)
     elapsed = time.perf_counter() - t_start
     logger.info("offer complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
-    set_cached("/v1/bike/offer", _fields, result)
+    if result.offers:
+        set_cached("/v1/bike/offer", _fields, result)
     return result
 
 
@@ -204,7 +206,8 @@ async def bike_ceneo(req: BikeOfferRequest) -> BikeOfferResponse:
     result = await find_ceneo_offers(req.company, req.model)
     elapsed = time.perf_counter() - t_start
     logger.info("ceneo complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
-    set_cached("/v1/bike/ceneo", _fields, result)
+    if result.offers:
+        set_cached("/v1/bike/ceneo", _fields, result)
     return result
 
 
