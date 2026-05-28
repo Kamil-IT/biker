@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from pathlib import Path
 
 from anthropic import AsyncAnthropic
@@ -57,6 +58,7 @@ async def find_bikes_for_category(category: str, slug: str, count: int, user_sea
     system_prompt = prompt_path.read_text(encoding="utf-8")
     user_message = f"User search: {user_search}\nFind exactly {count} bike(s)."
 
+    t_cat = time.perf_counter()
     for attempt in range(2):
         response = await _client.messages.create(
             model=MODEL,
@@ -71,7 +73,7 @@ async def find_bikes_for_category(category: str, slug: str, count: int, user_sea
             data = json.loads(text)
             if not isinstance(data, list):
                 raise ValueError("expected JSON array")
-            return [
+            bikes = [
                 BikeResult(
                     brand=str(item["brand"]),
                     model=str(item["model"]),
@@ -81,10 +83,20 @@ async def find_bikes_for_category(category: str, slug: str, count: int, user_sea
                 )
                 for item in data
             ]
+            logger.info(
+                "bikes found       | category=%-20s count=%d attempts=%d "
+                "out_tokens=%d elapsed=%.2fs",
+                f"{category!r}",
+                len(bikes),
+                attempt + 1,
+                response.usage.output_tokens,
+                time.perf_counter() - t_cat,
+            )
+            return bikes
         except (json.JSONDecodeError, KeyError, ValueError):
             logger.warning("parse failed (attempt %d) | category=%r raw=%r", attempt + 1, category, raw)
 
-    logger.error("bike search failed | category=%r", category)
+    logger.error("bike search failed | category=%r elapsed=%.2fs", category, time.perf_counter() - t_cat)
     return []
 
 
