@@ -116,14 +116,24 @@ EOF
 )"
 ```
 
-## Step 7 — Merge
+## Step 7 — Merge and delete the branch
+
+Merge with `--delete-branch` so the feature branch is removed (both the remote
+branch and the local tracking branch) immediately after a successful merge:
 
 ```bash
-gh pr merge --merge
+gh pr merge --merge --delete-branch
 ```
 
 If the merge is blocked (branch protection, required checks), report the
 reason clearly and stop — don't force-push or bypass checks.
+
+If `gh` does not remove the local branch (e.g. because you're still on it),
+switch to main first and then delete it manually:
+
+```bash
+git checkout main && git branch -d <branch-name>
+```
 
 ## Step 8 — Sync main
 
@@ -134,7 +144,7 @@ git checkout main && git pull
 ## Reporting back
 
 After a successful merge, tell the user:
-- The branch name
+- The branch name (now deleted)
 - The one-sentence commit message
 - The PR URL
 - That main is now up to date
