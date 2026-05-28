@@ -36,6 +36,11 @@ set_cached("/v1/your/route", _fields, result)
 return result
 ```
 Only call `set_cached` on the happy path — never cache error/fallback responses.
+For endpoints returning offers or reviews, only cache when the result is non-empty:
+- Offers: `if result.offers: set_cached(...)`
+- Reviews: `if result.ref: set_cached(...)`
+- Search/details: always cache (empty is a valid result)
+This mirrors the pattern used by `/v1/bike/used`.
 
 ## Documentation Update Policy
 
