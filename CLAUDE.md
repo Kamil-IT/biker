@@ -17,6 +17,8 @@ Tasks are tracked in `/backlog/`. Naming convention:
 
 - `TODO_<ID>_<TASK_NAME>.md` — task not yet started
 - `DONE_<ID>_<TASK_NAME>.md` — completed task (rename the file, don't delete it)
+- `TODO_ISSUE_<ID>_<NAME>.md` — reported bug/issue, not yet fixed
+- `DONE_ISSUE_<ID>_<NAME>.md` — fixed issue (rename the file, don't delete it)
 
 When picking up a task: read its file, implement, then rename `TODO_` → `DONE_`.
 When creating a new task: ask clarifying questions first, then write the file.
@@ -146,11 +148,12 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | Decathlon finder | `app/bike_offer_decathlon_finder.py` | Single `web_search` call to find 1 current offer on decathlon.pl |
 | Photos finder | `app/bike_photos_finder.py` | Two-step: (1) Claude `web_search` to find manufacturer product page URL, (2) Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs from rendered page; runs in parallel with details and description finders |
 | Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` · `scripts/test_offer.py` | Smoke tests for each endpoint |
+| Prompt eval | `scripts/test_scoring.py` | Pytest eval of category-scoring prompts: deterministic parse tests (`-m "not llm"`) + live directional eval via the `claude` CLI, no API key (`-m llm`). See `backend/README.md`. |
 
 **Endpoint** `POST /v1/bike/search`
 - Request: all fields optional, at least one required — `search` (free text), `brand`, `model`, `year` (int), `wheel_size` (string), `is_electric` (bool), `has_suspension` (bool), `is_kids` (bool), `bike_type` (string), `price_max` (int), `frame_size` (string), `rider_height_cm` (int), `gender` (string), `frame_material` (string), `brake_type` (string), `drivetrain` (string), `belt_drive` (bool), `battery_capacity_wh` (int)
 - Structured fields are assembled into an enriched query string via `SearchRequest.enriched_query()` (e.g. `"Brand: Trek, Type: Gravel, Year: 2023 — trail riding"`), then passed through the existing pipeline; all fields participate in the SQLite cache key in `main.py`
-- Phase 1: Calls `claude-haiku-4-5-20251001` once per category (11 sequential calls) to score relevance against the enriched query
+- Phase 1: Calls `claude-haiku-4-5-20251001` once per category (11 parallel calls via `asyncio.gather`) to score relevance against the enriched query
 - Phase 2: Filters to categories with score ≥ 5 (minimum 2); allocates exactly 5 bikes weighted by score
 - Phase 3: Calls Claude in parallel (one call per qualifying category) to find real bikes
 - Returns 5 bike results with brand, model, accessories, match score, and explanation; `search` field in response contains the enriched query

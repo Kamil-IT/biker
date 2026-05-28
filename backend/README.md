@@ -18,6 +18,59 @@ python scripts/test_review.py   # smoke-test POST /v1/bike/review
 python scripts/test_offer.py    # smoke-test POST /v1/bike/offer
 ```
 
+## Category-Scoring Prompt Eval
+
+`scripts/test_scoring.py` (pytest) evaluates the per-category scoring prompts in
+`app/prompts/<category>.md`. It has two tiers:
+
+```bash
+cd backend
+
+# 1) Deterministic tier — no model, no API key, runs on every commit.
+#    Verifies the scorer's JSON parsing + graceful-degradation contract.
+pytest scripts/test_scoring.py -m "not llm"
+
+# 2) Live eval tier — full-dataset directional eval (run nightly/pre-release).
+#    Scores 11 canonical queries against all 11 category prompts and asserts the
+#    right category ranks highest. Add -s to print the top-1/top-2/MRR report.
+pytest scripts/test_scoring.py -m llm -s
+```
+
+**The live tier needs no `ANTHROPIC_API_KEY`.** Instead of calling the API, it shells
+out to the **`claude` CLI**, which authenticates via your subscription login. Each
+(query, category) pair is scored with `claude -p "<query>" --system-prompt
+"<app/prompts/category.md>" --tools "" --model claude-haiku-4-5-20251001
+--output-format json` — i.e. the category prompt is the *sole* system prompt and the
+prod model (Haiku 4.5) is forced, so it mirrors `anthropic_scorer.py`.
+
+Prerequisites & notes for the live tier:
+- `claude` CLI installed and logged in. If it is not on `PATH`, the live tests **skip**
+  (they never hard-fail CI).
+- A full run is **121 CLI calls** (11 queries × 11 categories) and takes several minutes;
+  it draws on your Claude subscription usage. Run it nightly/pre-release, not per commit.
+- The CLI is an agent harness, so replies may be prose rather than raw JSON; the eval
+  extracts the numeric score (JSON → `score: N` → `N/10`). Strict JSON-format compliance
+  is covered separately by the deterministic tier and the real-API prod path.
+
+`pytest.ini` registers the `llm` marker and scopes default collection to
+`scripts/test_scoring.py` so the standalone smoke scripts above are not auto-run.
+
+### Evaluate any prompt (ad-hoc)
+
+`scripts/eval_prompt.py` runs **any** prompt file (as the system prompt) against
+arbitrary inputs via the same no-API-key `claude` CLI mechanism, printing each
+reply and its extracted score (if any):
+
+```bash
+cd backend
+.venv\Scripts\python.exe scripts/eval_prompt.py app/prompts/road.md "fast carbon road racer" "29er trail bike"
+.venv\Scripts\python.exe scripts/eval_prompt.py app/prompts/gravel.md --dataset inputs.txt --model sonnet
+```
+
+The `/eval-prompt <prompt-file> "<input>" ...` slash command (`.claude/commands/`)
+wraps this for quick reuse. Use it for ad-hoc prompt iteration; use the pytest
+`-m llm` suite for the fixed directional category eval.
+
 ## Endpoints
 
 ### `POST /v1/bike/search`
@@ -53,7 +106,7 @@ Content-Type: application/json
 All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M, Max price: 6000 PLN — comfortable bike…"` and passes it through the existing scoring and bike-finding pipeline. All fields participate in the SQLite cache key, so two searches that differ only in a filter return distinct results.
 
 **Flow:**
-1. `POST https://api.anthropic.com/v1/messages` × 11 — score each bike category (sequential)
+1. `POST https://api.anthropic.com/v1/messages` × 11 — score each bike category (parallel via `asyncio.gather`)
 2. `POST https://api.anthropic.com/v1/messages` × N — find real bikes per top category (parallel)
 
 ---

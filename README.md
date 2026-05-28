@@ -44,6 +44,8 @@ Open **http://localhost:5173** in your browser.
 | `cd backend && python scripts/test_details.py` | Smoke-test `POST /v1/bike/details` |
 | `cd backend && python scripts/test_review.py` | Smoke-test `POST /v1/bike/review` |
 | `cd backend && python scripts/test_offer.py` | Smoke-test `POST /v1/bike/offer` |
+| `cd backend && pytest scripts/test_scoring.py -m "not llm"` | Deterministic category-scoring prompt tests (no API key) |
+| `cd backend && pytest scripts/test_scoring.py -m llm -s` | Live category-scoring eval via the `claude` CLI (no API key; nightly) |
 | `cd frontend && npm run build` | TypeScript check + production bundle → `dist/` |
 | `cd frontend && npm run preview` | Serve the production bundle locally |
 | http://localhost:8000/docs | Interactive OpenAPI UI for the backend |
@@ -93,7 +95,8 @@ biker/
 │       ├── test_search.py             # Smoke test for /v1/bike/search
 │       ├── test_details.py            # Smoke test for /v1/bike/details
 │       ├── test_review.py             # Smoke test for /v1/bike/review
-│       └── test_offer.py              # Smoke test for /v1/bike/offer
+│       ├── test_offer.py              # Smoke test for /v1/bike/offer
+│       └── test_scoring.py            # Pytest eval of category-scoring prompts (deterministic + live CLI)
 └── frontend/
     └── src/
         ├── App.tsx                    # App shell, state machine, all four API calls
