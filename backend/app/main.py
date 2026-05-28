@@ -25,6 +25,7 @@ from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_finder import find_bike_offers  # noqa: E402
 from .bike_used_finder import find_used_bikes  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
+from .bike_offer_decathlon_finder import find_decathlon_offers  # noqa: E402
 from .bike_parser import parse_free_text  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
 
@@ -208,6 +209,23 @@ async def bike_ceneo(req: BikeOfferRequest) -> BikeOfferResponse:
     logger.info("ceneo complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     if result.offers:
         set_cached("/v1/bike/ceneo", _fields, result)
+    return result
+
+
+@app.post("/v1/bike/decathlon", response_model=BikeOfferResponse)
+async def bike_decathlon(req: BikeOfferRequest) -> BikeOfferResponse:
+    logger.info("decathlon request | company=%r model=%r", req.company, req.model)
+    _fields = {"company": req.company, "model": req.model}
+    cached = get_cached("/v1/bike/decathlon", _fields, BikeOfferResponse)
+    if cached is not None:
+        return cached
+
+    t_start = time.perf_counter()
+    result = await find_decathlon_offers(req.company, req.model)
+    elapsed = time.perf_counter() - t_start
+    logger.info("decathlon complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
+    if result.offers:
+        set_cached("/v1/bike/decathlon", _fields, result)
     return result
 
 

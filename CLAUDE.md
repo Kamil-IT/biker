@@ -143,6 +143,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | Used bikes finder | `app/bike_used_finder.py` | Single `web_search` call to find up to 5 used listings on olx.pl with cascade fallback; then Playwright scrapes photos via `olx_image_fetcher.py` |
 | OLX image fetcher | `app/olx_image_fetcher.py` | Playwright (headless=False) scrapes up to 4 `<img>` URLs from each OLX listing URL using `*.apollo.olxcdn.com` regex |
 | Ceneo finder | `app/bike_offer_ceneo_finder.py` | Single `web_search` call to find 1 current offer on ceneo.pl |
+| Decathlon finder | `app/bike_offer_decathlon_finder.py` | Single `web_search` call to find 1 current offer on decathlon.pl |
 | Photos finder | `app/bike_photos_finder.py` | Two-step: (1) Claude `web_search` to find manufacturer product page URL, (2) Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs from rendered page; runs in parallel with details and description finders |
 | Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` · `scripts/test_offer.py` | Smoke tests for each endpoint |
 
@@ -189,6 +190,12 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 - Returns `{ offers: [{ brand, model, price, is_new, url, photos: [], source: "ceneo.pl" }], info: str }` (1 offer, no photos)
 - On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
 
+**Endpoint** `POST /v1/bike/decathlon`
+- Request: `{"company": "Rockrider", "model": "ST 100"}`
+- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches decathlon.pl using `app/prompts/bike_offer_decathlon.md` as the system prompt
+- Returns `{ offers: [{ brand, model, price, is_new, url, photos: [], source: "decathlon.pl" }], info: str }` (1 offer, no photos)
+- On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
+
 **Bike categories** (defined in `app/categories.py`):
 Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser, Touring, Folding, Cyclocross, Kids
 
@@ -199,11 +206,11 @@ Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser
 | Layer | File | Responsibility |
 |-------|------|----------------|
 | Entry point | `src/main.tsx` | React root, mounts `<App>` |
-| App shell | `src/App.tsx` | View router (`search` / `details`), search, details, review, allegro offer, ceneo offer & used-bike state, all six API calls |
+| App shell | `src/App.tsx` | View router (`search` / `details`), search, details, review, allegro offer, ceneo offer, decathlon offer & used-bike state, all seven API calls |
 | Search form | `src/components/SearchInput.tsx` | Controlled input + submit button + collapsible Filters panel (Basic group: brand, model, bike type, year, wheel size, frame size, rider height, max price + electric/suspension/kids toggles; Advanced group: gender, frame material, brake type, drivetrain, belt drive + battery capacity shown only when electric); loading state |
 | Result card | `src/components/ResultCard.tsx` | Clickable per-bike card: match score, brand + model, accessories chips, explanation, score bar |
 | Loading card | `src/components/LoadingCard.tsx` | Shimmer skeleton matching result card dimensions |
-| Details view | `src/components/BikeDetailsView.tsx` | Full spec sheet: back nav, bike header, Overview (DescriptionCard), Allegro Offers (OffersSection), Ceneo Offers (OffersSection), Used Bikes OLX (UsedBikesSection), Expert Review (ReviewSection), category/subcategory/element/spec tree, shimmer skeleton, error + retry |
+| Details view | `src/components/BikeDetailsView.tsx` | Full spec sheet: back nav, bike header, Overview (DescriptionCard), Allegro Offers (OffersSection), Ceneo Offers (OffersSection), Decathlon Offers (OffersSection), Used Bikes OLX (UsedBikesSection), Expert Review (ReviewSection), category/subcategory/element/spec tree, shimmer skeleton, error + retry |
 | Shared types | `src/types.ts` | `Bike`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeDetailsResponse`, `BikeDescription`, `TextSegment`, `DescriptionCitation`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferResponse`, `UsedBikeResponse`, `SearchPayload`, `SearchFilters` (+ `EMPTY_FILTERS`), `ParseResponse` |
 | Styles | `src/index.css` | Tailwind v4 `@theme` tokens, Google Fonts import, keyframe animations |
 | Vite config | `vite.config.ts` | Tailwind v4 plugin, `/v1` proxy to backend |
@@ -219,5 +226,6 @@ Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser
 - `POST /v1/bike/review` `{ "company": "...", "model": "..." }` → `{ score, explanation, ref: string[] }`
 - `POST /v1/bike/offer` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (allegro.pl)
 - `POST /v1/bike/ceneo` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (ceneo.pl)
+- `POST /v1/bike/decathlon` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (decathlon.pl)
 - `POST /v1/bike/used` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (used bikes from OLX, each with optional `city`)
 - All endpoints proxied to backend via Vite — no CORS config needed in development
