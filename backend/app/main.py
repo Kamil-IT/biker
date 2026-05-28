@@ -67,29 +67,36 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
     enriched = req.enriched_query()
     logger.info("search request | enriched_query=%r", enriched)
 
-    category_results: list[CategoryResult] = []
     t_total = time.perf_counter()
 
-    for name, _ in BIKE_CATEGORIES:
+    async def _score_one(name: str) -> CategoryResult:
         t_cat = time.perf_counter()
         logger.info("scoring category | category=%r", name)
-        try:
-            result = await score_category(enriched, name, CATEGORY_PROMPTS[name])
-            elapsed = time.perf_counter() - t_cat
-            logger.info(
-                "category scored   | category=%-20s score=%2d  elapsed=%.2fs  explanation=%r",
-                f"{name!r}",
-                result.score,
-                elapsed,
-                result.explanation,
-            )
-            category_results.append(result)
-        except Exception as exc:
-            logger.error("scoring failed | category=%r error=%s", name, exc)
+        result = await score_category(enriched, name, CATEGORY_PROMPTS[name])
+        elapsed = time.perf_counter() - t_cat
+        logger.info(
+            "category scored   | category=%-20s score=%2d  elapsed=%.2fs  explanation=%r",
+            f"{name!r}",
+            result.score,
+            elapsed,
+            result.explanation,
+        )
+        return result
+
+    scored = await asyncio.gather(
+        *(_score_one(name) for name, _ in BIKE_CATEGORIES),
+        return_exceptions=True,
+    )
+
+    category_results: list[CategoryResult] = []
+    for (name, _), result in zip(BIKE_CATEGORIES, scored):
+        if isinstance(result, Exception):
+            logger.error("scoring failed | category=%r error=%s", name, result)
             raise HTTPException(
                 status_code=502,
-                detail=f"Upstream error for category {name!r}: {exc}",
-            ) from exc
+                detail=f"Upstream error for category {name!r}: {result}",
+            ) from result
+        category_results.append(result)
 
     category_results.sort(key=lambda r: r.score, reverse=True)
 
