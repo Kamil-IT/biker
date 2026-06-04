@@ -114,13 +114,17 @@ export default function BikeDetailsView({
         {/* Description */}
         <DescriptionCard description={description} state={state} />
 
-        {/* Offers */}
-        <OffersSection offers={offers} state={offerState} title="Allegro Offers" />
-        <OffersSection offers={ceneoOffers} state={ceneoState} title="Ceneo Offers" />
-        <OffersSection offers={decathlonOffers} state={decathlonState} title="Decathlon Offers" />
-
-        {/* Used bikes (OLX) */}
-        <UsedBikesSection usedBikes={usedBikes} state={usedBikeState} />
+        {/* Offers — all sources pooled, split by is_new (Used on top, New below) */}
+        <MergedOffersSection
+          offers={offers}
+          offerState={offerState}
+          ceneoOffers={ceneoOffers}
+          ceneoState={ceneoState}
+          decathlonOffers={decathlonOffers}
+          decathlonState={decathlonState}
+          usedBikes={usedBikes}
+          usedBikeState={usedBikeState}
+        />
 
         {/* Review */}
         <ReviewSection review={review} state={reviewState} />
@@ -365,54 +369,87 @@ function ReviewSection({ review, state }: { review: BikeReviewResponse | null; s
   )
 }
 
-/* ── Offers ─────────────────────────────────────────── */
+/* ── Offers (all sources merged, split by is_new) ───── */
 
-function OffersSection({ offers, state, title = 'Current Offers' }: { offers: BikeOfferResponse | null; state: 'loading' | 'loaded' | 'error'; title?: string }) {
-  if (state === 'loading') {
-    return (
-      <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
-        <div className="shimmer h-3 w-24 rounded mb-4" />
-        <div className="space-y-3">
-          {[0, 1, 2].map(i => (
-            <div key={i} className="flex items-center justify-between gap-4">
-              <div className="space-y-1.5 flex-1">
-                <div className="shimmer h-2.5 w-16 rounded" style={{ animationDelay: `${i * 40}ms` }} />
-                <div className="shimmer h-3.5 w-40 rounded" style={{ animationDelay: `${i * 40 + 20}ms` }} />
-              </div>
-              <div className="shimmer h-4 w-20 rounded" style={{ animationDelay: `${i * 40 + 40}ms` }} />
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
+type OfferState = 'loading' | 'loaded' | 'error'
 
-  if (state === 'error' || !offers || offers.offers.length === 0) return null
+// Parse a free-text price ("3 499 zł") into a number for sorting; unparseable sorts last.
+function priceValue(p: string): number {
+  const n = Number((p ?? '').replace(/[^\d]/g, ''))
+  return Number.isFinite(n) && n > 0 ? n : Infinity
+}
+
+interface MergedOffersSectionProps {
+  offers: BikeOfferResponse | null
+  offerState: OfferState
+  ceneoOffers: BikeOfferResponse | null
+  ceneoState: OfferState
+  decathlonOffers: BikeOfferResponse | null
+  decathlonState: OfferState
+  usedBikes: UsedBikeResponse | null
+  usedBikeState: OfferState
+}
+
+function MergedOffersSection({
+  offers,
+  offerState,
+  ceneoOffers,
+  ceneoState,
+  decathlonOffers,
+  decathlonState,
+  usedBikes,
+  usedBikeState,
+}: MergedOffersSectionProps) {
+  // Pool every offer from all four sources, then split purely on the is_new flag.
+  const allOffers: BikeOffer[] = [
+    ...(offers?.offers ?? []),
+    ...(ceneoOffers?.offers ?? []),
+    ...(decathlonOffers?.offers ?? []),
+    ...(usedBikes?.offers ?? []),
+  ]
+
+  const byPrice = (a: BikeOffer, b: BikeOffer) => priceValue(a.price) - priceValue(b.price)
+  const usedList = allOffers.filter(o => o.is_new === false).sort(byPrice)
+  const newList = allOffers.filter(o => o.is_new === true).sort(byPrice)
+
+  // A late source can still add rows to either category, so both cards show their
+  // skeleton until every source has settled.
+  const anyLoading =
+    offerState === 'loading' ||
+    ceneoState === 'loading' ||
+    decathlonState === 'loading' ||
+    usedBikeState === 'loading'
+
+  if (!anyLoading && usedList.length === 0 && newList.length === 0) return null
 
   return (
     <div className="mt-5 bg-card rounded-2xl border border-border overflow-hidden">
       <div className="px-5 py-4 md:px-6 md:py-5 border-b border-border">
         <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
-          {title}
+          Offers
         </span>
       </div>
-      <div className="divide-y divide-border">
-        {offers.offers.map((offer, i) => (
-          <OfferRow key={i} offer={offer} />
-        ))}
+      <div className="p-4 md:p-5 space-y-4">
+        <OfferCategoryCard title="Used" list={usedList} loading={anyLoading} />
+        <OfferCategoryCard title="New" list={newList} loading={anyLoading} />
       </div>
     </div>
   )
 }
 
-/* ── Used bikes (OLX) ──────────────────────────────── */
+function OfferCategoryCard({ title, list, loading }: { title: string; list: BikeOffer[]; loading: boolean }) {
+  // Hide an empty category once everything has loaded; while loading, show the skeleton.
+  if (!loading && list.length === 0) return null
 
-function UsedBikesSection({ usedBikes, state }: { usedBikes: UsedBikeResponse | null; state: 'loading' | 'loaded' | 'error' }) {
-  if (state === 'loading') {
-    return (
-      <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
-        <div className="shimmer h-3 w-32 rounded mb-4" />
-        <div className="space-y-3">
+  return (
+    <div className="bg-card rounded-xl border border-border overflow-hidden">
+      <div className="px-5 py-3 md:px-6 border-b border-border">
+        <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
+          {title}
+        </span>
+      </div>
+      {loading ? (
+        <div className="px-5 py-4 md:px-6 md:py-5 space-y-3">
           {[0, 1, 2].map(i => (
             <div key={i} className="flex items-center justify-between gap-4">
               <div className="space-y-1.5 flex-1">
@@ -424,24 +461,13 @@ function UsedBikesSection({ usedBikes, state }: { usedBikes: UsedBikeResponse | 
             </div>
           ))}
         </div>
-      </div>
-    )
-  }
-
-  if (state === 'error' || !usedBikes || usedBikes.offers.length === 0) return null
-
-  return (
-    <div className="mt-5 bg-card rounded-2xl border border-border overflow-hidden">
-      <div className="px-5 py-4 md:px-6 md:py-5 border-b border-border">
-        <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
-          Used Bikes · OLX
-        </span>
-      </div>
-      <div className="divide-y divide-border">
-        {usedBikes.offers.map((offer, i) => (
-          <OfferRow key={i} offer={offer} />
-        ))}
-      </div>
+      ) : (
+        <div className="divide-y divide-border">
+          {list.map((offer, i) => (
+            <OfferRow key={i} offer={offer} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
