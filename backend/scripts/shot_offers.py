@@ -68,6 +68,14 @@ async def shoot():
         else:
             print("Offers still loading after 200s — capturing current state.")
         await page.wait_for_timeout(800)
+
+        # Report how many offer rows rendered, split by badge.
+        rows = card.locator("a[target='_blank']")
+        n = await rows.count()
+        used_n = await card.get_by_text("Used", exact=True).count()
+        new_n = await card.get_by_text("New", exact=True).count()
+        print(f"offer rows rendered = {n} (Used badges={used_n}, New badges={new_n})")
+
         await offers_label.scroll_into_view_if_needed()
         try:
             await card.screenshot(path="scripts/ss_1_offers_merged.png")
