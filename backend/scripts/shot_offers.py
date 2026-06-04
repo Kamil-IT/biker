@@ -7,8 +7,13 @@ Saves PNGs to backend/scripts/ss_*.png (committed on the feature branch).
 import asyncio
 from patchright.async_api import async_playwright
 
+import sys
+
 FRONTEND = "http://localhost:5173"
-QUERY = "trek marlin affordable trail and city bike"
+# Override the search query via argv[1]; default targets a bike with offers
+# from all four sources (allegro + olx used, ceneo + decathlon new).
+QUERY = sys.argv[1] if len(sys.argv) > 1 else "rockrider st 100 mountain bike"
+OUT = sys.argv[2] if len(sys.argv) > 2 else "scripts/ss_1_offers_merged.png"
 
 
 async def shoot():
@@ -78,15 +83,11 @@ async def shoot():
 
         await offers_label.scroll_into_view_if_needed()
         try:
-            await card.screenshot(path="scripts/ss_1_offers_merged.png")
-            print("saved scripts/ss_1_offers_merged.png")
+            await card.screenshot(path=OUT)
+            print(f"saved {OUT}")
         except Exception as e:
             print(f"card screenshot failed ({e}); full-page fallback")
-            await page.screenshot(path="scripts/ss_1_offers_merged.png")
-
-        # Full details page for context
-        await page.screenshot(path="scripts/ss_2_details_full.png", full_page=True)
-        print("saved scripts/ss_2_details_full.png")
+            await page.screenshot(path=OUT)
 
         await browser.close()
 
