@@ -31,6 +31,25 @@ assert isinstance(details_data.get("description"), dict) and details_data["descr
     f"Expected non-empty description dict, got: {details_data.get('description')!r}"
 print(f"OK -- description present")
 
+# Smoke test: /v1/equipment/details returns a component tree + inferred/echoed category
+EQUIP_URL = "http://localhost:8000/v1/equipment/details"
+equip_payload = {"company": "POC", "model": "Octal MIPS", "category": "helmets"}
+
+print(f"\nPOST {EQUIP_URL}")
+print(f"Body: {json.dumps(equip_payload)}\n")
+
+equip_resp = httpx.post(EQUIP_URL, json=equip_payload, timeout=120)
+assert equip_resp.status_code == 200, f"Expected 200, got {equip_resp.status_code}"
+equip_data = equip_resp.json()
+assert equip_data.get("category") == "helmets", \
+    f"Expected category 'helmets', got: {equip_data.get('category')!r}"
+assert isinstance(equip_data.get("components"), list), "Expected components to be a list"
+# Hard constraint: no offer/buy links anywhere in the equipment response
+equip_blob = json.dumps(equip_data).lower()
+for _banned in ["allegro.pl", "olx.pl", "ceneo.pl", "decathlon.pl"]:
+    assert _banned not in equip_blob, f"Found forbidden offer reference {_banned!r} in equipment details"
+print(f"OK -- equipment details category={equip_data['category']!r}, no offer links")
+
 # Cache hit verification -- second calls must be fast and return identical JSON
 print("\n-- Cache hit test: POST /v1/bike/search (second call should be fast) --")
 t0 = _time.perf_counter()

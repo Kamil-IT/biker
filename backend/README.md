@@ -311,6 +311,64 @@ Content-Type: application/json
 
 ---
 
+### `POST /v1/equipment/details`
+
+Return an overview, component-tree spec sheet, and photos for a piece of cycling equipment (helmet, light/electronics, lock/security, or apparel/bags/accessories). The gear counterpart to `/v1/bike/details`. **No shopping/offer links** are ever included.
+
+```http
+POST http://localhost:8000/v1/equipment/details
+Content-Type: application/json
+
+{
+  "company": "POC",
+  "model": "Octal MIPS",
+  "category": "helmets"
+}
+```
+
+- `company` is optional (defaults to `""`), `model` is required, `category` is optional — one of `helmets`, `lights`, `locks`, `apparel`. If `category` is omitted it is **inferred** from the item name (keyword match; falls back to `apparel`).
+
+**Response includes:** `category` (resolved slug), `description` (4–5 sentence cited overview), `components` (same category → subcategory → element → spec tree as bikes), `photos` (up to 8 manufacturer product image URLs). No offer/buy links.
+
+**Flow (all three run in parallel via `asyncio.gather`):**
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku, one focused search using the resolved category's `equipment_details_{slug}.md` prompt, returns the component tree (web_search currently disabled behind a `TODO` flag, mirroring `/v1/bike/details`)
+2. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool + prompt caching, generates a 4–5 sentence equipment overview
+3. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool finds the official manufacturer product page URL, then Playwright (headless=False) scrapes up to 8 product `<img>` URLs from the rendered page
+
+**Cache:** keyed on `{company, model, category}`; always cached (empty is a valid result).
+
+---
+
+### `POST /v1/equipment/review`
+
+Return an aggregated review score, explanation, and source links for a piece of cycling equipment. Review/forum **source** links are allowed; offer/buy links are never included.
+
+```http
+POST http://localhost:8000/v1/equipment/review
+Content-Type: application/json
+
+{
+  "company": "POC",
+  "model": "Octal MIPS"
+}
+```
+
+**Response:**
+```json
+{
+  "score": 8,
+  "explanation": "The POC Octal MIPS is widely praised as one of the most protective...",
+  "ref": ["https://..."]
+}
+```
+
+**Flow:**
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches for 3–5 reviews, then synthesises a score 0–10, a 5–10 sentence explanation, and one source URL
+
+**Cache:** keyed on `{company, model}`; cached **only when `ref` is non-empty** (fallbacks are never cached).
+
+---
+
 ### `POST /v1/bike/parse`
 
 Extract structured bike attributes (brand, model, year, wheel size, flags) from a free-text query. Used by the frontend to auto-populate the structured search fields before the user submits their search.

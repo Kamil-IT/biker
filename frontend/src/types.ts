@@ -79,6 +79,32 @@ export interface UsedBikeResponse {
   info: string
 }
 
+export interface EquipmentDetailsResponse {
+  company: string
+  model: string
+  category: string
+  description: BikeDescription
+  components: BikeCategory[]
+  photos: string[]
+}
+
+export interface EquipmentReviewResponse {
+  score: number
+  explanation: string
+  ref: string[]
+}
+
+export interface EquipmentDetailsPayload {
+  company?: string
+  model: string
+  category?: string
+}
+
+export interface EquipmentReviewPayload {
+  company?: string
+  model: string
+}
+
 export interface SearchPayload {
   search?:              string
   brand?:               string

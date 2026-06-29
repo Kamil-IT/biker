@@ -13,6 +13,8 @@ from .schemas import (  # noqa: E402
     BikeReviewRequest, BikeReviewResponse,
     BikeOfferRequest, BikeOfferResponse,
     UsedBikeRequest, UsedBikeResponse,
+    EquipmentDetailsRequest, EquipmentDetailsResponse,
+    EquipmentReviewRequest, EquipmentReviewResponse,
     ParseRequest, ParseResponse,
 )
 from .categories import BIKE_CATEGORIES, CATEGORY_PROMPTS  # noqa: E402
@@ -26,6 +28,10 @@ from .bike_offer_finder import find_bike_offers  # noqa: E402
 from .bike_used_finder import find_used_bikes  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
 from .bike_offer_decathlon_finder import find_decathlon_offers  # noqa: E402
+from .equipment_details_finder import find_equipment_details  # noqa: E402
+from .equipment_description_finder import find_equipment_description  # noqa: E402
+from .equipment_photos_finder import find_equipment_photos  # noqa: E402
+from .equipment_review_finder import find_equipment_review  # noqa: E402
 from .bike_parser import parse_free_text  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
 
@@ -233,6 +239,58 @@ async def bike_decathlon(req: BikeOfferRequest) -> BikeOfferResponse:
     logger.info("decathlon complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     if result.offers:
         set_cached("/v1/bike/decathlon", _fields, result)
+    return result
+
+
+@app.post("/v1/equipment/details", response_model=EquipmentDetailsResponse)
+async def equipment_details(req: EquipmentDetailsRequest) -> EquipmentDetailsResponse:
+    logger.info(
+        "equipment details request | company=%r model=%r category=%r",
+        req.company, req.model, req.category,
+    )
+    _fields = {"company": req.company, "model": req.model, "category": req.category or ""}
+    cached = get_cached("/v1/equipment/details", _fields, EquipmentDetailsResponse)
+    if cached is not None:
+        return cached
+
+    t_start = time.perf_counter()
+    (category_components, description, photos) = await asyncio.gather(
+        find_equipment_details(req.company, req.model, req.category),
+        find_equipment_description(req.company, req.model),
+        find_equipment_photos(req.company, req.model),
+    )
+    category_slug, components = category_components
+    elapsed = time.perf_counter() - t_start
+    logger.info(
+        "equipment details complete | category=%r categories=%d photos=%d elapsed=%.2fs",
+        category_slug, len(components), len(photos), elapsed,
+    )
+    response = EquipmentDetailsResponse(
+        company=req.company,
+        model=req.model,
+        category=category_slug,
+        description=description,
+        components=components,
+        photos=photos,
+    )
+    set_cached("/v1/equipment/details", _fields, response)
+    return response
+
+
+@app.post("/v1/equipment/review", response_model=EquipmentReviewResponse)
+async def equipment_review(req: EquipmentReviewRequest) -> EquipmentReviewResponse:
+    logger.info("equipment review request | company=%r model=%r", req.company, req.model)
+    _fields = {"company": req.company, "model": req.model}
+    cached = get_cached("/v1/equipment/review", _fields, EquipmentReviewResponse)
+    if cached is not None:
+        return cached
+
+    t_start = time.perf_counter()
+    result = await find_equipment_review(req.company, req.model)
+    elapsed = time.perf_counter() - t_start
+    logger.info("equipment review complete | score=%d elapsed=%.2fs", result.score, elapsed)
+    if result.ref:
+        set_cached("/v1/equipment/review", _fields, result)
     return result
 
 
