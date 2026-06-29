@@ -83,6 +83,10 @@ review_data = resp_review.json()
 assert isinstance(review_data["score"], int) and 0 <= review_data["score"] <= 10, "score must be 0-10 int"
 assert isinstance(review_data["explanation"], str) and review_data["explanation"], "explanation must be non-empty"
 assert isinstance(review_data["ref"], list), "ref must be a list"
+# A real product must not fall back to the empty "Review unavailable." stub
+assert review_data["explanation"].strip() != "Review unavailable." and (
+    review_data["score"] > 0 or review_data["ref"]
+), "review should not be the fallback for a real product (POC Octal MIPS)"
 review_blob = json.dumps(review_data).lower()
 for banned in ["allegro.pl", "olx.pl", "ceneo.pl", "decathlon.pl"]:
     assert banned not in review_blob, f"Found forbidden offer reference {banned!r} in equipment review"

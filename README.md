@@ -108,6 +108,7 @@ biker/
 │       ├── test_review.py             # Smoke test for /v1/bike/review
 │       ├── test_offer.py              # Smoke test for /v1/bike/offer
 │       ├── test_equipment.py          # Smoke test for /v1/equipment/details + /review
+│       ├── test_equipment_review.py   # Focused regression for equipment-review JSON extraction
 │       └── test_scoring.py            # Pytest eval of category-scoring prompts (deterministic + live CLI)
 └── frontend/
     └── src/

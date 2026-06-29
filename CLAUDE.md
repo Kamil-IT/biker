@@ -162,7 +162,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | Equipment description finder | `app/equipment_description_finder.py` | Single `web_search` call with prompt caching for a 4–5 sentence equipment overview |
 | Equipment photos finder | `app/equipment_photos_finder.py` | Two-step manufacturer-page → Playwright scrape (mirrors `bike_photos_finder.py`) |
 | Equipment review finder | `app/equipment_review_finder.py` | Single `web_search` call → score 0–10, explanation, one source URL (review/forum only, never offers) |
-| Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` · `scripts/test_offer.py` · `scripts/test_equipment.py` | Smoke tests for each endpoint |
+| Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` · `scripts/test_offer.py` · `scripts/test_equipment.py` · `scripts/test_equipment_review.py` | Smoke tests for each endpoint (the last is a focused regression for the equipment-review JSON extraction) |
 | Prompt eval | `scripts/test_scoring.py` | Pytest eval of category-scoring prompts: deterministic parse tests (`-m "not llm"`) + live directional eval via the `claude` CLI, no API key (`-m llm`). See `backend/README.md`. |
 
 **Endpoint** `POST /v1/bike/search`

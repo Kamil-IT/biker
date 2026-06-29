@@ -12,20 +12,46 @@ logger = logging.getLogger("biker.equipment.review")
 
 MODEL = "claude-haiku-4-5-20251001"
 _client = AsyncAnthropic()
-_CODE_FENCE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```$", re.DOTALL)
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 _FALLBACK = EquipmentReviewResponse(score=0, explanation="Review unavailable.", ref=[])
+_FENCED_JSON = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL)
 
 
-def _strip_code_fence(text: str) -> str:
-    text = text.strip()
-    m = _CODE_FENCE.match(text)
-    if m:
-        return m.group(1).strip()
-    if "```" in text:
-        text = text[: text.index("```")].strip()
-    return text
+def _find_json_object(text: str) -> dict | None:
+    """Extract the review JSON object from a text block that may also contain
+    prose and/or a code fence. Tries fenced blocks first, then any balanced
+    ``{...}`` span that parses and carries a ``score`` key."""
+    # 1) fenced ```json { ... } ``` anywhere in the text
+    for m in _FENCED_JSON.finditer(text):
+        try:
+            obj = json.loads(m.group(1))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "score" in obj:
+            return obj
+
+    # 2) first balanced {...} that parses and looks like a review
+    start = text.find("{")
+    while start != -1:
+        depth = 0
+        for i in range(start, len(text)):
+            c = text[i]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start : i + 1]
+                    try:
+                        obj = json.loads(candidate)
+                        if isinstance(obj, dict) and "score" in obj:
+                            return obj
+                    except json.JSONDecodeError:
+                        pass
+                    break
+        start = text.find("{", start + 1)
+    return None
 
 
 async def find_equipment_review(company: str, model: str) -> EquipmentReviewResponse:
@@ -50,28 +76,28 @@ async def find_equipment_review(company: str, model: str) -> EquipmentReviewResp
         response.usage.output_tokens,
     )
 
-    # Take the last text block — comes after any web_search tool results
+    # web_search responses interleave tool blocks with one or more text blocks,
+    # and the JSON may be fenced and preceded by commentary. Scan text blocks
+    # last-first and take the first that yields a valid review object.
     texts = [block.text for block in response.content if getattr(block, "type", None) == "text"]
     if not texts:
         logger.error("no text block in equipment review response")
         return _FALLBACK
 
-    raw = _strip_code_fence(texts[-1])
+    data: dict | None = None
+    for text in reversed(texts):
+        data = _find_json_object(text)
+        if data is not None:
+            break
 
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        logger.error("JSON decode failed: %s | raw=%r", exc, raw[:300])
-        return _FALLBACK
-
-    if not isinstance(data, dict):
-        logger.error("unexpected JSON type %s", type(data).__name__)
+    if data is None:
+        logger.error("no JSON review object found | last_text=%r", texts[-1][:300])
         return _FALLBACK
 
     try:
         return EquipmentReviewResponse(
             score=int(data.get("score", 0)),
-            explanation=str(data.get("explanation", "")),
+            explanation=str(data.get("explanation", "")) or _FALLBACK.explanation,
             ref=[str(u) for u in data.get("ref", []) if u],
         )
     except Exception as exc:
