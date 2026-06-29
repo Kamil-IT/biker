@@ -257,6 +257,71 @@ class UsedBikeResponse(BaseModel):
     info: str = ""
 
 
+class EquipmentDetailsRequest(BaseModel):
+    company: str = ""
+    model: str
+    category: Optional[str] = None
+
+    @field_validator("company", mode="before")
+    @classmethod
+    def strip_company(cls, v):
+        return str(v).strip() if v is not None else ""
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def strip_category(cls, v):
+        return str(v).strip() if v is not None else None
+
+    @field_validator("model")
+    @classmethod
+    def model_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("model must not be empty")
+        return v.strip()
+
+    @field_validator("category", mode="after")
+    @classmethod
+    def empty_category_to_none(cls, v):
+        return v or None
+
+
+class EquipmentDetailsResponse(BaseModel):
+    company: str
+    model: str
+    category: str
+    description: BikeDescription
+    components: list[BikeCategory]
+    photos: list[str] = []
+
+
+class EquipmentReviewRequest(BaseModel):
+    company: str = ""
+    model: str
+
+    @field_validator("company", mode="before")
+    @classmethod
+    def strip_company(cls, v):
+        return str(v).strip() if v is not None else ""
+
+    @field_validator("model")
+    @classmethod
+    def model_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("model must not be empty")
+        return v.strip()
+
+
+class EquipmentReviewResponse(BaseModel):
+    score: int
+    explanation: str
+    ref: list[str]
+
+    @field_validator("score")
+    @classmethod
+    def clamp_score(cls, v: int) -> int:
+        return max(0, min(10, v))
+
+
 class ParseRequest(BaseModel):
     text: str
 

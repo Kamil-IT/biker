@@ -2,6 +2,28 @@
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
+## Application overview
+
+The SPA has three views, switched by `App.tsx` (no router):
+
+- **Search** — `SearchInput` (free text + collapsible filters) → `POST /v1/bike/search`, rendered as `ResultCard`s.
+- **Bike details** (`BikeDetailsView`) — overview, pooled offers (Allegro / Ceneo / Decathlon / OLX), expert review, and a component spec tree. Each **component name in the spec tree is a link** that opens the equipment view for that item (the "Key features" chips stay as plain tags).
+- **Equipment details** (`EquipmentDetailsView`) — the gear counterpart: category eyebrow, overview, expert review, and a component spec tree. **No offers/buy links** — equipment is informational only.
+
+`BikeDetailsView` and `EquipmentDetailsView` share their building blocks (`PhotoGallery`, `DescriptionCard`, `ReviewSection`, `LoadingSkeleton`, `CategorySection`) from `components/BikeDetailsShared.tsx`.
+
+### API integration (all proxied via Vite `/v1` → backend on :8000)
+
+| Call | Request | Response |
+|------|---------|----------|
+| `POST /v1/bike/search` | `SearchPayload` | `{ search, bikes[] }` |
+| `POST /v1/bike/details` | `{ company, model }` | `BikeDetailsResponse` |
+| `POST /v1/bike/review` · `/offer` · `/ceneo` · `/decathlon` · `/used` | `{ company, model }` | review / offers |
+| `POST /v1/equipment/details` | `{ company?, model, category? }` | `EquipmentDetailsResponse` (overview, component tree, photos — no offers) |
+| `POST /v1/equipment/review` | `{ company?, model }` | `EquipmentReviewResponse` (`score`, `explanation`, `ref[]` — review/forum links only) |
+
+Equipment lookups are entered by clicking a component name in a bike's spec tree; the component name is sent as `model` (no `company`), and the backend infers the equipment `category`.
+
 Currently, two official plugins are available:
 
 - [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)

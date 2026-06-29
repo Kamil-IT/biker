@@ -3,11 +3,12 @@ import SearchInput from './components/SearchInput'
 import ResultCard from './components/ResultCard'
 import LoadingCard from './components/LoadingCard'
 import BikeDetailsView from './components/BikeDetailsView'
-import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse, SearchPayload, ParseResponse, SearchFilters } from './types'
+import EquipmentDetailsView from './components/EquipmentDetailsView'
+import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse, EquipmentDetailsResponse, EquipmentReviewResponse, SearchPayload, ParseResponse, SearchFilters } from './types'
 import { EMPTY_FILTERS } from './types'
 
 type AppState     = 'idle' | 'loading' | 'results' | 'error'
-type AppView      = 'search' | 'details'
+type AppView      = 'search' | 'details' | 'equipment'
 type DetailsState = 'loading' | 'loaded' | 'error'
 type ReviewState  = 'loading' | 'loaded' | 'error'
 type OfferState   = 'loading' | 'loaded' | 'error'
@@ -58,6 +59,17 @@ export default function App() {
   // Used bikes (OLX) state
   const [usedBikeState, setUsedBikeState]   = useState<UsedBikeState>('loading')
   const [usedBikes, setUsedBikes]           = useState<UsedBikeResponse | null>(null)
+
+  // Equipment details state (entered by clicking a bike's accessory chip)
+  const [equipItem, setEquipItem]               = useState<{ company: string; model: string } | null>(null)
+  const [equipCategory, setEquipCategory]       = useState<string | null>(null)
+  const [equipCategories, setEquipCategories]   = useState<BikeCategory[] | null>(null)
+  const [equipDescription, setEquipDescription] = useState<BikeDescription | null>(null)
+  const [equipPhotos, setEquipPhotos]           = useState<string[]>([])
+  const [equipState, setEquipState]             = useState<DetailsState>('loading')
+  const [equipError, setEquipError]             = useState<string | null>(null)
+  const [equipReview, setEquipReview]           = useState<EquipmentReviewResponse | null>(null)
+  const [equipReviewState, setEquipReviewState] = useState<ReviewState>('loading')
 
   /* ── Handlers ─────────────────────────────────────── */
 
@@ -255,6 +267,67 @@ export default function App() {
     }
   }
 
+  const fetchEquipmentDetails = async (company: string, model: string) => {
+    setEquipState('loading')
+    setEquipError(null)
+    setEquipCategories(null)
+    setEquipDescription(null)
+    setEquipPhotos([])
+    setEquipCategory(null)
+    try {
+      const res = await fetch('/v1/equipment/details', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ company, model }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error((data as { detail?: string }).detail ?? `Server error ${res.status}`)
+      }
+      const data: EquipmentDetailsResponse = await res.json()
+      setEquipCategories(data.components)
+      setEquipDescription(data.description ?? null)
+      setEquipPhotos(data.photos ?? [])
+      setEquipCategory(data.category ?? null)
+      setEquipState('loaded')
+    } catch (err) {
+      setEquipError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
+      setEquipState('error')
+    }
+  }
+
+  const fetchEquipmentReview = async (company: string, model: string) => {
+    setEquipReviewState('loading')
+    setEquipReview(null)
+    try {
+      const res = await fetch('/v1/equipment/review', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ company, model }),
+      })
+      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      const data: EquipmentReviewResponse = await res.json()
+      setEquipReview(data)
+      setEquipReviewState('loaded')
+    } catch {
+      setEquipReviewState('error')
+    }
+  }
+
+  const handleEquipmentSelect = (name: string) => {
+    const item = { company: '', model: name }
+    setEquipItem(item)
+    setView('equipment')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+    fetchEquipmentDetails(item.company, item.model)
+    fetchEquipmentReview(item.company, item.model)
+  }
+
+  const handleBackFromEquipment = () => {
+    setView('details')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
   const handleBikeSelect = (bike: Bike) => {
     setSelectedBike(bike)
     setView('details')
@@ -296,6 +369,15 @@ export default function App() {
     setOffers(null)
     setUsedBikeState('loading')
     setUsedBikes(null)
+    setEquipItem(null)
+    setEquipCategory(null)
+    setEquipCategories(null)
+    setEquipDescription(null)
+    setEquipPhotos([])
+    setEquipState('loading')
+    setEquipError(null)
+    setEquipReview(null)
+    setEquipReviewState('loading')
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -477,6 +559,25 @@ export default function App() {
             decathlonState={decathlonState}
             onBack={handleBackToResults}
             onRetry={() => fetchDetails(selectedBike)}
+            onEquipmentSelect={handleEquipmentSelect}
+          />
+        )}
+
+        {/* ── Equipment details view ───────────────────── */}
+        {view === 'equipment' && equipItem && (
+          <EquipmentDetailsView
+            company={equipItem.company}
+            model={equipItem.model}
+            category={equipCategory}
+            categories={equipCategories}
+            description={equipDescription}
+            photos={equipPhotos}
+            state={equipState}
+            error={equipError}
+            review={equipReview}
+            reviewState={equipReviewState}
+            onBack={handleBackFromEquipment}
+            onRetry={() => fetchEquipmentDetails(equipItem.company, equipItem.model)}
           />
         )}
       </main>

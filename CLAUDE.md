@@ -143,9 +143,10 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | Layer | File | Responsibility |
 |-------|------|----------------|
 | Entry point | `app/main.py` | FastAPI app, routes, request logging |
-| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse`, `BikeDetailsRequest`, `BikeDetailsResponse`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeReviewRequest`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferRequest`, `BikeOfferResponse`, `UsedBikeRequest`, `UsedBikeResponse` |
+| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse`, `BikeDetailsRequest`, `BikeDetailsResponse`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeReviewRequest`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferRequest`, `BikeOfferResponse`, `UsedBikeRequest`, `UsedBikeResponse`, `EquipmentDetailsRequest`, `EquipmentDetailsResponse`, `EquipmentReviewRequest`, `EquipmentReviewResponse` |
 | Categories | `app/categories.py` | 11 bike category registry; loads prompt files at startup |
-| Prompts | `app/prompts/*.md` | Per-category scoring prompts + `bike_search_{slug}.md` per-category bike-finding prompts + `bike_details_{slug}.md` per-category component search prompts (8 categories) + `bike_details.md` JSON format reference |
+| Equipment categories | `app/equipment_categories.py` | 4 equipment category registry (helmets, lights, locks, apparel); loads prompt files at startup; keyword-based `resolve_category()` inference |
+| Prompts | `app/prompts/*.md` | Per-category scoring prompts + `bike_search_{slug}.md` per-category bike-finding prompts + `bike_details_{slug}.md` per-category component search prompts (8 categories) + `bike_details.md` JSON format reference + `equipment_details_{slug}.md` (4) + `equipment_description.md` / `equipment_photos.md` / `equipment_review.md` |
 | Scorer | `app/anthropic_scorer.py` | Calls Claude Haiku per category, strips code fences, parses JSON |
 | Bike finder | `app/bike_finder.py` | Filters top categories, allocates 5 bikes by score weight, finds real bikes via Claude in parallel |
 | Details finder | `app/bike_details_finder.py` | Loops through 8 component categories (Frame → Accessories), runs one focused `web_search` call per category, aggregates results; logs per-iteration and total token usage |
@@ -157,7 +158,11 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | Ceneo finder | `app/bike_offer_ceneo_finder.py` | Single `web_search` call to find 1 current offer on ceneo.pl |
 | Decathlon finder | `app/bike_offer_decathlon_finder.py` | Single `web_search` call to find 1 current offer on decathlon.pl |
 | Photos finder | `app/bike_photos_finder.py` | Two-step: (1) Claude `web_search` to find manufacturer product page URL, (2) Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs from rendered page; runs in parallel with details and description finders |
-| Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` · `scripts/test_offer.py` | Smoke tests for each endpoint |
+| Equipment details finder | `app/equipment_details_finder.py` | Resolves the equipment category (given or inferred), runs one focused component-search call with that category's `equipment_details_{slug}.md` prompt, returns the bike-style component tree (web_search behind a `TODO` flag, mirroring the bike details finder) |
+| Equipment description finder | `app/equipment_description_finder.py` | Single `web_search` call with prompt caching for a 4–5 sentence equipment overview |
+| Equipment photos finder | `app/equipment_photos_finder.py` | Two-step manufacturer-page → Playwright scrape (mirrors `bike_photos_finder.py`) |
+| Equipment review finder | `app/equipment_review_finder.py` | Single `web_search` call → score 0–10, explanation, one source URL (review/forum only, never offers) |
+| Test scripts | `scripts/test_search.py` · `scripts/test_details.py` · `scripts/test_review.py` · `scripts/test_offer.py` · `scripts/test_equipment.py` · `scripts/test_equipment_review.py` | Smoke tests for each endpoint (the last is a focused regression for the equipment-review JSON extraction) |
 | Prompt eval | `scripts/test_scoring.py` | Pytest eval of category-scoring prompts: deterministic parse tests (`-m "not llm"`) + live directional eval via the `claude` CLI, no API key (`-m llm`). See `backend/README.md`. |
 
 **Endpoint** `POST /v1/bike/search`
@@ -209,8 +214,28 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 - Returns `{ offers: [{ brand, model, price, is_new, url, photos: [], source: "decathlon.pl" }], info: str }` (1 offer, no photos)
 - On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
 
+**Endpoint** `POST /v1/equipment/details`
+- Request: `{"company": "POC", "model": "Octal MIPS", "category": "helmets"}` — `company` optional (default `""`), `model` required, `category` optional (`helmets` / `lights` / `locks` / `apparel`; inferred from the item name when omitted, defaulting to `apparel`)
+- Runs three calls in parallel via `asyncio.gather` (mirrors `/v1/bike/details`):
+  1. `claude-haiku-4-5-20251001` **once** — one focused component search using the resolved category's `app/prompts/equipment_details_{slug}.md` prompt (web_search behind a `TODO` flag, like the bike details finder)
+  2. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — 4–5 sentence overview using `app/prompts/equipment_description.md` with prompt caching
+  3. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — finds the manufacturer product page URL, then Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs; uses `app/prompts/equipment_photos.md`
+- Returns `{ company, model, category, description, components: [...], photos: [...] }` — **never** any offer/buy links
+- Cache: keyed on `{company, model, category}`; always cached (empty is valid)
+- On JSON parse error for the category: logs and skips — never returns 502
+
+**Endpoint** `POST /v1/equipment/review`
+- Request: `{"company": "POC", "model": "Octal MIPS"}` — `company` optional, `model` required
+- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches 3–5 reviews using `app/prompts/equipment_review.md`; review/forum source links only, never offer links
+- Returns `{ score: int (0–10), explanation: str, ref: [url, ...] }`
+- Cache: keyed on `{company, model}`; cached only when `ref` is non-empty
+- On JSON parse error: returns `{ score: 0, explanation: "Review unavailable.", ref: [] }` — never returns 502
+
 **Bike categories** (defined in `app/categories.py`):
 Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser, Touring, Folding, Cyclocross, Kids
+
+**Equipment categories** (defined in `app/equipment_categories.py`):
+Helmets, Lights & electronics, Locks & security, Apparel/bags & accessories. **No** equipment offer endpoints exist — equipment has details + review only, never buy/offer links.
 
 **To add a category**: add an entry to `BIKE_CATEGORIES` in `app/categories.py` and create the matching `app/prompts/<slug>.md`.
 
@@ -219,12 +244,14 @@ Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser
 | Layer | File | Responsibility |
 |-------|------|----------------|
 | Entry point | `src/main.tsx` | React root, mounts `<App>` |
-| App shell | `src/App.tsx` | View router (`search` / `details`), search, details, review, allegro offer, ceneo offer, decathlon offer & used-bike state, all seven API calls |
+| App shell | `src/App.tsx` | View router (`search` / `details` / `equipment`), search, details, review, allegro offer, ceneo offer, decathlon offer & used-bike state, plus equipment details/review state; all API calls. Clicking a component element name in a bike's spec tree opens the equipment view for that item |
 | Search form | `src/components/SearchInput.tsx` | Controlled input + submit button + collapsible Filters panel (Basic group: brand, model, bike type, year, wheel size, frame size, rider height, max price + electric/suspension/kids toggles; Advanced group: gender, frame material, brake type, drivetrain, belt drive + battery capacity shown only when electric); loading state |
 | Result card | `src/components/ResultCard.tsx` | Clickable per-bike card: match score, brand + model, accessories chips, explanation, score bar |
 | Loading card | `src/components/LoadingCard.tsx` | Shimmer skeleton matching result card dimensions |
-| Details view | `src/components/BikeDetailsView.tsx` | Full spec sheet: back nav, bike header, Overview (DescriptionCard), unified Offers (MergedOffersSection — pools all four sources Allegro/Ceneo/Decathlon/OLX and splits by each offer's `is_new` flag into two stacked cards: Used on top, New below, each sorted cheapest-first via `OfferCategoryCard`/`OfferRow`), Expert Review (ReviewSection), category/subcategory/element/spec tree, shimmer skeleton, error + retry |
-| Shared types | `src/types.ts` | `Bike`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeDetailsResponse`, `BikeDescription`, `TextSegment`, `DescriptionCitation`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferResponse`, `UsedBikeResponse`, `SearchPayload`, `SearchFilters` (+ `EMPTY_FILTERS`), `ParseResponse` |
+| Details view | `src/components/BikeDetailsView.tsx` | Full spec sheet: back nav, bike header, Overview, unified Offers (MergedOffersSection — pools all four sources Allegro/Ceneo/Decathlon/OLX and splits by each offer's `is_new` flag into two stacked cards: Used on top, New below, each sorted cheapest-first via `OfferCategoryCard`/`OfferRow`), Expert Review, component tree whose element names are clickable → equipment view. Reuses shared building blocks from `BikeDetailsShared.tsx` (component-element links are enabled by passing `onElementSelect`) |
+| Equipment details view | `src/components/EquipmentDetailsView.tsx` | Equipment spec page: back nav, category eyebrow + item header, Overview, Expert Review, component tree, shimmer skeleton, error + retry, graceful empty state. **No** offers/used sections. Reuses `BikeDetailsShared.tsx` |
+| Shared details building blocks | `src/components/BikeDetailsShared.tsx` | `PhotoGallery`, `DescriptionCard`, `ReviewSection`, `LoadingSkeleton`, `CategorySection` — shared by both the bike and equipment detail views |
+| Shared types | `src/types.ts` | `Bike`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeDetailsResponse`, `BikeDescription`, `TextSegment`, `DescriptionCitation`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferResponse`, `UsedBikeResponse`, `EquipmentDetailsResponse`, `EquipmentReviewResponse`, `EquipmentDetailsPayload`, `EquipmentReviewPayload`, `SearchPayload`, `SearchFilters` (+ `EMPTY_FILTERS`), `ParseResponse` |
 | Styles | `src/index.css` | Tailwind v4 `@theme` tokens, Google Fonts import, keyframe animations |
 | Vite config | `vite.config.ts` | Tailwind v4 plugin, `/v1` proxy to backend |
 
@@ -241,4 +268,6 @@ Road, Mountain (MTB), Gravel, Hybrid / Commuter, Electric (e-bike), BMX, Cruiser
 - `POST /v1/bike/ceneo` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (ceneo.pl)
 - `POST /v1/bike/decathlon` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (decathlon.pl)
 - `POST /v1/bike/used` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (used bikes from OLX, each with optional `city`)
+- `POST /v1/equipment/details` `{ "company"?, "model", "category"? }` → `{ company, model, category, description: BikeDescription, components: BikeCategory[], photos: string[] }` (no offer links)
+- `POST /v1/equipment/review` `{ "company"?, "model" }` → `{ score, explanation, ref: string[] }` (review/forum links only)
 - All endpoints proxied to backend via Vite — no CORS config needed in development
