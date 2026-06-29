@@ -2,7 +2,19 @@
 
 # Ruflo / Claude Code runtime
 .claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude-flow/
 .swarm/
 ruvector.db
 backend/cache.db-shm
 backend/cache.db-wal
+
+# AgentDB runtime state
+agentdb.rvf
+agentdb.rvf.lock
+
+# Obsidian memory vault (contains a bearer token — never commit)
+obsidian/bike-memory/
+
+# Stray empty scratch file
+backend/dict
