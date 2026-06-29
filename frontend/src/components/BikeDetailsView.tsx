@@ -101,26 +101,41 @@ export default function BikeDetailsView({
         )}
         {state !== 'loading' && <PhotoGallery photos={photos} />}
 
-        {/* Accessories — click a chip to open its equipment details page */}
+        {/* Equipment links — each accessory opens its equipment details page */}
         {accessories.filter(Boolean).length > 0 && (
-          <div className="mt-2">
-            <ul className="flex flex-wrap gap-1.5" aria-label="Equipment — tap for details">
+          <div className="mt-3">
+            <span className="font-mono text-[10px] text-muted uppercase tracking-widest block mb-1.5">
+              Equipment
+            </span>
+            <ul className="flex flex-wrap gap-x-2 gap-y-1.5" aria-label="Equipment — open details">
               {accessories.filter(Boolean).map((acc, i) => (
                 <li key={`${acc}-${i}`}>
                   <button
                     type="button"
                     onClick={() => onAccessorySelect(acc)}
                     className="
-                      font-mono text-[10px] text-ink px-2 py-0.5 bg-sand rounded-full border border-border
-                      inline-flex items-center gap-1 leading-5
-                      hover:border-terra hover:text-terra
+                      group inline-flex items-center gap-1 px-2.5 py-1
+                      rounded-full bg-parchment border border-border
+                      hover:border-terra hover:bg-sand
                       focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/40
                       transition-colors duration-150
                     "
                     aria-label={`View equipment details for ${acc}`}
                   >
-                    {acc}
-                    <span aria-hidden="true" className="text-terra">→</span>
+                    <span className="
+                      font-mono text-[11px] text-terra group-hover:text-terra-dark
+                      underline decoration-dotted decoration-terra/50 underline-offset-[3px]
+                      group-hover:decoration-solid group-hover:decoration-terra-dark
+                      transition-colors duration-150
+                    ">
+                      {acc}
+                    </span>
+                    <span
+                      aria-hidden="true"
+                      className="text-[10px] leading-none text-terra group-hover:text-terra-dark transition-colors duration-150"
+                    >
+                      ↗
+                    </span>
                   </button>
                 </li>
               ))}
