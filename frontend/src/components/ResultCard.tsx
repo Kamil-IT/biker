@@ -125,13 +125,13 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
           </div>
 
           {/* Accessories chips */}
-          {accessories.length > 0 && (
+          {accessories.filter(Boolean).length > 0 && (
             <ul
               className="flex flex-wrap gap-1.5 mt-3 mb-3"
               aria-label="Key features"
             >
-              {accessories.map((acc) => (
-                <li key={acc}>
+              {accessories.filter(Boolean).map((acc, i) => (
+                <li key={`${acc}-${i}`}>
                   <span className="font-mono text-[10px] text-ink px-2 py-0.5 bg-sand rounded-full border border-border inline-block leading-5">
                     {acc}
                   </span>

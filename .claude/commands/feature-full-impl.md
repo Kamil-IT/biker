@@ -26,7 +26,15 @@ mcp__ruflo__terminal_create(name="biker-server")
 mcp__ruflo__terminal_execute: cd /d C:\...\backend && .venv\Scripts\activate && start "biker-backend" cmd /k "uvicorn app.main:app --reload --port 8000"
 ```
 
-Then in the same or a new terminal session run the smoke test:
+**Before running the test dedicated to your change, run the existing smoke tests in `backend/scripts` first** — this catches regressions in other endpoints before you focus on the new one. Run every `scripts/test_*.py` against the running server and confirm they all exit 0, then run the test for your change:
+
+```
+mcp__ruflo__terminal_execute: cd /d C:\...\backend && .venv\Scripts\python.exe scripts/test_search.py
+mcp__ruflo__terminal_execute: cd /d C:\...\backend && .venv\Scripts\python.exe scripts/test_review.py
+mcp__ruflo__terminal_execute: cd /d C:\...\backend && .venv\Scripts\python.exe scripts/test_offer.py
+```
+
+Then in the same or a new terminal session run the smoke test for your change:
 
 ```
 mcp__ruflo__terminal_execute: cd /d C:\...\backend && .venv\Scripts\python.exe scripts/test_details.py
@@ -39,7 +47,7 @@ mcp__ruflo__terminal_execute: cd /d C:\...\backend && .venv\Scripts\python.exe s
 
 ## 3 — Screenshot proof
 
-Use Playwright (already installed as `patchright`) to take screenshots of the frontend. Save to `backend/scripts/ss_*.png`, read the files to show them inline in the conversation, then **delete them** — they will be hosted on GitHub, not committed to the repo.
+Use Playwright (already installed as `patchright`) to take screenshots of the frontend. Save to `backend/scripts/ss_*.png`, read the files to show them inline in the conversation, then **keep them** — they get committed to the repo on the feature branch and embedded in the PR via raw blob URLs.
 
 Example:
 ```python
@@ -59,46 +67,27 @@ async def shoot():
 asyncio.run(shoot())
 ```
 
-After reading/showing the images inline, delete the local files — they stay out of the repo.
+After reading/showing the images inline, keep the local files — they get committed alongside the code on the feature branch.
 
 ## 4 — Create PR with screenshots
 
-Screenshots are hosted on a GitHub release (not committed to the repo). The flow:
+Screenshots are committed to the repo on the feature branch and embedded in the PR body via raw blob URLs. The flow:
 
 ```bash
-TOKEN=$(gh auth token)
 REPO="Kamil-IT/biker"
-PR_NUM=<number>   # fill in after creating the PR, or use a label like "pr-<slug>"
+SLUG=<slug>   # the feature branch suffix, e.g. bike-search-filters
 
-# 1. Create a published release to host the images (one release per PR)
-RELEASE_ID=$(curl -s -X POST \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Accept: application/vnd.github+json" \
-  -H "Content-Type: application/json" \
-  -d "{\"tag_name\":\"screenshots-pr-${PR_NUM}\",\"name\":\"PR #${PR_NUM} screenshots\",\"draft\":false,\"body\":\"\"}" \
-  "https://api.github.com/repos/${REPO}/releases" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-
-# 2. Upload each screenshot as a release asset
-upload_asset() {
-  local file=$1; local name=$(basename "$file")
-  curl -s -X POST \
-    -H "Authorization: Bearer $TOKEN" \
-    -H "Content-Type: image/png" \
-    --data-binary @"$file" \
-    "https://uploads.github.com/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${name}" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin)['browser_download_url'])"
-}
-
-BASE="https://github.com/${REPO}/releases/download/screenshots-pr-${PR_NUM}"
-# after uploading: BASE/ss_1_<name>.png, BASE/ss_2_<name>.png, etc.
-
-# 3. Create branch, commit code (no screenshots), push
-git checkout -b feature/<slug>
+# 1. Create branch, commit code AND screenshots, push
+git checkout -b feature/${SLUG}
 git add backend/app/... frontend/src/... CLAUDE.md backend/README.md .claude/commands/feature-full-impl.md
+git add backend/scripts/ss_*.png
 git commit -m "Short description of the feature"
-git push -u origin feature/<slug>
+git push -u origin feature/${SLUG}
 
-# 4. Create PR with release-hosted images embedded
+# Raw blob URL pattern for the committed images:
+#   https://github.com/${REPO}/blob/feature/${SLUG}/backend/scripts/ss_<n>_<name>.png?raw=true
+
+# 2. Create PR with blob-hosted images embedded
 gh pr create \
   --title "..." \
   --body "$(cat <<'EOF'
@@ -109,10 +98,10 @@ gh pr create \
 ## Screenshots
 
 ### <Caption 1>
-![ss_1](https://github.com/REPO/releases/download/screenshots-pr-NUM/ss_1_<name>.png)
+![ss_1](https://github.com/Kamil-IT/biker/blob/feature/<slug>/backend/scripts/ss_1_<name>.png?raw=true)
 
 ### <Caption 2>
-![ss_2](https://github.com/REPO/releases/download/screenshots-pr-NUM/ss_2_<name>.png)
+![ss_2](https://github.com/Kamil-IT/biker/blob/feature/<slug>/backend/scripts/ss_2_<name>.png?raw=true)
 
 ## Test plan
 - [ ] smoke tests pass
@@ -123,7 +112,7 @@ EOF
 )"
 ```
 
-GitHub renders release asset URLs as inline images. The release persists so images stay visible in the PR history. Screenshots never touch the repo.
+GitHub renders `blob/<branch>/<path>?raw=true` URLs as inline images. The images live on the feature branch, so they stay visible in the PR history after merge.
 
 After creating the PR, share the link with the user.
 
