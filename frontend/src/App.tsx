@@ -314,8 +314,8 @@ export default function App() {
     }
   }
 
-  const handleAccessorySelect = (accessory: string) => {
-    const item = { company: '', model: accessory }
+  const handleEquipmentSelect = (name: string) => {
+    const item = { company: '', model: name }
     setEquipItem(item)
     setView('equipment')
     window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -559,7 +559,7 @@ export default function App() {
             decathlonState={decathlonState}
             onBack={handleBackToResults}
             onRetry={() => fetchDetails(selectedBike)}
-            onAccessorySelect={handleAccessorySelect}
+            onEquipmentSelect={handleEquipmentSelect}
           />
         )}
 

@@ -7,7 +7,7 @@ This template provides a minimal setup to get React working in Vite with HMR and
 The SPA has three views, switched by `App.tsx` (no router):
 
 - **Search** — `SearchInput` (free text + collapsible filters) → `POST /v1/bike/search`, rendered as `ResultCard`s.
-- **Bike details** (`BikeDetailsView`) — overview, pooled offers (Allegro / Ceneo / Decathlon / OLX), expert review, and a component spec tree. A bike's **accessory chips are clickable** and open the equipment view for that item.
+- **Bike details** (`BikeDetailsView`) — overview, pooled offers (Allegro / Ceneo / Decathlon / OLX), expert review, and a component spec tree. Each **component name in the spec tree is a link** that opens the equipment view for that item (the "Key features" chips stay as plain tags).
 - **Equipment details** (`EquipmentDetailsView`) — the gear counterpart: category eyebrow, overview, expert review, and a component spec tree. **No offers/buy links** — equipment is informational only.
 
 `BikeDetailsView` and `EquipmentDetailsView` share their building blocks (`PhotoGallery`, `DescriptionCard`, `ReviewSection`, `LoadingSkeleton`, `CategorySection`) from `components/BikeDetailsShared.tsx`.
@@ -22,7 +22,7 @@ The SPA has three views, switched by `App.tsx` (no router):
 | `POST /v1/equipment/details` | `{ company?, model, category? }` | `EquipmentDetailsResponse` (overview, component tree, photos — no offers) |
 | `POST /v1/equipment/review` | `{ company?, model }` | `EquipmentReviewResponse` (`score`, `explanation`, `ref[]` — review/forum links only) |
 
-Equipment lookups are entered by clicking an accessory chip on a bike's details page; the chip text is sent as `model` (no `company`), and the backend infers the equipment `category`.
+Equipment lookups are entered by clicking a component name in a bike's spec tree; the component name is sent as `model` (no `company`), and the backend infers the equipment `category`.
 
 Currently, two official plugins are available:
 

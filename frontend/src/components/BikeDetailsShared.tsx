@@ -260,7 +260,16 @@ export function LoadingSkeleton() {
 
 /* ── Category / subcategory / element ──────────────── */
 
-export function CategorySection({ category }: { category: BikeCategory }) {
+// When `onElementSelect` is provided (bike details view), each component
+// element name renders as a link that opens its equipment page. When omitted
+// (equipment view) the names stay as plain text.
+export function CategorySection({
+  category,
+  onElementSelect,
+}: {
+  category: BikeCategory
+  onElementSelect?: (name: string) => void
+}) {
   return (
     <section aria-labelledby={`cat-${category.category}`}>
       <div className="flex items-center gap-3 mb-3">
@@ -275,14 +284,20 @@ export function CategorySection({ category }: { category: BikeCategory }) {
 
       <div className="bg-card rounded-2xl border border-border divide-y divide-border overflow-hidden">
         {category.subcategories.map((sub, i) => (
-          <SubcategorySection key={`${sub.subcategory}-${i}`} sub={sub} />
+          <SubcategorySection key={`${sub.subcategory}-${i}`} sub={sub} onElementSelect={onElementSelect} />
         ))}
       </div>
     </section>
   )
 }
 
-function SubcategorySection({ sub }: { sub: BikeSubcategory }) {
+function SubcategorySection({
+  sub,
+  onElementSelect,
+}: {
+  sub: BikeSubcategory
+  onElementSelect?: (name: string) => void
+}) {
   return (
     <div className="px-5 py-4 md:px-6 md:py-5">
       <h3 className="font-mono text-[10px] text-muted uppercase tracking-widest mb-3">
@@ -290,20 +305,52 @@ function SubcategorySection({ sub }: { sub: BikeSubcategory }) {
       </h3>
       <div className="space-y-5">
         {sub.elements.map((el, i) => (
-          <ElementItem key={`${el.name}-${i}`} element={el} />
+          <ElementItem key={`${el.name}-${i}`} element={el} onElementSelect={onElementSelect} />
         ))}
       </div>
     </div>
   )
 }
 
-function ElementItem({ element }: { element: ComponentElement }) {
+function ElementItem({
+  element,
+  onElementSelect,
+}: {
+  element: ComponentElement
+  onElementSelect?: (name: string) => void
+}) {
   const { name, description, specs } = element
+  const linkable = !!onElementSelect && !!name
   return (
     <div>
-      <p className="font-display font-bold text-charcoal text-[15px] md:text-[16px] leading-tight">
-        {name}
-      </p>
+      {linkable ? (
+        <button
+          type="button"
+          onClick={() => onElementSelect!(name)}
+          className="group inline-flex items-baseline gap-1 text-left max-w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/40 focus-visible:rounded"
+          aria-label={`View equipment details for ${name}`}
+        >
+          <span className="
+            font-display font-bold text-[15px] md:text-[16px] leading-tight
+            text-terra group-hover:text-terra-dark
+            underline decoration-dotted decoration-terra/50 underline-offset-[3px]
+            group-hover:decoration-solid group-hover:decoration-terra-dark
+            transition-colors duration-150
+          ">
+            {name}
+          </span>
+          <span
+            aria-hidden="true"
+            className="shrink-0 text-[10px] leading-none text-terra group-hover:text-terra-dark transition-colors duration-150"
+          >
+            ↗
+          </span>
+        </button>
+      ) : (
+        <p className="font-display font-bold text-charcoal text-[15px] md:text-[16px] leading-tight">
+          {name}
+        </p>
+      )}
       {description && (
         <p className="font-body italic text-ink text-[13px] leading-relaxed mt-0.5">
           {description}

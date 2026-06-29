@@ -9,7 +9,7 @@ AI-powered bike finder. Describe what you're looking for in plain English and ge
 3. Top-scoring categories (score ≥ 5, minimum 2) are selected; 5 bikes are allocated proportionally by score
 4. Claude finds real bikes for each qualifying category in parallel
 5. Click a result to open the details page — the backend fetches specs, description, manufacturer photos, review score, and current Allegro offers in parallel via Claude web search + Playwright
-6. Click any of a bike's accessory chips to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel). Equipment is informational only — no shopping/offer links
+6. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel). Equipment is informational only — no shopping/offer links
 
 ## Running the project
 

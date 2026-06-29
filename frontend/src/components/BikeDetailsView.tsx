@@ -24,7 +24,7 @@ interface BikeDetailsViewProps {
   decathlonState: 'loading' | 'loaded' | 'error'
   onBack: () => void
   onRetry: () => void
-  onAccessorySelect: (accessory: string) => void
+  onEquipmentSelect: (name: string) => void
 }
 
 export default function BikeDetailsView({
@@ -46,7 +46,7 @@ export default function BikeDetailsView({
   decathlonState,
   onBack,
   onRetry,
-  onAccessorySelect,
+  onEquipmentSelect,
 }: BikeDetailsViewProps) {
   const { brand, model, accessories, match_score } = bike
   const scoreDisplay = match_score === 10 ? '10' : match_score.toFixed(1)
@@ -101,46 +101,17 @@ export default function BikeDetailsView({
         )}
         {state !== 'loading' && <PhotoGallery photos={photos} />}
 
-        {/* Equipment links — each accessory opens its equipment details page */}
+        {/* Accessories */}
         {accessories.filter(Boolean).length > 0 && (
-          <div className="mt-3">
-            <span className="font-mono text-[10px] text-muted uppercase tracking-widest block mb-1.5">
-              Equipment
-            </span>
-            <ul className="flex flex-wrap gap-x-2 gap-y-1.5" aria-label="Equipment — open details">
-              {accessories.filter(Boolean).map((acc, i) => (
-                <li key={`${acc}-${i}`}>
-                  <button
-                    type="button"
-                    onClick={() => onAccessorySelect(acc)}
-                    className="
-                      group inline-flex items-center gap-1 px-2.5 py-1
-                      rounded-full bg-parchment border border-border
-                      hover:border-terra hover:bg-sand
-                      focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/40
-                      transition-colors duration-150
-                    "
-                    aria-label={`View equipment details for ${acc}`}
-                  >
-                    <span className="
-                      font-mono text-[11px] text-terra group-hover:text-terra-dark
-                      underline decoration-dotted decoration-terra/50 underline-offset-[3px]
-                      group-hover:decoration-solid group-hover:decoration-terra-dark
-                      transition-colors duration-150
-                    ">
-                      {acc}
-                    </span>
-                    <span
-                      aria-hidden="true"
-                      className="text-[10px] leading-none text-terra group-hover:text-terra-dark transition-colors duration-150"
-                    >
-                      ↗
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
+          <ul className="flex flex-wrap gap-1.5" aria-label="Key features">
+            {accessories.filter(Boolean).map((acc, i) => (
+              <li key={`${acc}-${i}`}>
+                <span className="font-mono text-[10px] text-ink px-2 py-0.5 bg-sand rounded-full border border-border inline-block leading-5">
+                  {acc}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
 
         {/* Description */}
@@ -196,7 +167,7 @@ export default function BikeDetailsView({
             style={{ opacity: 0, animation: 'slideUp 350ms ease-out forwards' }}
           >
             {categories.map(cat => (
-              <CategorySection key={cat.category} category={cat} />
+              <CategorySection key={cat.category} category={cat} onElementSelect={onEquipmentSelect} />
             ))}
           </div>
         )}
