@@ -94,6 +94,7 @@ Content-Type: application/json
   "price_max": 6000,
   "frame_size": "M",
   "rider_height_cm": 178,
+  "rider_weight_kg": 75,
   "gender": "Universal",
   "frame_material": "Carbon",
   "brake_type": "Hydraulic Disc",
@@ -395,7 +396,9 @@ Content-Type: application/json
   "wheel_size": "29\"",
   "has_suspension": true,
   "is_electric": null,
-  "is_kids": null
+  "is_kids": null,
+  "rider_height_cm": null,
+  "rider_weight_kg": null
 }
 ```
 

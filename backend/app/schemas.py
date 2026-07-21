@@ -16,6 +16,7 @@ class SearchRequest(BaseModel):
     price_max:            Optional[int]  = None
     frame_size:           Optional[str]  = None
     rider_height_cm:      Optional[int]  = None
+    rider_weight_kg:      Optional[int]  = None
     gender:               Optional[str]  = None
     frame_material:       Optional[str]  = None
     brake_type:           Optional[str]  = None
@@ -46,7 +47,7 @@ class SearchRequest(BaseModel):
             raise ValueError("year must be between 1900 and 2100")
         return y
 
-    @field_validator("price_max", "rider_height_cm", "battery_capacity_wh", mode="before")
+    @field_validator("price_max", "rider_height_cm", "rider_weight_kg", "battery_capacity_wh", mode="before")
     @classmethod
     def empty_int_to_none(cls, v):
         if v is None or v == "":
@@ -59,6 +60,7 @@ class SearchRequest(BaseModel):
             self.search, self.brand, self.model, self.year,
             self.wheel_size, self.is_electric, self.has_suspension, self.is_kids,
             self.bike_type, self.price_max, self.frame_size, self.rider_height_cm,
+            self.rider_weight_kg,
             self.gender, self.frame_material, self.brake_type, self.drivetrain,
             self.belt_drive, self.battery_capacity_wh,
         ]):
@@ -75,6 +77,8 @@ class SearchRequest(BaseModel):
         if self.frame_size:         parts.append(f"Frame size: {self.frame_size}")
         if self.rider_height_cm is not None:
             parts.append(f"Rider height: {self.rider_height_cm} cm")
+        if self.rider_weight_kg is not None:
+            parts.append(f"Rider weight: {self.rider_weight_kg} kg")
         if self.price_max is not None:
             parts.append(f"Max price: {self.price_max} PLN")
         if self.gender:             parts.append(f"Gender: {self.gender}")
@@ -341,5 +345,14 @@ class ParseResponse(BaseModel):
     is_electric:     Optional[bool] = None
     has_suspension:  Optional[bool] = None
     is_kids:         Optional[bool] = None
+    rider_height_cm: Optional[int]  = None
+    rider_weight_kg: Optional[int]  = None
+
+    @field_validator("rider_height_cm", "rider_weight_kg", mode="before")
+    @classmethod
+    def empty_int_to_none(cls, v):
+        if v is None or v == "":
+            return None
+        return int(v)
 
 
