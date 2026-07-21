@@ -1,9 +1,21 @@
+---
+name: worktree-status
+description: Show all active git worktrees, their branches, and running server status
+usage: Use to check which worktrees exist and whether their backend/frontend servers are running
+---
+
 # Worktree Status
 
 Show all active git worktrees for this repository, their branches, and whether their backend
 and frontend servers are currently running.
 
----
+## What this skill does
+
+Displays a table of all active worktrees with:
+- Worktree path
+- Current branch
+- Backend server status (port 8000-8002)
+- Frontend server status (port 5173-5175)
 
 ## Steps to execute
 
