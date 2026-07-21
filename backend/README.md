@@ -311,6 +311,53 @@ Content-Type: application/json
 
 ---
 
+### `POST /v1/bike/amazon`
+
+Return current buying offers from Amazon for a specific bike model.
+
+**Auth method: Amazon Product Advertising API (PA-API) 5.0** with AWS Signature Version 4 request signing. PA-API was chosen over SP-API because it exposes a first-class buyer-facing product search (`SearchItems`); SP-API is seller-centric and would require LWA OAuth plus a registered selling account. **Requires a verified Amazon Associate account** with qualifying sales activity. Credentials are read from the environment (`AMAZON_ACCESS_KEY`, `AMAZON_SECRET_KEY`, `AMAZON_PARTNER_TAG`, optional `AMAZON_REGION` / `AMAZON_HOST` — see `.env.example`). When credentials are missing or any API/network error occurs, the endpoint returns 200 with empty offers and an explanatory `info` string — never a 502.
+
+```http
+POST http://localhost:8000/v1/bike/amazon
+Content-Type: application/json
+
+{
+  "company": "Trek",
+  "model": "Marlin 5"
+}
+```
+
+**Response (with valid credentials):**
+```json
+{
+  "offers": [
+    {
+      "brand": "Trek",
+      "model": "Trek Marlin 5 Mountain Bike",
+      "price": "$599.99",
+      "is_new": true,
+      "url": "https://www.amazon.com/dp/B0XXXXXXX?tag=your-associate-tag-20",
+      "photos": ["https://m.media-amazon.com/images/I/xxxx.jpg"],
+      "source": "amazon"
+    }
+  ],
+  "info": ""
+}
+```
+
+**Response (no credentials configured):**
+```json
+{
+  "offers": [],
+  "info": "Amazon PA-API credentials not configured. Set AMAZON_ACCESS_KEY, AMAZON_SECRET_KEY, and AMAZON_PARTNER_TAG (requires a verified Associate account with qualifying sales)."
+}
+```
+
+**Flow:**
+1. `POST https://webservices.amazon.com/paapi5/searchitems` × 1 — PA-API 5.0 `SearchItems` request (SigV4-signed) with keywords `"{company} {model} bike"` in `SearchIndex=SportingGoods`; up to 3 items mapped to offers. Skipped entirely (no outbound call) when credentials are absent. Host/region configurable for `amazon.de` / `amazon.pl`.
+
+---
+
 ### `POST /v1/equipment/details`
 
 Return an overview, component-tree spec sheet, and photos for a piece of cycling equipment (helmet, light/electronics, lock/security, or apparel/bags/accessories). The gear counterpart to `/v1/bike/details`. **No shopping/offer links** are ever included.

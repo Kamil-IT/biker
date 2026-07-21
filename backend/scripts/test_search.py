@@ -248,6 +248,39 @@ fallback_data = resp_decathlon_fake.json()
 assert isinstance(fallback_data["offers"], list), "Fallback offers must be a list"
 print(f"OK — decathlon fallback returned {len(fallback_data['offers'])} offers (expected 0 or empty)")
 
+# ── Amazon: find offers via PA-API 5.0 ──
+print("\n── Amazon: find offers via PA-API 5.0 ──")
+AMAZON_URL = "http://localhost:8000/v1/bike/amazon"
+amazon_payload = {"company": "Trek", "model": "Marlin 5"}
+resp_amazon = httpx.post(AMAZON_URL, json=amazon_payload, timeout=120)
+assert resp_amazon.status_code == 200, f"Expected 200, got {resp_amazon.status_code}"
+amazon_data = resp_amazon.json()
+assert isinstance(amazon_data["offers"], list), "Expected offers to be a list"
+assert isinstance(amazon_data["info"], str), "Expected info to be a string"
+for offer in amazon_data["offers"]:
+    assert offer["source"] == "amazon", f"Expected source 'amazon', got {offer['source']!r}"
+    assert isinstance(offer["url"], str) and offer["url"], "offer url must be non-empty string"
+    assert isinstance(offer["is_new"], bool), "is_new must be a bool"
+    assert isinstance(offer["photos"], list), "photos must be a list"
+print(f"OK — amazon returned {len(amazon_data['offers'])} offer(s)")
+
+# ── Amazon: graceful handling when credentials are missing ──
+# Without PA-API credentials the endpoint must still return 200 + empty offers + info.
+if not amazon_data["offers"]:
+    assert amazon_data["info"], "Expected an explanatory info string when no offers returned"
+    print(f"OK — amazon graceful degradation: {amazon_data['info'][:60]!r}")
+
+# ── Amazon: cache hit on 2nd call (only when offers were returned) ──
+if amazon_data["offers"]:
+    print("\n── Amazon: cache hit on 2nd call ──")
+    t0 = _time.perf_counter()
+    resp_amazon2 = httpx.post(AMAZON_URL, json=amazon_payload, timeout=10)
+    elapsed_amazon2 = _time.perf_counter() - t0
+    assert resp_amazon2.status_code == 200, f"Expected 200 on cached amazon call, got {resp_amazon2.status_code}"
+    assert resp_amazon2.json() == amazon_data, "Cached amazon response differs from original"
+    assert elapsed_amazon2 < 5.0, f"Amazon cache hit took {elapsed_amazon2:.2f}s — expected < 5s"
+    print(f"OK — amazon cache hit in {elapsed_amazon2:.3f}s")
+
 # ── [TC-10] Search response schema shape ──
 print("\n── [TC-10] Search response schema: bikes have required fields ──")
 first_bike = resp.json()["bikes"][0]
