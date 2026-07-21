@@ -10,7 +10,7 @@ The SPA has three views, switched by `App.tsx` (no router):
 - **Bike details** (`BikeDetailsView`) — overview, pooled offers (Allegro / Ceneo / Decathlon / OLX), expert review, and a component spec tree. Each **component name in the spec tree is a link** that opens the equipment view for that item (the "Key features" chips stay as plain tags).
 - **Equipment details** (`EquipmentDetailsView`) — the gear counterpart: category eyebrow, overview, expert review, and a component spec tree. **No offers/buy links** — equipment is informational only.
 
-`BikeDetailsView` and `EquipmentDetailsView` share their building blocks (`PhotoGallery`, `DescriptionCard`, `ReviewSection`, `LoadingSkeleton`, `CategorySection`) from `components/BikeDetailsShared.tsx`.
+`BikeDetailsView` and `EquipmentDetailsView` share their building blocks (`PhotoGallery`, `DescriptionCard`, `ReviewSection`, `LoadingSkeleton`, `CategorySection`) from `components/BikeDetailsShared.tsx`. Both the overview and the expert review render their sources as **citation footnote chips** (`components/CitationChips.tsx`) — a "Sources" row of terracotta pill links showing each source's domain, opening in a new tab with the full URL as a hover tooltip.
 
 ### API integration (all proxied via Vite `/v1` → backend on :8000)
 
