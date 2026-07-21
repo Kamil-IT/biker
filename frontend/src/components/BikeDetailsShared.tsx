@@ -142,10 +142,13 @@ export function DescriptionCard({ description, state }: { description: BikeDescr
 /* ── Expert review ──────────────────────────────────── */
 
 // Structural type — works for both BikeReviewResponse and EquipmentReviewResponse.
+// `rating` / `sources_used` are only present on bike reviews (TODO-014).
 interface ReviewLike {
   score: number
   explanation: string
   ref: string[]
+  rating?: number
+  sources_used?: number
 }
 
 export function ReviewSection({ review, state }: { review: ReviewLike | null; state: LoadState }) {
@@ -172,6 +175,9 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
   let sourceHost: string | null = null
   try { sourceHost = sourceUrl ? new URL(sourceUrl).hostname.replace(/^www\./, '') : null } catch { sourceHost = sourceUrl }
 
+  const hasRating = typeof review.rating === 'number' && (review.sources_used ?? 0) > 0
+  const ratingPct = hasRating ? Math.max(0, Math.min(100, (review.rating! / 10) * 100)) : 0
+
   return (
     <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
       <div className="flex items-center justify-between mb-3">
@@ -188,6 +194,35 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
           <span className="font-mono text-[11px] text-muted">/10</span>
         </div>
       </div>
+
+      {hasRating && (
+        <div className="mb-4 bg-sand rounded-xl border border-border px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
+              Aggregate rating
+            </span>
+            <div className="flex items-baseline gap-1">
+              <span
+                className="font-display font-bold text-terra tabular-nums leading-none text-[18px]"
+                aria-label={`Aggregate rating ${review.rating} out of 10`}
+              >
+                {review.rating!.toFixed(1)}
+              </span>
+              <span className="font-mono text-[11px] text-muted">/10</span>
+            </div>
+          </div>
+          <div className="h-1.5 w-full bg-parchment rounded-full overflow-hidden" role="presentation">
+            <div
+              className="h-full bg-terra rounded-full transition-[width] duration-500 ease-out"
+              style={{ width: `${ratingPct}%` }}
+            />
+          </div>
+          <p className="font-mono text-[10px] text-muted mt-2">
+            Rating from {review.sources_used} {review.sources_used === 1 ? 'source' : 'sources'}
+          </p>
+        </div>
+      )}
+
       <p className="font-body italic text-ink text-[13px] leading-relaxed">
         {clean}
       </p>

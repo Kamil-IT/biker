@@ -169,8 +169,16 @@ async def bike_review(req: BikeReviewRequest) -> BikeReviewResponse:
     t_start = time.perf_counter()
     result = await find_bike_review(req.company, req.model)
     elapsed = time.perf_counter() - t_start
-    logger.info("review complete | score=%d elapsed=%.2fs", result.score, elapsed)
-    if result.ref:
+    logger.info(
+        "review complete | score=%d rating=%.1f sources_used=%d elapsed=%.2fs",
+        result.score,
+        result.rating,
+        result.sources_used,
+        elapsed,
+    )
+    # Require a usable aggregate too, not just links: caching a rating=0 /
+    # sources_used=0 row would pin that degenerate result for this bike forever.
+    if result.ref and result.sources_used >= 1:
         set_cached("/v1/bike/review", _fields, result)
     return result
 

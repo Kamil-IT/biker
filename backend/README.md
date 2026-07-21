@@ -139,7 +139,7 @@ Content-Type: application/json
 
 ### `POST /v1/bike/review`
 
-Return an aggregated review score, explanation, and source links for a specific bike model.
+Return an aggregated review score, explanation, source links, and an aggregate rating derived from multiple curated review sources for a specific bike model.
 
 ```http
 POST http://localhost:8000/v1/bike/review
@@ -156,12 +156,36 @@ Content-Type: application/json
 {
   "score": 8,
   "explanation": "The Canyon Grizl CF 7 ESC is widely praised for its...",
-  "ref": ["https://...", "https://..."]
+  "ref": ["https://...", "https://..."],
+  "rating": 7.7,
+  "sources_used": 3
 }
 ```
 
+- `score` — a single synthesised editorial verdict (integer 0–10), as before.
+- `rating` — the **aggregate** rating (float 0–10) computed from per-source scores across the curated sources.
+- `sources_used` — count of curated sources that contributed a score to the aggregate.
+
+**Aggregation methodology** (see [`docs/review_sources.md`](docs/review_sources.md) for the curated source list):
+Claude searches the curated sources and returns a per-source score for each source it found a review on, tagged with a `type`. The backend computes a weighted mean and normalises to 0–10:
+
+| Source type | Examples | Weight |
+|---|---|---|
+| `pro_numeric` | bikeradar.com, cyclingweekly.com, bikeperfect.com | 3× |
+| `pro_qualitative` | pinkbike.com, bikemag.com, gcn.com | 2× |
+| `community` | mtbr.com, reddit.com, forumrowerowe.org / bikestats.pl | 1× |
+
+`rating = Σ(score × weight) / Σ(weight)`, rounded to 1 decimal. A non-zero rating **requires at least one professional (`pro_numeric` or `pro_qualitative`) source**; if only community sources are found, `rating` is `0.0` and `sources_used` is `0`.
+
+The curated list is a starting point, not a whitelist: if no curated source covers the model, Claude may use any other credible review site or owner forum, tagged with the closest matching `type`. This prevents a bike with real but non-curated coverage from returning nothing.
+
+**Cache:** keyed on `{company, model}`; stored on the happy path only when `ref` is non-empty **and** `sources_used >= 1`. The extra `sources_used` condition stops a degenerate `rating: 0.0` response from being pinned in the cache for that bike forever. The full extended response — including `rating` and `sources_used` — is cached, so a repeat call returns the same rating.
+
 **Flow:**
-1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches for 3–5 reviews, then synthesises a score 0–10, a 5–10 sentence explanation, and a list of source URLs
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches the curated sources, returns a per-source score array plus a synthesised overall score, 5–10 sentence explanation, and source URLs; the backend then computes the weighted aggregate rating
+2. `POST https://api.anthropic.com/v1/messages` × 0–1 — **repair pass, only if step 1 ended in prose instead of the JSON object.** Re-sends step 1's text findings with no tools and an assistant prefill of `{`, so the model can only emit the object. Avoids discarding an already-paid-for web search
+
+The response parser scans **every** text block for the first balanced `{...}` rather than assuming the last block is pure JSON, and strips any `<cite>` markup `web_search` injects into the explanation.
 
 ---
 

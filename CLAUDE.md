@@ -152,7 +152,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | Details finder | `app/bike_details_finder.py` | Loops through 8 component categories (Frame → Accessories), runs one focused `web_search` call per category, aggregates results via the shared `extract_json()`; logs per-iteration and total token usage |
 | JSON extraction | `app/json_extract.py` | Shared `extract_json()` — lifts the first parseable fenced block or balanced `{...}`/`[...]` out of prose. Used by every finder whose prompt demands raw JSON; the model narrates before the object often enough that a strict parser silently loses whole categories/offers |
 | Description finder | `app/bike_description_finder.py` | Single `web_search` call with prompt caching to generate a 4–5 sentence plain-text bike overview; runs in parallel with details finder |
-| Review finder | `app/bike_review_finder.py` | Single `web_search` call to find 3–5 reviews, synthesises score 0–10, explanation, and source URLs |
+| Review finder | `app/bike_review_finder.py` | Single `web_search` call across curated sources (see `docs/review_sources.md`); synthesises score 0–10, explanation, source URLs, plus a per-source score array from which it computes a weighted aggregate `rating` (0–10) and `sources_used` count (pro/numeric 3×, pro/qualitative 2×, community 1×; non-zero rating requires ≥1 pro source). Tolerates the model narrating before the JSON via a balanced-brace scan over all text blocks, with a no-tool prefilled repair call as a last resort |
 | Offer finder | `app/bike_offer_finder.py` | Single `web_search` call to find 1 current offer on allegro.pl |
 | Used bikes finder | `app/bike_used_finder.py` | Single `web_search` call to find up to 5 used listings on olx.pl with cascade fallback; then Playwright scrapes photos via `olx_image_fetcher.py` |
 | OLX image fetcher | `app/olx_image_fetcher.py` | Playwright (headless=False) scrapes up to 4 `<img>` URLs from each OLX listing URL using `*.apollo.olxcdn.com` regex |
@@ -187,9 +187,13 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 
 **Endpoint** `POST /v1/bike/review`
 - Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
-- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches for 3–5 professional and user reviews, using `app/prompts/bike_review.md` as the system prompt
-- Returns `{ score: int (0–10), explanation: str (5–10 sentences), ref: [url, ...] }`
-- On JSON parse error: returns `{ score: 0, explanation: "Review unavailable.", ref: [] }` — never returns 502
+- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches the curated review sources (see `backend/docs/review_sources.md`), using `app/prompts/bike_review.md` as the system prompt; returns per-source scores tagged by type
+- Backend computes a weighted aggregate `rating` (0–10) from the per-source scores: pro/numeric 3×, pro/qualitative 2×, community 1×, normalised; a non-zero rating requires ≥1 professional source
+- Returns `{ score: int (0–10), explanation: str (5–10 sentences), ref: [url, ...], rating: float (0–10), sources_used: int }`
+- The parser scans **every** text block for the first balanced `{...}` (the model often narrates before emitting the JSON, sometimes inside a ```json fence) and strips `<cite>` markup from the explanation
+- If no JSON object is found at all, a **repair pass** re-sends the gathered findings with no tools and an assistant prefill of `{`, forcing a JSON-only reply rather than wasting the completed web search
+- Cache: keyed on `{company, model}`; stored only when `ref` is non-empty **and** `sources_used >= 1`, so a degenerate `rating: 0.0` row cannot be pinned for that bike
+- On JSON parse error: returns `{ score: 0, explanation: "Review unavailable.", ref: [], rating: 0.0, sources_used: 0 }` — never returns 502
 
 **Endpoint** `POST /v1/bike/offer`
 - Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
@@ -265,7 +269,7 @@ Helmets, Lights & electronics, Locks & security, Apparel/bags & accessories. **N
 **API integration:**
 - `POST /v1/bike/search` `SearchPayload` (free text `search` plus any structured filters — see backend endpoint) → `{ search, bikes: [{ brand, model, accessories, match_score, explanation }] }` (5 bikes)
 - `POST /v1/bike/details` `{ "company": "...", "model": "..." }` → `{ company, model, description: BikeDescription, components: BikeCategory[] }`
-- `POST /v1/bike/review` `{ "company": "...", "model": "..." }` → `{ score, explanation, ref: string[] }`
+- `POST /v1/bike/review` `{ "company": "...", "model": "..." }` → `{ score, explanation, ref: string[], rating: number (0–10 aggregate), sources_used: number }`
 - `POST /v1/bike/offer` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (allegro.pl)
 - `POST /v1/bike/ceneo` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (ceneo.pl)
 - `POST /v1/bike/decathlon` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (decathlon.pl)
