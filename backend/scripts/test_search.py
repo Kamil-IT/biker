@@ -375,3 +375,44 @@ resp_offer_empty = httpx.post(OFFER_URL, json={"company": "Canyon", "model": ""}
 assert resp_offer_empty.status_code == 422, \
     f"Expected 422 for empty model, got {resp_offer_empty.status_code}"
 print("OK — empty model in offer correctly rejected with 422")
+
+# ── [TC-20] Allegro API offer: basic 200 + schema ──
+# Gracefully handles missing/unverified credentials — always returns 200 with
+# offers[] (possibly empty) + an info string.
+ALLEGRO_URL = "http://localhost:8000/v1/bike/allegro"
+allegro_payload = {"company": "Trek", "model": "Marlin 5"}
+print(f"\n── [TC-20] Allegro API: POST {ALLEGRO_URL} ──")
+resp_allegro = httpx.post(ALLEGRO_URL, json=allegro_payload, timeout=60)
+assert resp_allegro.status_code == 200, f"Expected 200, got {resp_allegro.status_code}"
+allegro_data = resp_allegro.json()
+assert isinstance(allegro_data["offers"], list), "offers must be a list"
+assert isinstance(allegro_data["info"], str), "info must be a string"
+for o in allegro_data["offers"]:
+    assert isinstance(o["brand"], str), "offer brand must be string"
+    assert isinstance(o["model"], str), "offer model must be string"
+    assert isinstance(o["price"], str), "offer price must be string"
+    assert isinstance(o["is_new"], bool), "offer is_new must be bool"
+    assert isinstance(o["url"], str), "offer url must be string"
+    assert isinstance(o["photos"], list), "offer photos must be list"
+    assert o["source"] == "allegro.pl", f"Expected source 'allegro.pl', got {o['source']!r}"
+print(f"OK — allegro API returned {len(allegro_data['offers'])} offer(s); info={allegro_data['info']!r}")
+
+# ── [TC-21] Allegro API: cache hit (only when offers were returned) ──
+print("\n── [TC-21] Allegro API: second call (cache hit when non-empty) ──")
+t0 = _time.perf_counter()
+resp_allegro2 = httpx.post(ALLEGRO_URL, json=allegro_payload, timeout=60)
+elapsed_allegro2 = _time.perf_counter() - t0
+assert resp_allegro2.status_code == 200, f"Expected 200 on second allegro call, got {resp_allegro2.status_code}"
+if allegro_data["offers"]:
+    assert resp_allegro2.json() == allegro_data, "Cached allegro response differs from original"
+    assert elapsed_allegro2 < 5.0, f"Allegro cache hit took {elapsed_allegro2:.2f}s — expected < 5s"
+    print(f"OK — allegro cache hit in {elapsed_allegro2:.3f}s")
+else:
+    print("OK — no offers (no creds / unverified app); nothing cached, as expected")
+
+# ── [TC-22] Allegro API: empty model → 422 ──
+print("\n── [TC-22] Allegro API: empty model → 422 ──")
+resp_allegro_empty = httpx.post(ALLEGRO_URL, json={"company": "Trek", "model": ""}, timeout=10)
+assert resp_allegro_empty.status_code == 422, \
+    f"Expected 422 for empty model, got {resp_allegro_empty.status_code}"
+print("OK — empty model in allegro API correctly rejected with 422")

@@ -198,6 +198,48 @@ Content-Type: application/json
 
 ---
 
+### `POST /v1/bike/allegro`
+
+Return current Allegro offers via the **official Allegro REST API** (OAuth2), separate from the web-search version above (`/v1/bike/offer`). Requires `ALLEGRO_CLIENT_ID` / `ALLEGRO_CLIENT_SECRET` in `.env`. Defaults to the **sandbox** (`api.allegro.pl.allegrosandbox.pl`); set `ALLEGRO_ENV=production` to hit the live API. On missing credentials or errors, returns `200` with an empty `offers` list and an explanatory `info` string (never 502).
+
+> ⚠️ `GET /offers/listing` requires a **verified** Allegro application — until verification clears, expect empty offers + info.
+
+```http
+POST http://localhost:8000/v1/bike/allegro
+Content-Type: application/json
+
+{
+  "company": "Trek",
+  "model": "Marlin 5"
+}
+```
+
+**Response:**
+```json
+{
+  "offers": [
+    {
+      "brand": "Trek",
+      "model": "Marlin 5",
+      "price": "2499.00 PLN",
+      "is_new": true,
+      "url": "https://allegro.pl/oferta/12345678",
+      "photos": ["https://a.allegroimg.com/...jpg"],
+      "source": "allegro.pl"
+    }
+  ],
+  "info": ""
+}
+```
+
+**Flow:**
+1. `POST https://allegro.pl.allegrosandbox.pl/auth/oauth/token` × 1 — OAuth2 client-credentials grant (HTTP Basic auth with client id/secret); token cached in-process until ~60 s before expiry, reused across requests (production auth URL: `https://allegro.pl/auth/oauth/token`)
+2. `GET https://api.allegro.pl.allegrosandbox.pl/offers/listing?phrase=<brand> <model>&category.id=1112&limit=10` × 1 — Allegro bikes category (`Rowery`, id `1112`); Bearer token from step 1; up to 3 offers mapped to the `BikeOffer` schema (production base: `https://api.allegro.pl`)
+
+Cache: keyed on `{company, model}`; only cached when `offers` is non-empty.
+
+---
+
 ### `POST /v1/bike/used`
 
 Return current used-bike listings from OLX.pl for a specific bike model.
