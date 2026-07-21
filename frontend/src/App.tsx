@@ -91,7 +91,8 @@ export default function App() {
           const anyExtracted = !!(
             parsed.brand || parsed.model || (parsed.year != null) ||
             parsed.wheel_size || (parsed.is_electric != null) ||
-            (parsed.has_suspension != null) || (parsed.is_kids != null)
+            (parsed.has_suspension != null) || (parsed.is_kids != null) ||
+            (parsed.rider_height_cm != null)
           )
           if (anyExtracted) {
             setFilters(prev => ({
@@ -103,6 +104,7 @@ export default function App() {
               ...(parsed.is_electric != null    ? { is_electric: parsed.is_electric }       : {}),
               ...(parsed.has_suspension != null ? { has_suspension: parsed.has_suspension } : {}),
               ...(parsed.is_kids != null        ? { is_kids: parsed.is_kids }               : {}),
+              ...(parsed.rider_height_cm != null ? { rider_height_cm: String(parsed.rider_height_cm) } : {}),
             }))
             setShowFilters(true)
             setIsParsing(false)

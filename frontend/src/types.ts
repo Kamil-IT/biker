@@ -176,4 +176,5 @@ export interface ParseResponse {
   is_electric?:    boolean
   has_suspension?: boolean
   is_kids?:        boolean
+  rider_height_cm?: number
 }

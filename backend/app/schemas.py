@@ -341,5 +341,6 @@ class ParseResponse(BaseModel):
     is_electric:     Optional[bool] = None
     has_suspension:  Optional[bool] = None
     is_kids:         Optional[bool] = None
+    rider_height_cm: Optional[int]  = None
 
 

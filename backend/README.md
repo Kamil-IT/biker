@@ -391,7 +391,8 @@ Content-Type: application/json
   "wheel_size": "29\"",
   "has_suspension": true,
   "is_electric": null,
-  "is_kids": null
+  "is_kids": null,
+  "rider_height_cm": null
 }
 ```
 

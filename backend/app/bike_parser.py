@@ -44,6 +44,7 @@ async def parse_free_text(text: str) -> ParseResponse:
             is_electric=data.get("is_electric"),
             has_suspension=data.get("has_suspension"),
             is_kids=data.get("is_kids"),
+            rider_height_cm=data.get("rider_height_cm"),
         )
     except Exception:
         logger.warning("parse_free_text failed | text=%r", text[:100])

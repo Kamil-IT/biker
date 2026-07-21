@@ -10,6 +10,7 @@ Available fields:
 - "is_electric": boolean — true only if user explicitly wants an e-bike; false only if explicitly not wanted
 - "has_suspension": boolean — true only if user explicitly wants suspension; false only if explicitly no suspension
 - "is_kids": boolean — true only if user explicitly wants a kids bike; false only if explicitly not
+- "rider_height_cm": integer — the rider's height in centimetres (e.g. "185 cm", "185cm", "Mam 185 cm wzrostu" → 185)
 
 Rules:
 - Only include a field if the text clearly mentions or strongly implies it
@@ -19,3 +20,6 @@ Rules:
 
 Example: "Looking for Trek Marlin 7 2023, 29 inch wheels, with front suspension"
 Response: {"brand": "Trek", "model": "Marlin 7", "year": 2023, "wheel_size": "29\"", "has_suspension": true}
+
+Example: "Mam 185 cm wzrostu, szukam roweru na wały"
+Response: {"rider_height_cm": 185}
