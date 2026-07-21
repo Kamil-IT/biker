@@ -142,6 +142,11 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
   const hasRating = typeof review.rating === 'number' && (review.sources_used ?? 0) > 0
   const ratingPct = hasRating ? Math.max(0, Math.min(100, (review.rating! / 10) * 100)) : 0
 
+  // 0–10 → 1–5 filled stars. Prefer the aggregate rating; equipment reviews
+  // have no `rating`, so they fall back to the headline score.
+  const starBasis = hasRating ? review.rating! : review.score
+  const filledStars = Math.max(1, Math.min(5, Math.round(starBasis / 2)))
+
   return (
     <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
       <div className="flex items-center justify-between mb-3">
@@ -192,13 +197,50 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
       </p>
       {refs.length > 0 && (
         <>
-          <span className="font-mono text-[10px] text-muted uppercase tracking-widest block mt-4 mb-1">
+          <span className="font-mono text-[10px] text-muted uppercase tracking-widest block mt-4 mb-2">
             Sources
           </span>
-          <CitationChips urls={refs} />
+          <div className="bg-sand rounded-xl border border-border divide-y divide-border overflow-hidden">
+            {refs.map((url, i) => (
+              <SourceRow key={url || i} url={url} filledStars={filledStars} />
+            ))}
+          </div>
         </>
       )}
     </div>
+  )
+}
+
+// One source per row: stars | domain | "Read review →".
+// Stars are decorative — derived from the aggregate rating when the backend
+// supplied one (bike reviews), otherwise from the headline score (equipment
+// reviews, which carry no `rating`).
+function SourceRow({ url, filledStars }: { url: string; filledStars: number }) {
+  let host: string
+  try { host = new URL(url).hostname.replace(/^www\./, '') } catch { host = url }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={url}
+      className="flex items-center gap-3 px-4 py-3 group hover:bg-parchment transition-colors duration-150 focus-visible:outline-none focus-visible:bg-parchment"
+    >
+      <span
+        className="shrink-0 font-mono text-[11px] text-terra tracking-tight"
+        aria-label={`${filledStars} out of 5 stars`}
+      >
+        {'★'.repeat(filledStars)}
+        <span className="text-terra/30">{'★'.repeat(5 - filledStars)}</span>
+      </span>
+      <span className="min-w-0 flex-1 font-mono text-[11px] text-charcoal group-hover:text-terra truncate transition-colors duration-150">
+        {host}
+      </span>
+      <span className="shrink-0 font-mono text-[11px] text-terra group-hover:text-terra-dark whitespace-nowrap transition-colors duration-150">
+        Read review <span aria-hidden="true">→</span>
+      </span>
+    </a>
   )
 }
 
