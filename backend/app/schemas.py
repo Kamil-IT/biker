@@ -345,9 +345,10 @@ class ParseResponse(BaseModel):
     is_electric:     Optional[bool] = None
     has_suspension:  Optional[bool] = None
     is_kids:         Optional[bool] = None
+    rider_height_cm: Optional[int]  = None
     rider_weight_kg: Optional[int]  = None
 
-    @field_validator("rider_weight_kg", mode="before")
+    @field_validator("rider_height_cm", "rider_weight_kg", mode="before")
     @classmethod
     def empty_int_to_none(cls, v):
         if v is None or v == "":
