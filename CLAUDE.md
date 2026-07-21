@@ -151,7 +151,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | Bike finder | `app/bike_finder.py` | Filters top categories, allocates 5 bikes by score weight, finds real bikes via Claude in parallel |
 | Details finder | `app/bike_details_finder.py` | Loops through 8 component categories (Frame → Accessories), runs one focused `web_search` call per category, aggregates results; logs per-iteration and total token usage |
 | Description finder | `app/bike_description_finder.py` | Single `web_search` call with prompt caching to generate a 4–5 sentence plain-text bike overview; runs in parallel with details finder |
-| Review finder | `app/bike_review_finder.py` | Single `web_search` call to find 3–5 reviews, synthesises score 0–10, explanation, and source URLs |
+| Review finder | `app/bike_review_finder.py` | Single `web_search` call across curated sources (see `docs/review_sources.md`); synthesises score 0–10, explanation, source URLs, plus a per-source score array from which it computes a weighted aggregate `rating` (0–10) and `sources_used` count (pro/numeric 3×, pro/qualitative 2×, community 1×; non-zero rating requires ≥1 pro source) |
 | Offer finder | `app/bike_offer_finder.py` | Single `web_search` call to find 1 current offer on allegro.pl |
 | Used bikes finder | `app/bike_used_finder.py` | Single `web_search` call to find up to 5 used listings on olx.pl with cascade fallback; then Playwright scrapes photos via `olx_image_fetcher.py` |
 | OLX image fetcher | `app/olx_image_fetcher.py` | Playwright (headless=False) scrapes up to 4 `<img>` URLs from each OLX listing URL using `*.apollo.olxcdn.com` regex |
@@ -185,9 +185,10 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 
 **Endpoint** `POST /v1/bike/review`
 - Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
-- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches for 3–5 professional and user reviews, using `app/prompts/bike_review.md` as the system prompt
-- Returns `{ score: int (0–10), explanation: str (5–10 sentences), ref: [url, ...] }`
-- On JSON parse error: returns `{ score: 0, explanation: "Review unavailable.", ref: [] }` — never returns 502
+- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches the curated review sources (see `backend/docs/review_sources.md`), using `app/prompts/bike_review.md` as the system prompt; returns per-source scores tagged by type
+- Backend computes a weighted aggregate `rating` (0–10) from the per-source scores: pro/numeric 3×, pro/qualitative 2×, community 1×, normalised; a non-zero rating requires ≥1 professional source
+- Returns `{ score: int (0–10), explanation: str (5–10 sentences), ref: [url, ...], rating: float (0–10), sources_used: int }`
+- On JSON parse error: returns `{ score: 0, explanation: "Review unavailable.", ref: [], rating: 0.0, sources_used: 0 }` — never returns 502
 
 **Endpoint** `POST /v1/bike/offer`
 - Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
@@ -263,7 +264,7 @@ Helmets, Lights & electronics, Locks & security, Apparel/bags & accessories. **N
 **API integration:**
 - `POST /v1/bike/search` `SearchPayload` (free text `search` plus any structured filters — see backend endpoint) → `{ search, bikes: [{ brand, model, accessories, match_score, explanation }] }` (5 bikes)
 - `POST /v1/bike/details` `{ "company": "...", "model": "..." }` → `{ company, model, description: BikeDescription, components: BikeCategory[] }`
-- `POST /v1/bike/review` `{ "company": "...", "model": "..." }` → `{ score, explanation, ref: string[] }`
+- `POST /v1/bike/review` `{ "company": "...", "model": "..." }` → `{ score, explanation, ref: string[], rating: number (0–10 aggregate), sources_used: number }`
 - `POST /v1/bike/offer` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (allegro.pl)
 - `POST /v1/bike/ceneo` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (ceneo.pl)
 - `POST /v1/bike/decathlon` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (decathlon.pl)

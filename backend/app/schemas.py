@@ -200,11 +200,23 @@ class BikeReviewResponse(BaseModel):
     score: int
     explanation: str
     ref: list[str]
+    rating: float = 0.0
+    sources_used: int = 0
 
     @field_validator("score")
     @classmethod
     def clamp_score(cls, v: int) -> int:
         return max(0, min(10, v))
+
+    @field_validator("rating")
+    @classmethod
+    def clamp_rating(cls, v: float) -> float:
+        return round(max(0.0, min(10.0, float(v))), 1)
+
+    @field_validator("sources_used")
+    @classmethod
+    def clamp_sources(cls, v: int) -> int:
+        return max(0, int(v))
 
     @field_validator("ref")
     @classmethod

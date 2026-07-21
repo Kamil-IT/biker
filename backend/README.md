@@ -136,7 +136,7 @@ Content-Type: application/json
 
 ### `POST /v1/bike/review`
 
-Return an aggregated review score, explanation, and source links for a specific bike model.
+Return an aggregated review score, explanation, source links, and an aggregate rating derived from multiple curated review sources for a specific bike model.
 
 ```http
 POST http://localhost:8000/v1/bike/review
@@ -153,12 +153,31 @@ Content-Type: application/json
 {
   "score": 8,
   "explanation": "The Canyon Grizl CF 7 ESC is widely praised for its...",
-  "ref": ["https://...", "https://..."]
+  "ref": ["https://...", "https://..."],
+  "rating": 7.7,
+  "sources_used": 3
 }
 ```
 
+- `score` — a single synthesised editorial verdict (integer 0–10), as before.
+- `rating` — the **aggregate** rating (float 0–10) computed from per-source scores across the curated sources.
+- `sources_used` — count of curated sources that contributed a score to the aggregate.
+
+**Aggregation methodology** (see [`docs/review_sources.md`](docs/review_sources.md) for the curated source list):
+Claude searches the curated sources and returns a per-source score for each source it found a review on, tagged with a `type`. The backend computes a weighted mean and normalises to 0–10:
+
+| Source type | Examples | Weight |
+|---|---|---|
+| `pro_numeric` | bikeradar.com, cyclingnews.com, pinkbike.com, bicycling.com | 3× |
+| `pro_qualitative` | cyclingweekly.com, bikerumor.com, GCN | 2× |
+| `community` | reddit.com, vitalmtb.com, bikeforums.net | 1× |
+
+`rating = Σ(score × weight) / Σ(weight)`, rounded to 1 decimal. A non-zero rating **requires at least one professional (`pro_numeric` or `pro_qualitative`) source**; if only community sources are found, `rating` is `0.0` and `sources_used` is `0`.
+
+**Cache:** keyed on `{company, model}`; stored on the happy path only when `ref` is non-empty (mirrors the existing convention). The full extended response — including `rating` and `sources_used` — is cached, so a repeat call returns the same rating.
+
 **Flow:**
-1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches for 3–5 reviews, then synthesises a score 0–10, a 5–10 sentence explanation, and a list of source URLs
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches the curated sources, returns a per-source score array plus a synthesised overall score, 5–10 sentence explanation, and source URLs; the backend then computes the weighted aggregate rating
 
 ---
 

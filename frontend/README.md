@@ -19,6 +19,8 @@ The SPA has three views, switched by `App.tsx` (no router):
 | `POST /v1/bike/search` | `SearchPayload` | `{ search, bikes[] }` |
 | `POST /v1/bike/details` | `{ company, model }` | `BikeDetailsResponse` |
 | `POST /v1/bike/review` · `/offer` · `/ceneo` · `/decathlon` · `/used` | `{ company, model }` | review / offers |
+
+`BikeReviewResponse` also carries an aggregate `rating` (0–10, weighted across curated review sources) and `sources_used` count; `ReviewSection` renders these as a rating bar with a "Rating from X sources" caption above the expert-review prose.
 | `POST /v1/equipment/details` | `{ company?, model, category? }` | `EquipmentDetailsResponse` (overview, component tree, photos — no offers) |
 | `POST /v1/equipment/review` | `{ company?, model }` | `EquipmentReviewResponse` (`score`, `explanation`, `ref[]` — review/forum links only) |
 

@@ -56,6 +56,8 @@ export interface BikeReviewResponse {
   score: number
   explanation: string
   ref: string[]
+  rating: number         // 0–10 aggregate across curated review sources
+  sources_used: number   // count of sources that contributed to the rating
 }
 
 export interface BikeOffer {
