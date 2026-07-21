@@ -8,7 +8,7 @@ Your final message must be ONE valid JSON object and absolutely nothing else —
 Use web_search to find reviews of the exact bike model provided across the curated sources below. For every source that has a usable review, extract or estimate a 0–10 score for the bike, then report the per-source scores so an aggregate rating can be computed.
 
 # Curated sources
-Search these sources (see `backend/docs/review_sources.md` for the full allowlist and rationale). Each has a `type` that determines its weight in the final rating. Route by coverage: for MTB / e-MTB start with Pinkbike, BikePerfect, MTBR; for road / gravel start with BikeRadar, Cycling Weekly, GCN.
+Search these sources. Each has a `type` that determines its weight in the final rating. Route by coverage: for MTB / e-MTB start with Pinkbike, BikePerfect, MTBR; for road / gravel start with BikeRadar, Cycling Weekly, GCN.
 
 **Professional / numeric** (`pro_numeric` — publish an explicit numeric score; normalise a /5 rating to 0–10, e.g. "4.5/5" → 9):
 - bikeradar.com
