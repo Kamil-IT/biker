@@ -1,13 +1,14 @@
-# New Git Worktree
-
-Create a new isolated working directory for a feature or fix branch, so you can work on it
-simultaneously alongside `main` — without stashing or switching branches.
-
-**Branch name from arguments:** `$ARGUMENTS`
-
+---
+name: new-worktree
+description: Create a new isolated git worktree for simultaneous feature/fix branch development
+usage: Use when you need to work on multiple branches at the same time without stashing
 ---
 
-## What this command does
+# New Git Worktree
+
+Create a new isolated working directory for a feature or fix branch, so you can work on it simultaneously alongside `main` — without stashing or switching branches.
+
+## What this skill does
 
 Git worktrees let you check out multiple branches from the same repository at the same time.
 Each worktree is a separate directory with its own file state, running server, and git status.
@@ -17,16 +18,23 @@ Switching "branches" means switching your terminal window — nothing to stash, 
 C:\Users\kamil_wolny\Projects\
 ├── biker\            ← main branch (this repo, always here)
 └── biker-wt\
-    └── <branch>\     ← new worktree (created by this command)
+    └── <branch>\     ← new worktree (created by this skill)
 ```
 
----
+## Usage
+
+Invoke this skill with the branch name as an argument:
+
+```
+/new-worktree feature/bike-map
+/new-worktree fix/search-crash
+```
 
 ## Steps to execute
 
 ### 1 — Validate arguments
 
-If `$ARGUMENTS` is empty, stop and tell the user:
+If no branch name provided, tell the user:
 ```
 Usage: /new-worktree <branch-name>
 Examples:
@@ -36,10 +44,10 @@ Examples:
 
 ### 2 — Derive paths
 
-From `$ARGUMENTS` (the branch name), compute:
-- `BRANCH` = `$ARGUMENTS` trimmed (e.g. `feature/bike-map`)
+From the branch name argument, compute:
+- `BRANCH` = branch name trimmed (e.g. `feature/bike-map`)
 - `SLUG` = `BRANCH` with `/` replaced by `-` (e.g. `feature-bike-map`)
-- `WORKTREE_PATH` = `C:\Users\kamil_wolny\Projects\biker-wt\<SLUG>` (e.g. `C:\Users\kamil_wolny\Projects\biker-wt\feature-bike-map`)
+- `WORKTREE_PATH` = `C:\Users\kamil_wolny\Projects\biker-wt\<SLUG>`
 - `MAIN_REPO` = `C:\Users\kamil_wolny\Projects\biker`
 
 ### 3 — Ensure the worktree container exists
@@ -68,8 +76,7 @@ If the command fails because the worktree path already exists, tell the user and
 
 ### 5 — Symlink heavy dependencies (save time and disk space)
 
-Use PowerShell Junction points — these work on Windows without admin rights and are fully
-transparent to Node and Python:
+Use PowerShell Junction points — these work on Windows without admin rights and are fully transparent to Node and Python:
 
 ```powershell
 # Symlink node_modules (saves ~500 MB and avoids npm install)
@@ -83,8 +90,7 @@ New-Item -ItemType Junction `
   -Target "C:\Users\kamil_wolny\Projects\biker\backend\.venv"
 ```
 
-**Important note to include in the output:** These are shared — if your branch adds new npm
-packages or pip packages, break the junction and install fresh:
+**Important note to include in output:** These are shared — if your branch adds new npm packages or pip packages, break the junction and install fresh:
 ```bash
 # Break node_modules junction and reinstall:
 Remove-Item ".\frontend\node_modules"   # removes junction only, not the target
@@ -106,7 +112,7 @@ If `backend/.env` does not exist in the main repo, copy from `.env.example` and 
 
 ### 7 — Confirm and print summary
 
-After all steps succeed, print this summary (fill in actual SLUG and port):
+After all steps succeed, print this summary (fill in actual SLUG):
 
 ```
 Worktree created successfully.
@@ -135,8 +141,6 @@ When you are done with this branch:
   git worktree remove C:\Users\kamil_wolny\Projects\biker-wt\<SLUG>
   git branch -d <BRANCH>   # only if you no longer need the branch
 ```
-
----
 
 ## Port reference (for simultaneous running)
 
