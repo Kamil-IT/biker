@@ -211,6 +211,42 @@ fallback_data = resp_ceneo_fake.json()
 assert isinstance(fallback_data["offers"], list), "Fallback offers must be a list"
 print(f"OK — ceneo fallback returned {len(fallback_data['offers'])} offers (expected 0 or empty)")
 
+# ── Generic multi-source offers endpoint ──
+print("\n── Generic offers: find offers across the allowlist ──")
+_ALLOWLIST = {
+    "allegro.pl", "olx.pl", "ceneo.pl", "decathlon.pl",
+    "bike-discount.de", "centrumrowerowe.pl", "sprzedajemy.pl",
+    "bikesalon.pl", "rosebikes.pl", "canyon.com", "trekbikes.com", "specialized.com",
+}
+OFFERS_URL = "http://localhost:8000/v1/bike/offers"
+offers_payload = {"company": "Trek", "model": "Marlin 5"}
+resp_offers = httpx.post(OFFERS_URL, json=offers_payload, timeout=180)
+assert resp_offers.status_code == 200, f"Expected 200, got {resp_offers.status_code}"
+offers_data = resp_offers.json()
+assert isinstance(offers_data["offers"], list), "Expected offers to be a list"
+assert isinstance(offers_data["info"], str), "Expected info to be a string"
+for offer in offers_data["offers"]:
+    assert offer["brand"], "offer.brand must be non-empty"
+    assert offer["model"], "offer.model must be non-empty"
+    assert isinstance(offer["is_new"], bool), "offer.is_new must be bool"
+    assert offer["url"], "offer.url must be non-empty"
+    assert isinstance(offer["photos"], list), "offer.photos must be a list"
+    assert offer["source"] in _ALLOWLIST, f"source {offer['source']!r} not in allowlist"
+print(f"OK — generic offers returned {len(offers_data['offers'])} offer(s)")
+
+# ── Generic offers: cache hit ──
+print("\n── Generic offers: cache hit ──")
+if offers_data["offers"]:
+    t0 = _time.perf_counter()
+    resp_offers2 = httpx.post(OFFERS_URL, json=offers_payload, timeout=10)
+    elapsed_offers2 = _time.perf_counter() - t0
+    assert resp_offers2.status_code == 200, f"Expected 200 on cached offers call, got {resp_offers2.status_code}"
+    assert resp_offers2.json() == offers_data, "Cached offers response differs from original"
+    assert elapsed_offers2 < 5.0, f"Offers cache hit took {elapsed_offers2:.2f}s — expected < 5s"
+    print(f"OK — generic offers cache hit in {elapsed_offers2:.3f}s")
+else:
+    print("SKIP — no offers returned, cache not populated")
+
 # ── Decathlon offer endpoint ──
 print("\n── Decathlon: find offers on decathlon.pl ──")
 DECATHLON_URL = "http://localhost:8000/v1/bike/decathlon"

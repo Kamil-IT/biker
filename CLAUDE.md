@@ -157,6 +157,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | OLX image fetcher | `app/olx_image_fetcher.py` | Playwright (headless=False) scrapes up to 4 `<img>` URLs from each OLX listing URL using `*.apollo.olxcdn.com` regex |
 | Ceneo finder | `app/bike_offer_ceneo_finder.py` | Single `web_search` call to find 1 current offer on ceneo.pl |
 | Decathlon finder | `app/bike_offer_decathlon_finder.py` | Single `web_search` call to find 1 current offer on decathlon.pl |
+| Generic offers finder | `app/bike_offers_finder.py` | Single `web_search` call constrained to the curated allowlist (`backend/docs/offer_sources.md`); validates each offer's URL host against the allowlist and returns up to 6 offers with `source` = originating domain |
 | Photos finder | `app/bike_photos_finder.py` | Two-step: (1) Claude `web_search` to find manufacturer product page URL, (2) Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs from rendered page; runs in parallel with details and description finders |
 | Equipment details finder | `app/equipment_details_finder.py` | Resolves the equipment category (given or inferred), runs one focused component-search call with that category's `equipment_details_{slug}.md` prompt, returns the bike-style component tree (web_search behind a `TODO` flag, mirroring the bike details finder) |
 | Equipment description finder | `app/equipment_description_finder.py` | Single `web_search` call with prompt caching for a 4–5 sentence equipment overview |
@@ -212,6 +213,13 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 - Request: `{"company": "Rockrider", "model": "ST 100"}`
 - Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches decathlon.pl using `app/prompts/bike_offer_decathlon.md` as the system prompt
 - Returns `{ offers: [{ brand, model, price, is_new, url, photos: [], source: "decathlon.pl" }], info: str }` (1 offer, no photos)
+- On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
+
+**Endpoint** `POST /v1/bike/offers`
+- Request: `{"company": "Trek", "model": "Marlin 5"}`
+- Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches the curated allowlist (`backend/docs/offer_sources.md`) using `app/prompts/bike_offers_generic.md`; server drops any offer whose URL host is off the allowlist
+- Returns `{ offers: [{ brand, model, price, is_new, url, photos, source }], info: str }` (up to 6 offers, `source` = originating domain)
+- Cache: keyed on `{company, model}`; cached only when `offers` is non-empty
 - On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
 
 **Endpoint** `POST /v1/equipment/details`

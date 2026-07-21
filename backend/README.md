@@ -311,6 +311,54 @@ Content-Type: application/json
 
 ---
 
+### `POST /v1/bike/offers`
+
+Return a live list of offers for a bike model pooled across a curated multi-site **allowlist** (single generic endpoint, not one site per route). The allowlist is documented in `backend/docs/offer_sources.md` (TODO-006): `allegro.pl`, `olx.pl`, `ceneo.pl`, `decathlon.pl`, `bike-discount.de`, `centrumrowerowe.pl`, `sprzedajemy.pl`, `bikesalon.pl`, `rosebikes.pl`, `canyon.com`, `trekbikes.com`, `specialized.com`. Offers whose URL host is not on the allowlist are dropped; each returned offer's `source` is the originating domain. Up to 6 offers.
+
+```http
+POST http://localhost:8000/v1/bike/offers
+Content-Type: application/json
+
+{
+  "company": "Trek",
+  "model": "Marlin 5"
+}
+```
+
+**Response:**
+```json
+{
+  "offers": [
+    {
+      "brand": "Trek",
+      "model": "Marlin 5",
+      "price": "1999 zł",
+      "is_new": true,
+      "url": "https://allegro.pl/oferta/trek-marlin-5",
+      "photos": [],
+      "source": "allegro.pl"
+    },
+    {
+      "brand": "Trek",
+      "model": "Marlin 5",
+      "price": "1500 zł",
+      "is_new": false,
+      "url": "https://www.olx.pl/oferta/trek-marlin-5",
+      "photos": [],
+      "source": "olx.pl"
+    }
+  ],
+  "info": ""
+}
+```
+
+**Cache:** keyed on `{company, model}`; `set_cached` only on the happy path and only when `offers` is non-empty.
+
+**Flow:**
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches the allowlist domains (using `app/prompts/bike_offers_generic.md`); returns multiple offers spanning several domains. Off-allowlist URLs are filtered out server-side.
+
+---
+
 ### `POST /v1/equipment/details`
 
 Return an overview, component-tree spec sheet, and photos for a piece of cycling equipment (helmet, light/electronics, lock/security, or apparel/bags/accessories). The gear counterpart to `/v1/bike/details`. **No shopping/offer links** are ever included.
