@@ -166,7 +166,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | Prompt eval | `scripts/test_scoring.py` | Pytest eval of category-scoring prompts: deterministic parse tests (`-m "not llm"`) + live directional eval via the `claude` CLI, no API key (`-m llm`). See `backend/README.md`. |
 
 **Endpoint** `POST /v1/bike/search`
-- Request: all fields optional, at least one required — `search` (free text), `brand`, `model`, `year` (int), `wheel_size` (string), `is_electric` (bool), `has_suspension` (bool), `is_kids` (bool), `bike_type` (string), `price_max` (int), `frame_size` (string), `rider_height_cm` (int), `gender` (string), `frame_material` (string), `brake_type` (string), `drivetrain` (string), `belt_drive` (bool), `battery_capacity_wh` (int)
+- Request: all fields optional, at least one required — `search` (free text), `brand`, `model`, `year` (int), `wheel_size` (string), `is_electric` (bool), `has_suspension` (bool), `is_kids` (bool), `bike_type` (string), `price_max` (int), `frame_size` (string), `rider_height_cm` (int), `rider_weight_kg` (int), `gender` (string), `frame_material` (string), `brake_type` (string), `drivetrain` (string), `belt_drive` (bool), `battery_capacity_wh` (int)
 - Structured fields are assembled into an enriched query string via `SearchRequest.enriched_query()` (e.g. `"Brand: Trek, Type: Gravel, Year: 2023 — trail riding"`), then passed through the existing pipeline; all fields participate in the SQLite cache key in `main.py`
 - Phase 1: Calls `claude-haiku-4-5-20251001` once per category (11 parallel calls via `asyncio.gather`) to score relevance against the enriched query
 - Phase 2: Filters to categories with score ≥ 5 (minimum 2); allocates exactly 5 bikes weighted by score

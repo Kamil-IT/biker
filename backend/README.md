@@ -94,6 +94,7 @@ Content-Type: application/json
   "price_max": 6000,
   "frame_size": "M",
   "rider_height_cm": 178,
+  "rider_weight_kg": 75,
   "gender": "Universal",
   "frame_material": "Carbon",
   "brake_type": "Hydraulic Disc",

@@ -42,7 +42,7 @@ export default function SearchInput({
   const hasAny = !!(
     value.trim() ||
     f.brand.trim() || f.model.trim() || f.year.trim() || f.wheel_size ||
-    f.bike_type || f.frame_size || f.rider_height_cm.trim() || f.price_max.trim() ||
+    f.bike_type || f.frame_size || f.rider_height_cm.trim() || f.rider_weight_kg.trim() || f.price_max.trim() ||
     f.gender || f.frame_material || f.brake_type || f.drivetrain ||
     f.battery_capacity_wh.trim() ||
     f.is_electric !== undefined || f.has_suspension !== undefined ||
@@ -59,6 +59,7 @@ export default function SearchInput({
     if (f.wheel_size)                p.wheel_size          = f.wheel_size
     if (f.frame_size)                p.frame_size          = f.frame_size
     if (f.rider_height_cm.trim())    p.rider_height_cm     = parseInt(f.rider_height_cm, 10)
+    if (f.rider_weight_kg.trim())    p.rider_weight_kg     = parseInt(f.rider_weight_kg, 10)
     if (f.price_max.trim())          p.price_max           = parseInt(f.price_max, 10)
     if (f.gender)                    p.gender              = f.gender
     if (f.frame_material)            p.frame_material      = f.frame_material
@@ -234,6 +235,21 @@ export default function SearchInput({
                 placeholder="80–210"
                 min={80}
                 max={210}
+                disabled={isLoading}
+                className={fieldClass}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="bike-rider-weight" className={labelClass}>Rider weight (kg)</label>
+              <input
+                id="bike-rider-weight"
+                type="number"
+                value={f.rider_weight_kg}
+                onChange={e => onFilterChange('rider_weight_kg', e.target.value)}
+                placeholder="30–200"
+                min={30}
+                max={200}
                 disabled={isLoading}
                 className={fieldClass}
               />

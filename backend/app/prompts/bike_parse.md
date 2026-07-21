@@ -10,6 +10,7 @@ Available fields:
 - "is_electric": boolean — true only if user explicitly wants an e-bike; false only if explicitly not wanted
 - "has_suspension": boolean — true only if user explicitly wants suspension; false only if explicitly no suspension
 - "is_kids": boolean — true only if user explicitly wants a kids bike; false only if explicitly not
+- "rider_weight_kg": integer — the rider's body weight in kilograms (e.g. "waze 100kg" → 100, "100 kg" → 100, "weighs 100" → 100)
 
 Rules:
 - Only include a field if the text clearly mentions or strongly implies it

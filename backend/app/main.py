@@ -62,6 +62,7 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         "is_kids": req.is_kids,
         "bike_type": req.bike_type, "price_max": req.price_max,
         "frame_size": req.frame_size, "rider_height_cm": req.rider_height_cm,
+        "rider_weight_kg": req.rider_weight_kg,
         "gender": req.gender, "frame_material": req.frame_material,
         "brake_type": req.brake_type, "drivetrain": req.drivetrain,
         "belt_drive": req.belt_drive, "battery_capacity_wh": req.battery_capacity_wh,
