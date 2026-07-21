@@ -16,6 +16,7 @@ from .schemas import (  # noqa: E402
     EquipmentDetailsRequest, EquipmentDetailsResponse,
     EquipmentReviewRequest, EquipmentReviewResponse,
     ParseRequest, ParseResponse,
+    CachedSearchResponse,
 )
 from .categories import BIKE_CATEGORIES, CATEGORY_PROMPTS  # noqa: E402
 from .anthropic_scorer import score_category  # noqa: E402
@@ -34,6 +35,10 @@ from .equipment_photos_finder import find_equipment_photos  # noqa: E402
 from .equipment_review_finder import find_equipment_review  # noqa: E402
 from .bike_parser import parse_free_text  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
+from .store import (  # noqa: E402
+    init_store, save_search, get_search_by_query, find_bikes_by_brand,
+    save_bike_details, get_bike_details,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,6 +51,7 @@ logger = logging.getLogger("biker.search")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_cache()
+    init_store()
     yield
     close_cache()
 
@@ -122,7 +128,38 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
     )
     response = BikeSearchResponse(search=enriched, bikes=bikes)
     set_cached("/v1/bike/search", _fields, response)
+    save_search(enriched, bikes)
     return response
+
+
+@app.get("/v1/bike/search-cache", response_model=CachedSearchResponse)
+async def bike_search_cache(query: str | None = None, brand: str | None = None) -> CachedSearchResponse:
+    """Follow-up query served purely from the search cache — no web/Claude call.
+
+    Pass `query` for an exact (normalised) repeat of a prior search, or `brand`
+    to pull every cached bike from that brand across all stored searches.
+    """
+    if not query and not brand:
+        raise HTTPException(status_code=422, detail="Provide either 'query' or 'brand'")
+
+    if query:
+        bikes = get_search_by_query(query)
+        if bikes is None:
+            raise HTTPException(status_code=404, detail="No cached search for that query")
+        return CachedSearchResponse(query=query, cached=True, bikes=bikes)
+
+    assert brand is not None
+    bikes = find_bikes_by_brand(brand)
+    return CachedSearchResponse(query=f"brand:{brand}", cached=bool(bikes), bikes=bikes)
+
+
+@app.get("/v1/bike/details-cache", response_model=BikeDetailsResponse)
+async def bike_details_cache_lookup(company: str, model: str) -> BikeDetailsResponse:
+    """Follow-up details lookup served purely from cache — no web/Claude call."""
+    cached = get_bike_details(company, model)
+    if cached is None:
+        raise HTTPException(status_code=404, detail="No cached details for that bike")
+    return cached
 
 
 @app.post("/v1/bike/details", response_model=BikeDetailsResponse)
@@ -154,6 +191,7 @@ async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
         photos=photos,
     )
     set_cached("/v1/bike/details", _fields, response)
+    save_bike_details(req.company, req.model, response)
     return response
 
 

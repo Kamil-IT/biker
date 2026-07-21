@@ -71,6 +71,23 @@ The `/eval-prompt <prompt-file> "<input>" ...` slash command (`.claude/commands/
 wraps this for quick reuse. Use it for ad-hoc prompt iteration; use the pytest
 `-m llm` suite for the fixed directional category eval.
 
+## Follow-up cache tables
+
+Two queryable SQLite tables (in the same `cache.db`, created on startup by `app/store.py`) sit **on top of** the generic response cache (`app/cache.py`). They let follow-up requests be served without any web/Claude call:
+
+| Table | Key | Stores | TTL |
+|-------|-----|--------|-----|
+| `search_cache` | normalised enriched `query` | JSON list of `BikeResult` | 24 h |
+| `bike_details_cache` | `(company, model)` | `description`, `components`, `photos` (JSON) | 30 days |
+
+- Both are indexed on their key columns and upsert on conflict (a re-run refreshes the entry).
+- Reads check the row's `time_stored + ttl`; a stale row is treated as a miss (never served).
+- `search_cache` is also queryable **by attribute** — `find_bikes_by_brand(brand)` scans fresh cached searches and returns de-duplicated bikes of that brand, powering `GET /v1/bike/search-cache?brand=`.
+- Writes are best-effort: a cache-table failure is logged but never breaks the underlying request.
+- This layer is **additive** — the generic per-endpoint cache is unchanged.
+
+The follow-up read endpoints are [`GET /v1/bike/search-cache`](#get-v1bikesearch-cache) and [`GET /v1/bike/details-cache`](#get-v1bikedetails-cache).
+
 ## Endpoints
 
 ### `POST /v1/bike/search`
@@ -109,6 +126,49 @@ All fields except `search` default to `null` (no constraint). The backend assemb
 1. `POST https://api.anthropic.com/v1/messages` × 11 — score each bike category (parallel via `asyncio.gather`)
 2. `POST https://api.anthropic.com/v1/messages` × N — find real bikes per top category (parallel)
 
+On the happy path the result is also written to the queryable `search_cache` table (see [Follow-up cache tables](#follow-up-cache-tables)).
+
+---
+
+### `GET /v1/bike/search-cache`
+
+Follow-up read served **purely from the `search_cache` table** — makes **no** web/Claude call. Two modes:
+
+- `?query=<enriched query>` — exact (case-insensitive, trimmed) repeat of a prior search. Returns 404 if not cached or the entry is older than its 24 h TTL.
+- `?brand=<brand>` — lookup-by-attribute: every cached bike of that brand across all fresh cached searches (de-duplicated by brand+model).
+
+```http
+GET http://localhost:8000/v1/bike/search-cache?query=Brand:%20Trek%20%E2%80%94%20trail%20riding
+GET http://localhost:8000/v1/bike/search-cache?brand=Trek
+```
+
+**Response:**
+```json
+{
+  "query": "Brand: Trek — trail riding",
+  "cached": true,
+  "bikes": [ { "brand": "Trek", "model": "Marlin 5", "accessories": [], "match_score": 8.0, "explanation": "…" } ]
+}
+```
+
+Returns 422 if neither `query` nor `brand` is provided.
+
+**Flow:** none — SQLite read only.
+
+---
+
+### `GET /v1/bike/details-cache`
+
+Follow-up details lookup served **purely from the `bike_details_cache` table** — makes **no** web/Claude call. Returns 404 if the `(company, model)` pair is not cached or the entry is older than its 30-day TTL.
+
+```http
+GET http://localhost:8000/v1/bike/details-cache?company=Canyon&model=Grizl%20CF%207%20ESC
+```
+
+**Response:** identical shape to `POST /v1/bike/details` (`company`, `model`, `description`, `components`, `photos`).
+
+**Flow:** none — SQLite read only.
+
 ---
 
 ### `POST /v1/bike/details`
@@ -126,6 +186,8 @@ Content-Type: application/json
 ```
 
 **Response includes:** `description` (4–5 sentence plain-text overview), `components` (category tree), `photos` (up to 8 manufacturer product image URLs).
+
+On the happy path the result is also written to the queryable `bike_details_cache` table (see [Follow-up cache tables](#follow-up-cache-tables)).
 
 **Flow (all three run in parallel via `asyncio.gather`):**
 1. `POST https://api.anthropic.com/v1/messages` × 8 — Claude Haiku with `web_search_20250305` tool, one focused search per component category (sequential): Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories

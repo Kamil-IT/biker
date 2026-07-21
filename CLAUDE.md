@@ -143,7 +143,9 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | Layer | File | Responsibility |
 |-------|------|----------------|
 | Entry point | `app/main.py` | FastAPI app, routes, request logging |
-| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse`, `BikeDetailsRequest`, `BikeDetailsResponse`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeReviewRequest`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferRequest`, `BikeOfferResponse`, `UsedBikeRequest`, `UsedBikeResponse`, `EquipmentDetailsRequest`, `EquipmentDetailsResponse`, `EquipmentReviewRequest`, `EquipmentReviewResponse` |
+| Schemas | `app/schemas.py` | Pydantic models: `SearchRequest`, `CategoryResult`, `SearchResponse`, `BikeResult`, `BikeSearchResponse`, `CachedSearchResponse`, `BikeDetailsRequest`, `BikeDetailsResponse`, `BikeCategory`, `BikeSubcategory`, `ComponentElement`, `SpecItem`, `BikeReviewRequest`, `BikeReviewResponse`, `BikeOffer`, `BikeOfferRequest`, `BikeOfferResponse`, `UsedBikeRequest`, `UsedBikeResponse`, `EquipmentDetailsRequest`, `EquipmentDetailsResponse`, `EquipmentReviewRequest`, `EquipmentReviewResponse` |
+| Generic cache | `app/cache.py` | SQLite `cache` table: generic per-endpoint response cache keyed by endpoint + normalised request (`get_cached`/`set_cached`) |
+| Follow-up cache | `app/store.py` | Additive queryable tables `search_cache` (24 h TTL, keyed by normalised enriched query) and `bike_details_cache` (30 d TTL, keyed by company+model) in the same `cache.db`; typed helpers `save_search`/`get_search_by_query`/`find_bikes_by_brand`/`save_bike_details`/`get_bike_details`; powers the cache-only follow-up GET endpoints |
 | Categories | `app/categories.py` | 11 bike category registry; loads prompt files at startup |
 | Equipment categories | `app/equipment_categories.py` | 4 equipment category registry (helmets, lights, locks, apparel); loads prompt files at startup; keyword-based `resolve_category()` inference |
 | Prompts | `app/prompts/*.md` | Per-category scoring prompts + `bike_search_{slug}.md` per-category bike-finding prompts + `bike_details_{slug}.md` per-category component search prompts (8 categories) + `bike_details.md` JSON format reference + `equipment_details_{slug}.md` (4) + `equipment_description.md` / `equipment_photos.md` / `equipment_review.md` |
@@ -173,6 +175,15 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 - Phase 3: Calls Claude in parallel (one call per qualifying category) to find real bikes
 - Returns 5 bike results with brand, model, accessories, match score, and explanation; `search` field in response contains the enriched query
 - On parse error: returns empty list for that category — never returns 502 for bad JSON
+- Happy path also writes the bikes to the `search_cache` table via `save_search(enriched, bikes)`
+
+**Endpoint** `GET /v1/bike/search-cache` (follow-up, cache-only — no web/Claude call)
+- `?query=<enriched query>` → `CachedSearchResponse` from `search_cache` for an exact normalised repeat; 404 if missing/stale (24 h TTL)
+- `?brand=<brand>` → every de-duplicated bike of that brand across all fresh cached searches (lookup-by-attribute via `find_bikes_by_brand`)
+- 422 if neither `query` nor `brand` is given
+
+**Endpoint** `GET /v1/bike/details-cache` (follow-up, cache-only — no web/Claude call)
+- `?company=<company>&model=<model>` → `BikeDetailsResponse` from `bike_details_cache`; 404 if missing/stale (30 d TTL)
 
 **Endpoint** `POST /v1/bike/details`
 - Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
@@ -182,6 +193,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
   3. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — finds the official manufacturer product page URL, then Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs from the rendered page; uses `app/prompts/bike_photos.md`
 - Returns: `{ company, model, description: str, components: [...], photos: [url, ...] }`
 - On JSON parse error for a category: logs the error and skips that category — never returns 502
+- Happy path also writes the result to the `bike_details_cache` table via `save_bike_details(company, model, response)`
 
 **Endpoint** `POST /v1/bike/review`
 - Request: `{"company": "Canyon", "model": "Grizl CF 7 ESC"}`
