@@ -237,6 +237,49 @@ Content-Type: application/json
 
 ---
 
+### `POST /v1/bike/used-api`
+
+Return current used-bike listings from OLX.pl using the **official OLX Partner REST API** (no scraping). Runs alongside `/v1/bike/used` (the Playwright web-search scraper) — not a replacement. Requires an approved OLX developer account; when `OLX_CLIENT_ID` / `OLX_CLIENT_SECRET` are unset it degrades gracefully to an empty offers list.
+
+```http
+POST http://localhost:8000/v1/bike/used-api
+Content-Type: application/json
+
+{
+  "company": "Trek",
+  "model": "Marlin 5"
+}
+```
+
+**Response:**
+```json
+{
+  "offers": [
+    {
+      "brand": "Trek",
+      "model": "Marlin 5",
+      "price": "2 500 zł",
+      "is_new": false,
+      "url": "https://www.olx.pl/d/oferta/...",
+      "photos": ["https://ireland.apollo.olxcdn.com/...jpg"],
+      "source": "olx.pl",
+      "city": "Warszawa"
+    }
+  ],
+  "info": ""
+}
+```
+
+On missing credentials the response is `{ "offers": [], "info": "OLX API credentials not configured (OLX_CLIENT_ID / OLX_CLIENT_SECRET)." }`. All error paths (auth failure, non-200, bad payload) return HTTP 200 with an empty list and an `info` message — never 502.
+
+**Flow:**
+1. `POST https://www.olx.pl/api/open/oauth/token` × 1 — OAuth2 `client_credentials` grant to obtain a bearer token. The token is cached in-process until ~60s before `expires_in`; subsequent calls reuse it (0 token calls). Skipped entirely when credentials are absent.
+2. `GET https://www.olx.pl/api/partner/adverts?query=<brand>+<model>&category_id=<bikes>&region=PL&limit=5` × 1 — fetches up to 5 listings. Each advert maps to a `BikeOffer` (`is_new` always `false`, `source` always `"olx.pl"`, `city` from `location.city.name`, photos read directly from the advert payload — no Playwright).
+
+Base host and bikes category are configurable via `OLX_ENV` (`sandbox`/`production`), `OLX_API_BASE`, and `OLX_BIKES_CATEGORY_ID`.
+
+---
+
 ### `POST /v1/bike/ceneo`
 
 Return current buying offers from ceneo.pl for a specific bike model.

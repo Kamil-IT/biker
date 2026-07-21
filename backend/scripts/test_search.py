@@ -375,3 +375,43 @@ resp_offer_empty = httpx.post(OFFER_URL, json={"company": "Canyon", "model": ""}
 assert resp_offer_empty.status_code == 422, \
     f"Expected 422 for empty model, got {resp_offer_empty.status_code}"
 print("OK — empty model in offer correctly rejected with 422")
+
+# ── [TC-23] Used (OLX API): basic 200 + schema, graceful without credentials ──
+USED_API_URL = "http://localhost:8000/v1/bike/used-api"
+used_api_payload = {"company": "Trek", "model": "Marlin 5"}
+print(f"\n── [TC-23] Used (OLX API): POST {USED_API_URL} ──")
+resp_used_api = httpx.post(USED_API_URL, json=used_api_payload, timeout=60)
+assert resp_used_api.status_code == 200, f"Expected 200, got {resp_used_api.status_code}"
+used_api_data = resp_used_api.json()
+assert isinstance(used_api_data["offers"], list), "offers must be a list"
+assert isinstance(used_api_data["info"], str), "info must be a string"
+for o in used_api_data["offers"]:
+    assert isinstance(o["brand"], str), "offer brand must be string"
+    assert isinstance(o["model"], str), "offer model must be string"
+    assert isinstance(o["price"], str), "offer price must be string"
+    assert o["is_new"] is False, "used offers must have is_new=False"
+    assert isinstance(o["url"], str), "offer url must be string"
+    assert isinstance(o["photos"], list), "offer photos must be list"
+    assert o["source"] == "olx.pl", f"Expected source 'olx.pl', got {o['source']!r}"
+    assert o.get("city") is None or isinstance(o["city"], str), "city must be str or null"
+print(f"OK — used-api returned {len(used_api_data['offers'])} offer(s), info={used_api_data['info']!r}")
+
+# ── [TC-24] Used (OLX API): cache hit only when offers exist ──
+print("\n── [TC-24] Used (OLX API): second call returns identical JSON ──")
+t0 = _time.perf_counter()
+resp_used_api2 = httpx.post(USED_API_URL, json=used_api_payload, timeout=60)
+elapsed_used_api2 = _time.perf_counter() - t0
+assert resp_used_api2.status_code == 200, f"Expected 200 on 2nd used-api call, got {resp_used_api2.status_code}"
+assert resp_used_api2.json() == used_api_data, "Second used-api response differs from original"
+if used_api_data["offers"]:
+    assert elapsed_used_api2 < 5.0, f"Used-api cache hit took {elapsed_used_api2:.2f}s — expected < 5s"
+    print(f"OK — used-api cache hit in {elapsed_used_api2:.3f}s")
+else:
+    print("OK — used-api empty result not cached (graceful degradation)")
+
+# ── [TC-25] Used (OLX API): empty model → 422 ──
+print("\n── [TC-25] Used (OLX API): empty model → 422 ──")
+resp_used_api_empty = httpx.post(USED_API_URL, json={"company": "Trek", "model": ""}, timeout=10)
+assert resp_used_api_empty.status_code == 422, \
+    f"Expected 422 for empty model, got {resp_used_api_empty.status_code}"
+print("OK — empty model in used-api correctly rejected with 422")

@@ -26,6 +26,7 @@ from .bike_photos_finder import find_bike_photos  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_finder import find_bike_offers  # noqa: E402
 from .bike_used_finder import find_used_bikes  # noqa: E402
+from .bike_used_api_finder import find_used_bikes_api  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
 from .bike_offer_decathlon_finder import find_decathlon_offers  # noqa: E402
 from .equipment_details_finder import find_equipment_details  # noqa: E402
@@ -205,6 +206,23 @@ async def bike_used(req: UsedBikeRequest) -> UsedBikeResponse:
     logger.info("used bikes complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     if result.offers:
         set_cached("/v1/bike/used", _fields, result)
+    return result
+
+
+@app.post("/v1/bike/used-api", response_model=UsedBikeResponse)
+async def bike_used_api(req: BikeOfferRequest) -> UsedBikeResponse:
+    logger.info("used bikes (API) request | company=%r model=%r", req.company, req.model)
+    _fields = {"company": req.company, "model": req.model}
+    cached = get_cached("/v1/bike/used-api", _fields, UsedBikeResponse)
+    if cached is not None:
+        return cached
+
+    t_start = time.perf_counter()
+    result = await find_used_bikes_api(req.company, req.model)
+    elapsed = time.perf_counter() - t_start
+    logger.info("used bikes (API) complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
+    if result.offers:
+        set_cached("/v1/bike/used-api", _fields, result)
     return result
 
 
