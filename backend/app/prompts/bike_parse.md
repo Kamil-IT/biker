@@ -15,7 +15,34 @@ Rules:
 - Only include a field if the text clearly mentions or strongly implies it
 - Do NOT set boolean fields to false just because they aren't mentioned — omit them
 - Return {} if nothing can be extracted with confidence
-- Preserve the original casing of brand and model names
+- Preserve the original casing of brand and model names exactly as written (e.g. "TREK" → "TREK", "tesla" → "tesla")
+
+Brand-constraint phrasing:
+- When the text uses a brand-constraint keyword, extract the brand name that immediately follows it into "brand". Keywords (case-insensitive):
+  - Polish: "Firma tylko X", "firma X", "marka X", "marki X", "tylko X" (when X is a brand name)
+  - English: "brand X", "brand only X", "only X", "make X"
+- Example phrasings and their brand: "Firma tylko Tesla" → "Tesla", "marka Trek" → "Trek", "tylko Specialized" → "Specialized", "brand only Canyon" → "Canyon"
+- Extract the name after a brand-constraint keyword EVEN IF it is not a known bicycle maker (e.g. "Firma tylko Tesla" → "Tesla"). The keyword signals the user is naming a brand; do not second-guess or drop it because it isn't a familiar bike brand.
+- Copy the brand name VERBATIM, byte-for-byte, exactly as it appears in the text. Do NOT re-capitalize or normalize it: "TREK" → "TREK", "trek" → "trek", "Trek" → "Trek".
+- Do NOT treat city, location, or place names as a brand. Words following prepositions like "po", "w", "we", "na", "z", "in", "at" that name a place (e.g. "po Wrocławiu", "w Krakowie", "in Berlin") are locations, not brands — omit them.
 
 Example: "Looking for Trek Marlin 7 2023, 29 inch wheels, with front suspension"
 Response: {"brand": "Trek", "model": "Marlin 7", "year": 2023, "wheel_size": "29\"", "has_suspension": true}
+
+Example: "Szukam roweru na podróże po wrocławiu na wałach. Mam 185cm wzrostu i waze 100kg. Firma tylko Tesla"
+Response: {"brand": "Tesla"}
+
+Example: "Chcę rower, marka Trek"
+Response: {"brand": "Trek"}
+
+Example: "tylko Specialized"
+Response: {"brand": "Specialized"}
+
+Example: "brand only Canyon"
+Response: {"brand": "Canyon"}
+
+Example: "Firma tylko TREK"
+Response: {"brand": "TREK"}
+
+Example: "Mam rower w Wrocławiu"
+Response: {}
