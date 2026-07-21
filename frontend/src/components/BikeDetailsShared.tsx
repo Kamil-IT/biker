@@ -168,9 +168,9 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
   if (state === 'error' || !review) return null
 
   const clean = review.explanation.replace(/<\/?cite[^>]*>/g, '')
-  const sourceUrl = review.ref[0] ?? null
-  let sourceHost: string | null = null
-  try { sourceHost = sourceUrl ? new URL(sourceUrl).hostname.replace(/^www\./, '') : null } catch { sourceHost = sourceUrl }
+  // Map the aggregate 0–10 score to 1–5 filled stars (decorative).
+  const filledStars = Math.max(1, Math.min(5, Math.round(review.score / 2)))
+  const sources = review.ref.filter(Boolean)
 
   return (
     <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
@@ -188,20 +188,46 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
           <span className="font-mono text-[11px] text-muted">/10</span>
         </div>
       </div>
-      <p className="font-body italic text-ink text-[13px] leading-relaxed">
-        {clean}
-      </p>
-      {sourceHost && sourceUrl && (
-        <a
-          href={sourceUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-3 inline-flex items-center gap-1 font-mono text-[11px] text-terra hover:text-terra-dark transition-colors duration-150 focus-visible:outline-none focus-visible:underline"
-        >
-          {sourceHost}
-          <span aria-hidden="true">→</span>
-        </a>
-      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5 md:gap-6">
+        {/* Left: explanation */}
+        <p className="font-body italic text-ink text-[13px] leading-relaxed">
+          {clean}
+        </p>
+
+        {/* Right: source table */}
+        {sources.length > 0 && (
+          <div className="bg-sand rounded-xl border border-border divide-y divide-border overflow-hidden self-start">
+            {sources.map((url, i) => {
+              let host: string
+              try { host = new URL(url).hostname.replace(/^www\./, '') } catch { host = url }
+              return (
+                <a
+                  key={url || i}
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-3 px-4 py-3 group hover:bg-parchment transition-colors duration-150 focus-visible:outline-none focus-visible:bg-parchment"
+                >
+                  <span
+                    className="shrink-0 font-mono text-[11px] text-terra tracking-tight"
+                    aria-label={`${filledStars} out of 5 stars`}
+                  >
+                    {'★'.repeat(filledStars)}
+                    <span className="text-terra/30">{'★'.repeat(5 - filledStars)}</span>
+                  </span>
+                  <span className="min-w-0 flex-1 font-mono text-[11px] text-charcoal group-hover:text-terra truncate transition-colors duration-150">
+                    {host}
+                  </span>
+                  <span className="shrink-0 font-mono text-[11px] text-terra group-hover:text-terra-dark whitespace-nowrap transition-colors duration-150">
+                    Read review <span aria-hidden="true">→</span>
+                  </span>
+                </a>
+              )
+            })}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
