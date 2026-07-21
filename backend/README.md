@@ -168,9 +168,9 @@ Claude searches the curated sources and returns a per-source score for each sour
 
 | Source type | Examples | Weight |
 |---|---|---|
-| `pro_numeric` | bikeradar.com, cyclingnews.com, pinkbike.com, bicycling.com | 3× |
-| `pro_qualitative` | cyclingweekly.com, bikerumor.com, GCN | 2× |
-| `community` | reddit.com, vitalmtb.com, bikeforums.net | 1× |
+| `pro_numeric` | bikeradar.com, cyclingweekly.com, bikeperfect.com | 3× |
+| `pro_qualitative` | pinkbike.com, bikemag.com, gcn.com | 2× |
+| `community` | mtbr.com, reddit.com, forumrowerowe.org / bikestats.pl | 1× |
 
 `rating = Σ(score × weight) / Σ(weight)`, rounded to 1 decimal. A non-zero rating **requires at least one professional (`pro_numeric` or `pro_qualitative`) source**; if only community sources are found, `rating` is `0.0` and `sources_used` is `0`.
 
