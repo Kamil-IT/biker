@@ -16,7 +16,9 @@ What this validates (shape, not exact content — real web data varies):
   * No parsing artifacts: no ``` code fences, no leaked raw-JSON wrappers ({...}/[...]) in any text field.
   * Description is a plain string (the BikeDescription.text field), free of fences/JSON wrappers.
   * Photos are valid http(s) URLs.
-  * Graceful degradation: an occasionally-empty category is fine (skipped, not 502).
+  * The structurally universal categories (Frame, Drivetrain, Wheels, Brakes) are always
+    present — every real bike has them, so a missing one is a pipeline defect, not a data gap.
+  * Graceful degradation: an occasionally-empty optional category is fine (skipped, not 502).
   * Invalid input (empty company/model) → 422 validation error, never 502.
 
 Exit code 0 = all passed; 1 = a failure (details printed).
@@ -47,6 +49,12 @@ EXPECTED_CATEGORIES = {
     "Lighting",
     "Accessories",
 }
+
+# Structurally universal — every real bicycle has these, so their absence is a
+# pipeline defect (e.g. a dropped/unparsed response), never a web-data gap.
+# Lighting and Accessories are genuinely optional; Cockpit and Saddle & Seatpost
+# are frequently folded into other sections by manufacturers' spec sheets.
+REQUIRED_CATEGORIES = {"Frame", "Drivetrain", "Wheels", "Brakes"}
 
 # Markers that indicate the model leaked raw JSON / markdown into a text field.
 _FENCE_MARKERS = ("```", "~~~")
@@ -97,6 +105,14 @@ def validate_bike(bike: dict) -> None:
     _assert(len(names) <= 8, f"more than 8 categories returned: {names}")
     # Graceful degradation: fewer than 8 is acceptable (web-data gaps), but not zero.
     _assert(len(names) >= 1, "expected at least one component category")
+    # ...but the structurally universal categories are not a "web-data gap": every
+    # real bike has a frame, a drivetrain, wheels and brakes. A silently dropped
+    # one of these means the pipeline lost the data, not that the web lacked it.
+    missing_required = REQUIRED_CATEGORIES - set(names)
+    _assert(
+        not missing_required,
+        f"missing universal categories: {sorted(missing_required)} (got {names})",
+    )
     if len(names) < 8:
         missing = EXPECTED_CATEGORIES - set(names)
         print(f"  note: {len(names)}/8 categories present (gracefully skipped: {sorted(missing)})")
