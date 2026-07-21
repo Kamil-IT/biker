@@ -163,7 +163,7 @@ Content-Type: application/json
 - `rating` — the **aggregate** rating (float 0–10) computed from per-source scores across the curated sources.
 - `sources_used` — count of curated sources that contributed a score to the aggregate.
 
-**Aggregation methodology** (see [`docs/review_sources.md`](docs/review_sources.md) for the curated source list):
+**Aggregation methodology** (curated source list and tier weights in [`backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md`](../backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md)):
 Claude searches the curated sources and returns a per-source score for each source it found a review on, tagged with a `type`. The backend computes a weighted mean and normalises to 0–10:
 
 | Source type | Examples | Weight |

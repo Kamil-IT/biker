@@ -22,7 +22,8 @@ _FALLBACK = BikeReviewResponse(
     score=0, explanation="Review unavailable.", ref=[], rating=0.0, sources_used=0
 )
 
-# Weighting scheme (TODO-013, see backend/docs/review_sources.md):
+# Weighting scheme (TODO-013; tier list and rationale in
+# backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md):
 # pro/numeric 3x, pro/qualitative 2x, community 1x. A non-zero aggregate
 # rating requires at least one professional source.
 _SOURCE_WEIGHTS = {"pro_numeric": 3.0, "pro_qualitative": 2.0, "community": 1.0}
