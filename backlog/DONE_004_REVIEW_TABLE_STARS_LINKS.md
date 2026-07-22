@@ -8,15 +8,21 @@ Adjust the review section layout so the existing text (score explanation) stays 
 - Right column: table with one row per source URL from `ref[]`.
   - Columns: star icon(s) | source domain (e.g. "bikemagazine.com") | "Read review →" link.
   - Stars are decorative / inferred from the aggregate score — show the same integer score as filled stars (out of 5, mapped from 0–10).
-- Layout: side-by-side on md+ screens; stacked on mobile (text above, table below).
+- Layout: the table sits full-width **below** the explanation text at every width.
+  (Revised from the original two-column plan — `ReviewSection` gained an aggregate
+  rating bar and a `CitationChips` sources row in the meantime, and a right-hand
+  column no longer fits alongside them.)
 
 ## Scope
 ### Frontend
-- `src/components/BikeDetailsView.tsx` — refactor `ReviewSection` into a two-column layout.
+- `src/components/BikeDetailsShared.tsx` — `ReviewSection` renders the source table
+  in place of the `CitationChips` row it previously used.
 - No API or type changes needed (`BikeReviewResponse` already has `score`, `explanation`, `ref: string[]`).
 
 ## Acceptance criteria
-- [ ] Explanation text visible on left.
-- [ ] Table on right lists one row per `ref` URL.
-- [ ] Each row has stars and a working external link.
-- [ ] Responsive: stacks vertically on mobile.
+- [x] Explanation text visible above the table.
+- [x] Table lists one row per `ref` URL.
+- [x] Each row has stars and a working external link.
+- [x] Responsive: readable at 390 px without horizontal overflow.
+- [x] Degrades cleanly for equipment reviews, which carry no `rating` /
+      `sources_used` — stars fall back to the headline score.

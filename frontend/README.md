@@ -10,7 +10,7 @@ The SPA has three views, switched by `App.tsx` (no router):
 - **Bike details** (`BikeDetailsView`) — overview, pooled offers (Allegro / Ceneo / Decathlon / OLX), expert review, and a component spec tree. Each **component name in the spec tree is a link** that opens the equipment view for that item (the "Key features" chips stay as plain tags).
 - **Equipment details** (`EquipmentDetailsView`) — the gear counterpart: category eyebrow, overview, expert review, and a component spec tree. **No offers/buy links** — equipment is informational only.
 
-`BikeDetailsView` and `EquipmentDetailsView` share their building blocks (`PhotoGallery`, `DescriptionCard`, `ReviewSection`, `LoadingSkeleton`, `CategorySection`) from `components/BikeDetailsShared.tsx`. Both the overview and the expert review render their sources as **citation footnote chips** (`components/CitationChips.tsx`) — a "Sources" row of terracotta pill links showing each source's domain, opening in a new tab with the full URL as a hover tooltip.
+`BikeDetailsView` and `EquipmentDetailsView` share their building blocks (`PhotoGallery`, `DescriptionCard`, `ReviewSection`, `LoadingSkeleton`, `CategorySection`) from `components/BikeDetailsShared.tsx`. The overview renders its sources as **citation footnote chips** (`components/CitationChips.tsx`) — a "Sources" row of terracotta pill links showing each source's domain, opening in a new tab with the full URL as a hover tooltip. The expert review renders its sources as a **full-width source table** below the explanation instead: one row per URL, `stars | domain | "Read review →"`, each row an external link with the full URL as a hover tooltip. The stars are decorative, mapped 0–10 → 1–5 from the aggregate `rating` where one exists.
 
 ### API integration (all proxied via Vite `/v1` → backend on :8000)
 
@@ -20,7 +20,7 @@ The SPA has three views, switched by `App.tsx` (no router):
 | `POST /v1/bike/details` | `{ company, model }` | `BikeDetailsResponse` |
 | `POST /v1/bike/review` · `/offer` · `/ceneo` · `/decathlon` · `/used` | `{ company, model }` | review / offers |
 
-`BikeReviewResponse` also carries an aggregate `rating` (0–10, weighted across curated review sources) and `sources_used` count; `ReviewSection` renders these as a rating bar with a "Rating from X sources" caption above the expert-review prose.
+`BikeReviewResponse` also carries an aggregate `rating` (0–10, weighted across curated review sources) and `sources_used` count; `ReviewSection` renders these as a rating bar with a "Rating from X sources" caption above the expert-review prose, and derives the source-table stars from `rating`. Equipment reviews carry neither field, so they show no rating bar and fall back to `score` for the stars.
 | `POST /v1/equipment/details` | `{ company?, model, category? }` | `EquipmentDetailsResponse` (overview, component tree, photos — no offers) |
 | `POST /v1/equipment/review` | `{ company?, model }` | `EquipmentReviewResponse` (`score`, `explanation`, `ref[]` — review/forum links only) |
 
