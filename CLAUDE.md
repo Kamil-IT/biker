@@ -30,8 +30,32 @@ Tasks are tracked in `/backlog/`. Naming convention:
 - `TODO_ISSUE_<ID>_<NAME>.md` — reported bug/issue, not yet fixed
 - `DONE_ISSUE_<ID>_<NAME>.md` — fixed issue (rename the file, don't delete it)
 
-When picking up a task: read its file, implement, then rename `TODO_` → `DONE_`.
+Layout:
+
+```
+backlog/            active work — TODO_* files live here
+backlog/done/       merged tasks (DONE_*)
+backlog/blocked/    implemented but unverifiable — still TODO_*
+```
+
+`backlog/` itself holds **only what is actionable now**. Scan it for the next task; the two subfolders are archives, not queues.
+
+When picking up a task: read its file, implement, then rename `TODO_` → `DONE_` **and move it to `backlog/done/`**.
 When creating a new task: ask clarifying questions first, then write the file.
+
+### Completed tasks — `backlog/done/`
+
+A task moves here when **its PR has merged to `main`**. Merged is the bar: finished code with an open PR is not done and stays in `backlog/`. Keep the files — they are the record of what was built and why. Update `backlog/done/README.md` when adding one.
+
+### Blocked tasks — `backlog/blocked/`
+
+`backlog/blocked/` holds tasks that are **implemented but cannot be verified** because of an external dependency nobody on the project can satisfy right now (a credential, an account approval, a third-party verification). They keep their `TODO_` prefix — blocked is not done.
+
+- **Do not pick these up in the normal backlog rotation.** Skip the folder when scanning for the next task.
+- Move a task back to `backlog/` only once its blocker is genuinely resolved — not merely because its code looks finished.
+- `backlog/blocked/README.md` lists what is blocked, on what, what evidence exists, and the known defects to fix on first real use. Update it whenever a task moves in or out.
+
+A task belongs here when its feature **cannot be demonstrated**, not when it is merely hard or unfinished. If the work simply has not been done, it stays a normal `TODO_`.
 
 ## Development Rules
 

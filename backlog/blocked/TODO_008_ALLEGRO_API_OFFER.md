@@ -1,5 +1,15 @@
 # TODO-008 — Allegro API Offer Integration
 
+> ## 🟠 BLOCKED — no credentials
+>
+> Implemented in **PR [#42](https://github.com/Kamil-IT/biker/pull/42)** (draft), but the happy path is **unverifiable here**: `backend/.env` holds only `ANTHROPIC_API_KEY`.
+>
+> **Unblock by:** creating an Allegro developer app **and getting the application verified** — `GET /offers/listing` is restricted to verified applications — then setting `ALLEGRO_CLIENT_ID` / `ALLEGRO_CLIENT_SECRET`.
+>
+> **Fix on first real use:** the mapper sets `brand`/`model` from the *request*, so every offer comes back identical regardless of what was actually listed. `info` also conflates "credentials missing" with "token request failed". See `backlog/blocked/README.md`.
+>
+> Verified without credentials: graceful degradation (200 + empty + `info`), 422 validation, OAuth token reuse/refresh under mock, empty-result caching rule.
+
 ## Goal
 Add a `POST /v1/bike/allegro` endpoint that fetches live bike offers from the official Allegro REST API (`api.allegro.pl`), in addition to the existing web-search Allegro path (`/v1/bike/offer`).
 

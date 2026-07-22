@@ -1,5 +1,18 @@
 # TODO-009 — OLX Official API Offer Integration
 
+> ## 🟠 BLOCKED — no credentials, plus a known OAuth bug
+>
+> Implemented in **PR [#43](https://github.com/Kamil-IT/biker/pull/43)** (draft), but the happy path is **unverifiable here**: `backend/.env` holds only `ANTHROPIC_API_KEY`.
+>
+> **Unblock by:** OLX developer account approval (was pending), then setting `OLX_CLIENT_ID` / `OLX_CLIENT_SECRET`.
+>
+> **Fix on first real use — this one is the most likely to fail immediately:**
+> - OAuth credentials are posted as a **JSON body**; most client-credentials servers expect `application/x-www-form-urlencoded` (which TODO-008 correctly does). The mock cannot catch this, because it accepts whatever is sent.
+> - `OLX_ENV` is a **no-op** — `_HOSTS` maps both `production` and `sandbox` to the same `www.olx.pl`.
+> - The mapper sets `brand`/`model` from the *request*, so every listing looks identical — worst here, since size/year/condition is exactly what distinguishes used listings.
+>
+> See `backlog/blocked/README.md`. Verified without credentials: graceful degradation (200 + empty + `info`), 422 validation, OAuth token reuse/refresh under mock, empty-result caching rule.
+
 ## Goal
 Add live used-bike offers from the official OLX API, complementing the existing web-search + Playwright path (`/v1/bike/used`).
 
