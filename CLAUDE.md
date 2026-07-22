@@ -13,7 +13,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## ECC Skill Routing
 
-Structured workflows for common task types. Reference these skills in `/\.claude/skills/` when starting code changes.
+Structured workflows for common task types. Use these skills in `.claude/skills/` when starting code changes.
+
+**See `.claude/ECC_INTEGRATION_GUIDE.md` for complete documentation and how to download all 449 ECC skills.**
 
 | Task | Skill | Use When |
 |------|-------|----------|
@@ -26,22 +28,33 @@ Structured workflows for common task types. Reference these skills in `/\.claude
 ```
 User: "Add Decathlon offer endpoint"
 
-1. Invoke `/sparc:code` to design the endpoint + finder
-   → creates app/bike_offer_decathlon_finder.py + POST /v1/bike/decathlon route
-2. Invoke `/sparc:tester` to add smoke tests
-   → adds test to backend/scripts/test_search.py
-3. Invoke `/sparc:security-review` to audit API calls + input validation
-   → checks for prompt injection, API key leaks, error handling
-4. Invoke `/memory:persist` to capture pattern
-   → saves "Offer finder pattern: single web_search + cache + fallback" to Obsidian
+1. Invoke /sparc:code
+   → Specification → Pseudocode → Implementation → Testing phases
+   → Creates app/bike_offer_decathlon_finder.py + POST /v1/bike/decathlon route
+
+2. Invoke /sparc:tester
+   → Adds test to backend/scripts/test_search.py
+   → Verifies smoke test passes, cache works, error handling
+
+3. Invoke /sparc:security-review
+   → Validates input, prevents prompt injection, checks error responses
+   → Runs pen-tests with cURL examples
+
+4. Invoke /memory:persist
+   → Saves "Offer finder pattern: single web_search + cache + fallback" to Obsidian
+   → Next time: search vault → reuse template → save 1.5 hours
+
 5. Create PR for review
 ```
 
-**Skills directory:** `.claude/skills/` in this repo contains:
-- `sparc-code.md` — structured implementation with phases (Specification → Pseudocode → Implementation → Testing)
-- `sparc-tester.md` — TDD workflow + smoke test templates for backend/frontend
-- `sparc-security-review.md` — security checklist + audit templates + pen-test examples
-- `memory-persist.md` — capture patterns to Obsidian vault; search for similar past solutions before coding
+**Skills in `.claude/skills/`:**
+- `sparc-code.md` — Structured implementation phases + templates
+- `sparc-tester.md` — TDD workflow + smoke test templates
+- `sparc-security-review.md` — Security checklist + pen-test examples
+- `memory-persist.md` — Obsidian vault integration for pattern capture
+- **All 449 ECC skills** — Run `python fetch_ecc_skills.py` to download (see guide for details)
+
+**ECC Overview:** 449 production-ready skills for backends (FastAPI, Django, etc.), frontends (React, Vue, etc.), testing, security, DevOps, and specialized domains. See `.claude/ECC_INTEGRATION_GUIDE.md` for complete reference.
 
 ## Memory & Persistence
 
