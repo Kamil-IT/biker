@@ -14,6 +14,9 @@ Produce a curated, documented list of cycling review sources (forums, magazines,
 
 ## Scope
 - New doc: `backend/docs/review_sources.md`.
+  **Superseded:** the research was completed but PR #46 was closed rather than merged, so this
+  file does not exist. Its findings shipped as code in TODO-014, and the tier table, weights
+  and exclusions now live inline in `TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md`.
 - May inform `app/prompts/bike_review.md` (note suggested edits; don't necessarily change the prompt here).
 
 ## Acceptance criteria

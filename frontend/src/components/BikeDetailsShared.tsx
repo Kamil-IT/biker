@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import type { BikeCategory, BikeSubcategory, ComponentElement, BikeDescription } from '../types'
+import type { BikeCategory, BikeSubcategory, ComponentElement, BikeDescription, DescriptionCitation } from '../types'
+import { CitationChips } from './CitationChips'
 
 export type LoadState = 'loading' | 'loaded' | 'error'
 
@@ -51,8 +52,6 @@ export function PhotoGallery({ photos }: { photos: string[] }) {
 /* ── Description ────────────────────────────────────── */
 
 export function DescriptionCard({ description, state }: { description: BikeDescription | null; state: LoadState }) {
-  const [activeIdx, setActiveIdx] = useState<number | null>(null)
-
   if (state === 'loading') {
     return (
       <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
@@ -69,7 +68,18 @@ export function DescriptionCard({ description, state }: { description: BikeDescr
 
   if (!description) return null
 
-  const activeCitations = activeIdx !== null ? (description.segments[activeIdx]?.citations ?? []) : []
+  // Aggregate all segment citations into one deduplicated source row shown
+  // below the overview (Google AI Overview style).
+  const seen = new Set<string>()
+  const allCitations: DescriptionCitation[] = []
+  for (const seg of description.segments) {
+    for (const c of seg.citations) {
+      if (c.url && !seen.has(c.url)) {
+        seen.add(c.url)
+        allCitations.push(c)
+      }
+    }
+  }
 
   return (
     <div className="mt-5 bg-card rounded-2xl border-l-2 border border-terra/40 px-5 py-4 md:px-6 md:py-5">
@@ -79,61 +89,17 @@ export function DescriptionCard({ description, state }: { description: BikeDescr
 
       <p className="font-body text-ink text-[13px] leading-relaxed">
         {description.segments.map((seg, i) => (
-          <span key={i}>
-            {seg.text}
-            {seg.citations.length > 0 && (() => {
-              const hosts = seg.citations.map(c => {
-                try { return new URL(c.url).hostname.replace(/^www\./, '') } catch { return c.url }
-              })
-              return (
-                <span
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setActiveIdx(activeIdx === i ? null : i)}
-                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setActiveIdx(activeIdx === i ? null : i) }}
-                  className={`ml-1 font-mono text-[10px] cursor-pointer transition-colors duration-150 ${
-                    activeIdx === i ? 'text-terra' : 'text-terra/60 hover:text-terra'
-                  }`}
-                >
-                  [{hosts.join(', ')}]
-                </span>
-              )
-            })()}
-          </span>
+          <span key={i}>{seg.text}</span>
         ))}
       </p>
 
-      {/* Source card for the active segment */}
-      {activeCitations.length > 0 && (
-        <div
-          className="mt-3 bg-sand rounded-xl border border-border divide-y divide-border overflow-hidden"
-          style={{ animation: 'slideUp 200ms ease-out' }}
-        >
-          {activeCitations.map((c, i) => {
-            let host: string
-            try { host = new URL(c.url).hostname.replace(/^www\./, '') } catch { host = c.url }
-            return (
-              <a
-                key={c.url || i}
-                href={c.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-start gap-3 px-4 py-3 group hover:bg-parchment transition-colors duration-150"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="font-mono text-[11px] text-terra group-hover:text-terra-dark truncate">{host}</p>
-                  {c.title && (
-                    <p className="font-body text-[12px] text-charcoal font-medium leading-tight mt-0.5">{c.title}</p>
-                  )}
-                  {c.cited_text && (
-                    <p className="font-body italic text-[11px] text-muted mt-1 line-clamp-2">{c.cited_text}</p>
-                  )}
-                </div>
-                <span className="shrink-0 font-mono text-[11px] text-terra mt-0.5" aria-hidden="true">→</span>
-              </a>
-            )
-          })}
-        </div>
+      {allCitations.length > 0 && (
+        <>
+          <span className="font-mono text-[10px] text-muted uppercase tracking-widest block mt-4 mb-1">
+            Sources
+          </span>
+          <CitationChips citations={allCitations} />
+        </>
       )}
     </div>
   )
@@ -142,10 +108,13 @@ export function DescriptionCard({ description, state }: { description: BikeDescr
 /* ── Expert review ──────────────────────────────────── */
 
 // Structural type — works for both BikeReviewResponse and EquipmentReviewResponse.
+// `rating` / `sources_used` are only present on bike reviews (TODO-014).
 interface ReviewLike {
   score: number
   explanation: string
   ref: string[]
+  rating?: number
+  sources_used?: number
 }
 
 export function ReviewSection({ review, state }: { review: ReviewLike | null; state: LoadState }) {
@@ -168,9 +137,15 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
   if (state === 'error' || !review) return null
 
   const clean = review.explanation.replace(/<\/?cite[^>]*>/g, '')
-  const sourceUrl = review.ref[0] ?? null
-  let sourceHost: string | null = null
-  try { sourceHost = sourceUrl ? new URL(sourceUrl).hostname.replace(/^www\./, '') : null } catch { sourceHost = sourceUrl }
+  const refs = review.ref.filter(Boolean)
+
+  const hasRating = typeof review.rating === 'number' && (review.sources_used ?? 0) > 0
+  const ratingPct = hasRating ? Math.max(0, Math.min(100, (review.rating! / 10) * 100)) : 0
+
+  // 0–10 → 1–5 filled stars. Prefer the aggregate rating; equipment reviews
+  // have no `rating`, so they fall back to the headline score.
+  const starBasis = hasRating ? review.rating! : review.score
+  const filledStars = Math.max(1, Math.min(5, Math.round(starBasis / 2)))
 
   return (
     <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
@@ -188,21 +163,84 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
           <span className="font-mono text-[11px] text-muted">/10</span>
         </div>
       </div>
+
+      {hasRating && (
+        <div className="mb-4 bg-sand rounded-xl border border-border px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
+              Aggregate rating
+            </span>
+            <div className="flex items-baseline gap-1">
+              <span
+                className="font-display font-bold text-terra tabular-nums leading-none text-[18px]"
+                aria-label={`Aggregate rating ${review.rating} out of 10`}
+              >
+                {review.rating!.toFixed(1)}
+              </span>
+              <span className="font-mono text-[11px] text-muted">/10</span>
+            </div>
+          </div>
+          <div className="h-1.5 w-full bg-parchment rounded-full overflow-hidden" role="presentation">
+            <div
+              className="h-full bg-terra rounded-full transition-[width] duration-500 ease-out"
+              style={{ width: `${ratingPct}%` }}
+            />
+          </div>
+          <p className="font-mono text-[10px] text-muted mt-2">
+            Rating from {review.sources_used} {review.sources_used === 1 ? 'source' : 'sources'}
+          </p>
+        </div>
+      )}
+
       <p className="font-body italic text-ink text-[13px] leading-relaxed">
         {clean}
       </p>
-      {sourceHost && sourceUrl && (
-        <a
-          href={sourceUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-3 inline-flex items-center gap-1 font-mono text-[11px] text-terra hover:text-terra-dark transition-colors duration-150 focus-visible:outline-none focus-visible:underline"
-        >
-          {sourceHost}
-          <span aria-hidden="true">→</span>
-        </a>
+      {refs.length > 0 && (
+        <>
+          <span className="font-mono text-[10px] text-muted uppercase tracking-widest block mt-4 mb-2">
+            Sources
+          </span>
+          <div className="bg-sand rounded-xl border border-border divide-y divide-border overflow-hidden">
+            {refs.map((url, i) => (
+              <SourceRow key={url || i} url={url} filledStars={filledStars} />
+            ))}
+          </div>
+        </>
       )}
     </div>
+  )
+}
+
+// One source per row: stars | domain | "Read review →".
+// Stars are decorative — derived from the aggregate rating when the backend
+// supplied one (bike reviews), otherwise from the headline score (equipment
+// reviews, which carry no `rating`).
+function SourceRow({ url, filledStars }: { url: string; filledStars: number }) {
+  let host: string
+  try { host = new URL(url).hostname.replace(/^www\./, '') } catch { host = url }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={url}
+      className="flex items-center gap-3 px-4 py-3 group hover:bg-parchment transition-colors duration-150 focus-visible:outline-none focus-visible:bg-parchment"
+    >
+      <span
+        className="shrink-0 font-mono text-[11px] text-terra tracking-tight"
+        aria-label={`${filledStars} out of 5 stars`}
+      >
+        {'★'.repeat(filledStars)}
+        <span className="text-terra/30">{'★'.repeat(5 - filledStars)}</span>
+      </span>
+      <span className="min-w-0 flex-1 font-mono text-[11px] text-charcoal group-hover:text-terra truncate transition-colors duration-150">
+        {host}
+      </span>
+      <span className="shrink-0 font-mono text-[11px] text-terra group-hover:text-terra-dark whitespace-nowrap transition-colors duration-150">
+        Read review <span aria-hidden="true">→</span>
+      </span>
+    </a>
   )
 }
 
