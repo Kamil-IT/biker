@@ -158,6 +158,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | OLX image fetcher | `app/olx_image_fetcher.py` | Playwright (headless=False) scrapes up to 4 `<img>` URLs from each OLX listing URL using `*.apollo.olxcdn.com` regex |
 | Ceneo finder | `app/bike_offer_ceneo_finder.py` | Single `web_search` call to find 1 current offer on ceneo.pl |
 | Decathlon finder | `app/bike_offer_decathlon_finder.py` | Single `web_search` call to find 1 current offer on decathlon.pl |
+| Amazon finder | `app/bike_offer_amazon_finder.py` | PA-API 5.0 `SearchItems` (SigV4-signed httpx call) to find up to 3 offers; graceful empty result when credentials missing or on error |
 | Photos finder | `app/bike_photos_finder.py` | Two-step: (1) Claude `web_search` to find manufacturer product page URL, (2) Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs from rendered page; runs in parallel with details and description finders |
 | Equipment details finder | `app/equipment_details_finder.py` | Resolves the equipment category (given or inferred), runs one focused component-search call with that category's `equipment_details_{slug}.md` prompt, returns the bike-style component tree (web_search behind a `TODO` flag, mirroring the bike details finder) |
 | Equipment description finder | `app/equipment_description_finder.py` | Single `web_search` call with prompt caching for a 4–5 sentence equipment overview |
@@ -219,6 +220,13 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 - Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches decathlon.pl using `app/prompts/bike_offer_decathlon.md` as the system prompt
 - Returns `{ offers: [{ brand, model, price, is_new, url, photos: [], source: "decathlon.pl" }], info: str }` (1 offer, no photos)
 - On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
+
+**Endpoint** `POST /v1/bike/amazon`
+- Request: `{"company": "Trek", "model": "Marlin 5"}`
+- Auth: **PA-API 5.0** (Product Advertising API) with AWS SigV4 request signing (chosen over SP-API — PA-API exposes a buyer-facing product search). Credentials via env (`AMAZON_ACCESS_KEY`, `AMAZON_SECRET_KEY`, `AMAZON_PARTNER_TAG`, optional `AMAZON_REGION`/`AMAZON_HOST`); **requires a verified Associate account**
+- Calls PA-API `SearchItems` **once** (httpx) with keywords `"{company} {model} bike"`, `SearchIndex=SportingGoods`; maps up to 3 items to `BikeOffer` (`source: "amazon"`)
+- Returns `{ offers: [...], info: str }`; cache keyed on `{company, model}`, cached only when `offers` non-empty
+- On missing credentials / API error: returns `{ offers: [], info: <explanation> }` — never returns 502
 
 **Endpoint** `POST /v1/equipment/details`
 - Request: `{"company": "POC", "model": "Octal MIPS", "category": "helmets"}` — `company` optional (default `""`), `model` required, `category` optional (`helmets` / `lights` / `locks` / `apparel`; inferred from the item name when omitted, defaulting to `apparel`)

@@ -28,6 +28,7 @@ from .bike_offer_finder import find_bike_offers  # noqa: E402
 from .bike_used_finder import find_used_bikes  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
 from .bike_offer_decathlon_finder import find_decathlon_offers  # noqa: E402
+from .bike_offer_amazon_finder import find_amazon_offers  # noqa: E402
 from .equipment_details_finder import find_equipment_details  # noqa: E402
 from .equipment_description_finder import find_equipment_description  # noqa: E402
 from .equipment_photos_finder import find_equipment_photos  # noqa: E402
@@ -248,6 +249,23 @@ async def bike_decathlon(req: BikeOfferRequest) -> BikeOfferResponse:
     logger.info("decathlon complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     if result.offers:
         set_cached("/v1/bike/decathlon", _fields, result)
+    return result
+
+
+@app.post("/v1/bike/amazon", response_model=BikeOfferResponse)
+async def bike_amazon(req: BikeOfferRequest) -> BikeOfferResponse:
+    logger.info("amazon request | company=%r model=%r", req.company, req.model)
+    _fields = {"company": req.company, "model": req.model}
+    cached = get_cached("/v1/bike/amazon", _fields, BikeOfferResponse)
+    if cached is not None:
+        return cached
+
+    t_start = time.perf_counter()
+    result = await find_amazon_offers(req.company, req.model)
+    elapsed = time.perf_counter() - t_start
+    logger.info("amazon complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
+    if result.offers:
+        set_cached("/v1/bike/amazon", _fields, result)
     return result
 
 
