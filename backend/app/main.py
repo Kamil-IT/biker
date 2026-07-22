@@ -75,6 +75,10 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
     }.items() if v is not None}
     cached = get_cached("/v1/bike/search", _fields, BikeSearchResponse)
     if cached is not None:
+        # Backfill the follow-up table on the hit path too. Without this the
+        # semantic tables only ever fill on a generic-cache MISS, so a warm
+        # cache.db leaves them permanently empty — see TODO-011.
+        save_search(cached.search, cached.bikes)
         return cached
 
     enriched = req.enriched_query()
@@ -169,6 +173,8 @@ async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
     _fields = {"company": req.company, "model": req.model}
     cached = get_cached("/v1/bike/details", _fields, BikeDetailsResponse)
     if cached is not None:
+        # Backfill on the hit path — see the note in /v1/bike/search above.
+        save_bike_details(req.company, req.model, cached)
         return cached
 
     t_start = time.perf_counter()
