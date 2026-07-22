@@ -11,6 +11,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. `mcp__ruflo__task_create` — register the task
 4. Implement, then `mcp__ruflo__task_complete` when done
 
+## ECC Skill Routing
+
+Structured workflows for common task types. Reference these skills in `/\.claude/skills/` when starting code changes.
+
+| Task | Skill | Use When |
+|------|-------|----------|
+| **Implement new endpoint** | `sparc-code` | Adding POST /v1/bike/* or /v1/equipment/* endpoint |
+| **Add tests** | `sparc-tester` | After implementation, before PR; writes smoke tests in backend/scripts/test_search.py |
+| **Security audit** | `sparc-security-review` | New endpoint, new finder module, or API integration (validates input, prevents prompt injection, checks error handling) |
+| **Capture pattern** | `memory-persist` | After successful feature completion; saves reusable pattern to Obsidian vault for future tasks |
+
+**Example workflow:**
+```
+User: "Add Decathlon offer endpoint"
+
+1. Invoke `/sparc:code` to design the endpoint + finder
+   → creates app/bike_offer_decathlon_finder.py + POST /v1/bike/decathlon route
+2. Invoke `/sparc:tester` to add smoke tests
+   → adds test to backend/scripts/test_search.py
+3. Invoke `/sparc:security-review` to audit API calls + input validation
+   → checks for prompt injection, API key leaks, error handling
+4. Invoke `/memory:persist` to capture pattern
+   → saves "Offer finder pattern: single web_search + cache + fallback" to Obsidian
+5. Create PR for review
+```
+
+**Skills directory:** `.claude/skills/` in this repo contains:
+- `sparc-code.md` — structured implementation with phases (Specification → Pseudocode → Implementation → Testing)
+- `sparc-tester.md` — TDD workflow + smoke test templates for backend/frontend
+- `sparc-security-review.md` — security checklist + audit templates + pen-test examples
+- `memory-persist.md` — capture patterns to Obsidian vault; search for similar past solutions before coding
+
 ## Memory & Persistence
 
 Durable, cross-session memory for this project lives in a single human-readable Obsidian vault — **not** ruflo's `memory_*` / AgentDB stores. The vault is at `obsidian/bike-memory/` (gitignored, including its bearer token) with notes under a `memory/` folder. It is served by the `obsidian` MCP server (the "MCP Connector" plugin, `http://127.0.0.1:27200/mcp`) using local Transformers.js embeddings (`Xenova/all-MiniLM-L6-v2`, no API key).
