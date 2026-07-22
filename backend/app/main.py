@@ -39,6 +39,7 @@ from .store import (  # noqa: E402
     init_store, save_search, get_search_by_query, find_bikes_by_brand,
     save_bike_details, get_bike_details,
 )
+from .models import init_db  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -52,6 +53,7 @@ logger = logging.getLogger("biker.search")
 async def lifespan(app: FastAPI):
     init_cache()
     init_store()
+    init_db()
     yield
     close_cache()
 
