@@ -180,12 +180,6 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
               <span className="font-mono text-[11px] text-muted">/10</span>
             </div>
           </div>
-          <div className="h-1.5 w-full bg-parchment rounded-full overflow-hidden" role="presentation">
-            <div
-              className="h-full bg-terra rounded-full transition-[width] duration-500 ease-out"
-              style={{ width: `${ratingPct}%` }}
-            />
-          </div>
           <p className="font-mono text-[10px] text-muted mt-2">
             Rating from {review.sources_used} {review.sources_used === 1 ? 'source' : 'sources'}
           </p>
