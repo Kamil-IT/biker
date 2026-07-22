@@ -15,10 +15,16 @@ Merged is the bar. A task with finished code and an open PR is not done and does
 | ISSUE_002 | Rider weight field | [#49](https://github.com/Kamil-IT/biker/pull/49) |
 | ISSUE_011 | Missing Brakes category | [#52](https://github.com/Kamil-IT/biker/pull/52) |
 | — | Dangling doc links | [#53](https://github.com/Kamil-IT/biker/pull/53) |
+| 004 | Review star table (at bottom) | [#54](https://github.com/Kamil-IT/biker/pull/54) |
+| 013 | Research review forums | [#46](https://github.com/Kamil-IT/biker/pull/46) — *closed, see below* |
 
 ISSUE_001 and ISSUE_002 share a PR: both added a field to the same `ParseResponse` model on branches cut from the same commit, and neither contained the other's field — whichever merged second would have silently dropped one. They were combined into #49 and PR #48 was closed.
 
 #53 has no task file. It was unplanned repair work: PR #47 merged carrying five references to `backend/docs/review_sources.md`, a file that PR #46 would have supplied — but #46 was closed rather than merged, so those links were dead on `main`.
+
+**013 is done, but its PR was closed rather than merged** — the only entry here of that shape. The research was completed: 13 cycling review sources evaluated, tiered, and given a weighting scheme. By the time it was reviewed, TODO-014 had already implemented all of it in code (the 9-source tier list, the 3×/2×/1× weights, normalisation to 0–10, coverage routing, exclusions), so merging a standalone document describing shipped behaviour would have created a second place to keep in sync.
+
+Its findings live on in three places: the code in `bike_review_finder.py`, the tier table reproduced inline in `TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md`, and branch `worktree-feature+013-research-review-forums` if the full document is ever wanted. The two recommendations #47 did *not* implement — the source-disagreement rule and `ref` priority ordering — became TODO-018 rather than being lost as prose.
 
 ## Completed earlier
 
