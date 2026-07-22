@@ -6,3 +6,4 @@ httpx
 patchright
 beautifulsoup4
 pytest
+sqlalchemy
