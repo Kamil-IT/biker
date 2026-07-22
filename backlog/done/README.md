@@ -17,6 +17,8 @@ Merged is the bar. A task with finished code and an open PR is not done and does
 | — | Dangling doc links | [#53](https://github.com/Kamil-IT/biker/pull/53) |
 | 004 | Review star table (at bottom) | [#54](https://github.com/Kamil-IT/biker/pull/54) |
 | 013 | Research review forums | [#46](https://github.com/Kamil-IT/biker/pull/46) — *closed, see below* |
+| 011 | SQLite follow-up cache | [#51](https://github.com/Kamil-IT/biker/pull/51) |
+| ISSUE_003 | Parse brand constraint | [#50](https://github.com/Kamil-IT/biker/pull/50) |
 
 ISSUE_001 and ISSUE_002 share a PR: both added a field to the same `ParseResponse` model on branches cut from the same commit, and neither contained the other's field — whichever merged second would have silently dropped one. They were combined into #49 and PR #48 was closed.
 
@@ -46,6 +48,10 @@ Three features in this batch shipped with **passing tests while being broken**, 
 - **007** (still open) returns zero offers for a live Trek Marlin 5. Its test uses that exact bike and only asserts `isinstance(offers, list)` — an empty list skips every downstream assertion.
 
 The shared lesson: **an assertion that cannot fail is not a test.** When adding one, demonstrate it failing against the unfixed code before trusting it.
+
+**011 was the exact inverse, and worth knowing about.** Its tests were correct and *failing* while the code was wrong: `save_search()` / `save_bike_details()` sat after the generic cache's early return, so the follow-up tables only ever filled on a cache MISS. On a warm `cache.db` almost nothing misses, leaving them permanently empty on exactly the deployments with the most data. The tell had been visible all along — the author's own `cache.db` contained both new tables with zero rows. When a good test fails, suspect the code before the test.
+
+**ISSUE_003 shows a third failure mode: a merge that is textually clean but semantically wrong.** Its prompt example was `"…Mam 185cm wzrostu i waze 100kg. Firma tylko Tesla" → {"brand": "Tesla"}` — correct on its own branch, where height and weight did not exist. After merging ISSUE_002 they did, and the input contains both. Keeping either side verbatim would have shipped a worked example teaching the model to *drop* height and weight whenever a brand is present. Neither side was wrong alone; the pair was. When merging prompt examples, re-read them against the merged feature set — `git` cannot see this class of conflict.
 
 ISSUE_011 also turned out not to be a new defect at all, but an incomplete migration — the same JSON-extraction bug had already been fixed once in a shared helper (`21e969f`, `app/json_extract.py`), and the details finders were never moved onto it. See `backlog/TODO_ISSUE_012_CONSOLIDATE_JSON_EXTRACTION.md`.
 
