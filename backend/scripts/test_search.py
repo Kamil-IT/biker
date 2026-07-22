@@ -231,6 +231,31 @@ assert resp_parse2.json() == data_parse, "Cached parse response differs from ori
 assert elapsed_parse2 < 5.0, f"Parse cache hit took {elapsed_parse2:.2f}s — expected < 5s"
 print(f"OK — parse cache hit in {elapsed_parse2:.3f}s")
 
+# -- Parse endpoint: brand-constraint phrasing (ISSUE-003) --
+print("\n-- Parse: brand-constraint phrasing --")
+brand_cases = [
+    ("Szukam roweru na podróże po wrocławiu na wałach. Mam 185cm wzrostu i waze 100kg. Firma tylko Tesla", "Tesla"),
+    ("Chcę rower, marka Trek", "Trek"),
+    ("tylko Specialized", "Specialized"),
+    ("brand only Canyon", "Canyon"),
+    ("Firma tylko TREK", "TREK"),
+]
+for text, expected_brand in brand_cases:
+    resp_bc = httpx.post(PARSE_URL, json={"text": text}, timeout=30)
+    assert resp_bc.status_code == 200, f"Expected 200, got {resp_bc.status_code}"
+    data_bc = resp_bc.json()
+    assert data_bc.get("brand") == expected_brand, \
+        f"Expected brand {expected_brand!r} for {text!r}, got: {data_bc.get('brand')!r}"
+    print(f"OK -- {text!r} -> brand={data_bc.get('brand')!r}")
+
+# Location names must NOT be extracted as a brand
+for text in ["Mam rower w Wrocławiu", "Szukam roweru w Krakowie na walach"]:
+    resp_city = httpx.post(PARSE_URL, json={"text": text}, timeout=30)
+    assert resp_city.status_code == 200, f"Expected 200, got {resp_city.status_code}"
+    assert resp_city.json().get("brand") is None, \
+        f"Expected no brand for location text {text!r}, got: {resp_city.json().get('brand')!r}"
+    print(f"OK -- {text!r} -> no brand extracted")
+
 # ── Ceneo offer endpoint ──
 print("\n── Ceneo: find offers on ceneo.pl ──")
 CENEO_URL = "http://localhost:8000/v1/bike/ceneo"
