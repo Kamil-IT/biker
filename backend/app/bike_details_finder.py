@@ -1,18 +1,16 @@
-import json
 import logging
-import re
 import time
 from pathlib import Path
 
 from anthropic import AsyncAnthropic
 
+from .json_extract import extract_json
 from .schemas import BikeCategory, BikeSubcategory, ComponentElement, SpecItem
 
 logger = logging.getLogger("biker.details")
 
 MODEL = "claude-haiku-4-5-20251001"
 _client = AsyncAnthropic()
-_CODE_FENCE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```$", re.DOTALL)
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 DETAIL_CATEGORIES = [
@@ -25,16 +23,6 @@ DETAIL_CATEGORIES = [
     ("Lighting",          "lighting"),
     ("Accessories",       "accessories"),
 ]
-
-
-def _strip_code_fence(text: str) -> str:
-    text = text.strip()
-    m = _CODE_FENCE.match(text)
-    if m:
-        return m.group(1).strip()
-    if "```" in text:
-        text = text[:text.index("```")].strip()
-    return text
 
 
 def _parse_spec(raw: object, idx: int) -> SpecItem:
@@ -105,28 +93,28 @@ async def _search_raw_specs(company: str, model: str) -> list[BikeCategory]:
         total_output_tokens += output_tokens
 
         texts = [block.text for block in response.content if getattr(block, "type", None) == "text"]
-        raw = _strip_code_fence("".join(texts))
+        raw = "".join(texts)
 
         logger.info(
             "category=%r | elapsed=%.2fs input_tokens=%d output_tokens=%d chars=%d",
             category_name, elapsed, input_tokens, output_tokens, len(raw),
         )
 
-        try:
-            data = json.loads(raw)
-            if isinstance(data, dict):
-                cat = _parse_category(data, 0)
+        # The model routinely narrates ("I'll search for the Brakes specs...")
+        # before emitting the JSON, so pull the object out of the prose rather
+        # than assuming the whole response parses.
+        data = extract_json(raw)
+        if isinstance(data, dict):
+            cat = _parse_category(data, 0)
+            if cat.category:
+                categories.append(cat)
+        elif isinstance(data, list):
+            for i, item in enumerate(data):
+                cat = _parse_category(item, i)
                 if cat.category:
                     categories.append(cat)
-            elif isinstance(data, list):
-                for i, item in enumerate(data):
-                    cat = _parse_category(item, i)
-                    if cat.category:
-                        categories.append(cat)
-            else:
-                logger.error("category=%r unexpected JSON type %s", category_name, type(data).__name__)
-        except json.JSONDecodeError as exc:
-            logger.error("category=%r JSON decode failed: %s | raw=%r", category_name, exc, raw[:300])
+        else:
+            logger.error("category=%r no JSON found in response | raw=%r", category_name, raw[:300])
 
     logger.info(
         "total usage | input_tokens=%d output_tokens=%d categories=%d",

@@ -56,6 +56,8 @@ export interface BikeReviewResponse {
   score: number
   explanation: string
   ref: string[]
+  rating: number         // 0–10 aggregate across curated review sources
+  sources_used: number   // count of sources that contributed to the rating
 }
 
 export interface BikeOffer {
@@ -118,6 +120,7 @@ export interface SearchPayload {
   price_max?:           number
   frame_size?:          string
   rider_height_cm?:     number
+  rider_weight_kg?:     number
   gender?:              string
   frame_material?:      string
   brake_type?:          string
@@ -136,6 +139,7 @@ export interface SearchFilters {
   bike_type:           string
   frame_size:          string
   rider_height_cm:     string
+  rider_weight_kg:     string
   price_max:           string
   gender:              string
   frame_material:      string
@@ -156,6 +160,7 @@ export const EMPTY_FILTERS: SearchFilters = {
   bike_type:           '',
   frame_size:          '',
   rider_height_cm:     '',
+  rider_weight_kg:     '',
   price_max:           '',
   gender:              '',
   frame_material:      '',
@@ -176,4 +181,6 @@ export interface ParseResponse {
   is_electric?:    boolean
   has_suspension?: boolean
   is_kids?:        boolean
+  rider_height_cm?: number
+  rider_weight_kg?: number
 }
