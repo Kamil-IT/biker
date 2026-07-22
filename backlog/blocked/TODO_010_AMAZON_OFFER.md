@@ -1,5 +1,15 @@
 # TODO-010 — Amazon Offer Integration
 
+> ## 🟠 BLOCKED — no credentials
+>
+> Implemented in **PR [#44](https://github.com/Kamil-IT/biker/pull/44)** (draft), but the happy path is **unverifiable here**: `backend/.env` holds only `ANTHROPIC_API_KEY`.
+>
+> **Unblock by:** an Amazon Associate account with PA-API 5.0 access, then setting the access key, secret and partner tag.
+>
+> **Fix on first real use:** `Marketplace` is derived by string surgery (`f"www.{host.replace('webservices.', '')}"`) — fine for the default, silently wrong for any other `AMAZON_HOST`. Also worth confirming `amazon.com` is intended at all, given the rest of the project targets Polish retailers.
+>
+> This one has the **strongest auth evidence** of the three: the SigV4 signature was independently recomputed from the AWS spec and matches byte-for-byte, and a live probe against `webservices.amazon.com` returns `UnrecognizedClient` — a *credential* rejection, not a signature error. Also verified: graceful degradation (200 + empty + `info`), 422 validation, empty-result caching rule. See `backlog/blocked/README.md`.
+
 ## Goal
 Add a `POST /v1/bike/amazon` endpoint returning bike offers from Amazon.
 
