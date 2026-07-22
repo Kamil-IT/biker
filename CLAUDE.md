@@ -11,6 +11,51 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. `mcp__ruflo__task_create` — register the task
 4. Implement, then `mcp__ruflo__task_complete` when done
 
+## ECC Skill Routing
+
+Structured workflows for common task types. Use these skills in `.claude/skills/` when starting code changes.
+
+**See `.claude/ECC_INTEGRATION_GUIDE.md` for complete documentation and how to download all 449 ECC skills.**
+
+| Task | Skill | Use When |
+|------|-------|----------|
+| **Implement new endpoint** | `sparc-code` | Adding POST /v1/bike/* or /v1/equipment/* endpoint |
+| **Add tests** | `sparc-tester` | After implementation, before PR; writes smoke tests in backend/scripts/test_search.py |
+| **Security audit** | `sparc-security-review` | New endpoint, new finder module, or API integration (validates input, prevents prompt injection, checks error handling) |
+| **Capture pattern** | `memory-persist` | After successful feature completion; saves reusable pattern to Obsidian vault for future tasks |
+
+**Example workflow:**
+```
+User: "Add Decathlon offer endpoint"
+
+1. Invoke /sparc:code
+   → Specification → Pseudocode → Implementation → Testing phases
+   → Creates app/bike_offer_decathlon_finder.py + POST /v1/bike/decathlon route
+
+2. Invoke /sparc:tester
+   → Adds test to backend/scripts/test_search.py
+   → Verifies smoke test passes, cache works, error handling
+
+3. Invoke /sparc:security-review
+   → Validates input, prevents prompt injection, checks error responses
+   → Runs pen-tests with cURL examples
+
+4. Invoke /memory:persist
+   → Saves "Offer finder pattern: single web_search + cache + fallback" to Obsidian
+   → Next time: search vault → reuse template → save 1.5 hours
+
+5. Create PR for review
+```
+
+**Skills in `.claude/skills/`:**
+- `sparc-code.md` — Structured implementation phases + templates
+- `sparc-tester.md` — TDD workflow + smoke test templates
+- `sparc-security-review.md` — Security checklist + pen-test examples
+- `memory-persist.md` — Obsidian vault integration for pattern capture
+- **All 449 ECC skills** — Run `python fetch_ecc_skills.py` to download (see guide for details)
+
+**ECC Overview:** 449 production-ready skills for backends (FastAPI, Django, etc.), frontends (React, Vue, etc.), testing, security, DevOps, and specialized domains. See `.claude/ECC_INTEGRATION_GUIDE.md` for complete reference.
+
 ## Memory & Persistence
 
 Durable, cross-session memory for this project lives in a single human-readable Obsidian vault — **not** ruflo's `memory_*` / AgentDB stores. The vault is at `obsidian/bike-memory/` (gitignored, including its bearer token) with notes under a `memory/` folder. It is served by the `obsidian` MCP server (the "MCP Connector" plugin, `http://127.0.0.1:27200/mcp`) using local Transformers.js embeddings (`Xenova/all-MiniLM-L6-v2`, no API key).
