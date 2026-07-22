@@ -71,6 +71,63 @@ assert details_resp2.json() == details_resp.json(), "Cached details response dif
 assert elapsed_details2 < 5.0, f"Details cache hit took {elapsed_details2:.2f}s -- expected < 5s"
 print(f"OK -- details cache hit returned in {elapsed_details2:.3f}s")
 
+# ── Follow-up cache: GET /v1/bike/search-cache?query= (pure cache read) ──
+SEARCH_CACHE_URL = "http://localhost:8000/v1/bike/search-cache"
+print("\n-- Follow-up cache: GET /v1/bike/search-cache?query= (served from cache) --")
+enriched_query = resp.json()["search"]
+t0 = _time.perf_counter()
+fu_resp = httpx.get(SEARCH_CACHE_URL, params={"query": enriched_query}, timeout=10)
+elapsed_fu = _time.perf_counter() - t0
+assert fu_resp.status_code == 200, f"Expected 200, got {fu_resp.status_code}"
+fu_data = fu_resp.json()
+assert fu_data["cached"] is True, "Expected cached=True"
+assert fu_data["bikes"] == resp.json()["bikes"], "Follow-up bikes differ from original search"
+assert elapsed_fu < 3.0, f"Follow-up cache read took {elapsed_fu:.2f}s — expected < 3s (no web/Claude call)"
+print(f"OK -- search-cache query hit in {elapsed_fu:.3f}s with {len(fu_data['bikes'])} bikes")
+
+# ── Follow-up cache: lookup-by-attribute (brand) ──
+print("\n-- Follow-up cache: GET /v1/bike/search-cache?brand= (lookup by attribute) --")
+some_brand = resp.json()["bikes"][0]["brand"]
+brand_resp = httpx.get(SEARCH_CACHE_URL, params={"brand": some_brand}, timeout=10)
+assert brand_resp.status_code == 200, f"Expected 200, got {brand_resp.status_code}"
+brand_data = brand_resp.json()
+assert isinstance(brand_data["bikes"], list), "Expected bikes to be a list"
+assert all(b["brand"].strip().lower() == some_brand.strip().lower() for b in brand_data["bikes"]), \
+    f"All returned bikes must match brand {some_brand!r}"
+assert len(brand_data["bikes"]) >= 1, "Expected at least one bike for a brand from the last search"
+print(f"OK -- search-cache brand lookup returned {len(brand_data['bikes'])} {some_brand!r} bike(s)")
+
+# ── Follow-up cache: missing params → 422 ──
+print("\n-- Follow-up cache: no query/brand → 422 --")
+fu_empty = httpx.get(SEARCH_CACHE_URL, timeout=10)
+assert fu_empty.status_code == 422, f"Expected 422, got {fu_empty.status_code}"
+print("OK -- search-cache with no params correctly rejected with 422")
+
+# ── Follow-up cache: unknown query → 404 ──
+print("\n-- Follow-up cache: unknown query → 404 --")
+fu_404 = httpx.get(SEARCH_CACHE_URL, params={"query": "no such query ever cached zzz999"}, timeout=10)
+assert fu_404.status_code == 404, f"Expected 404, got {fu_404.status_code}"
+print("OK -- unknown query correctly returned 404")
+
+# ── Follow-up cache: GET /v1/bike/details-cache (pure cache read) ──
+DETAILS_CACHE_URL = "http://localhost:8000/v1/bike/details-cache"
+print("\n-- Follow-up cache: GET /v1/bike/details-cache (served from cache) --")
+t0 = _time.perf_counter()
+dc_resp = httpx.get(DETAILS_CACHE_URL, params={"company": "Canyon", "model": "Grizl CF 7 ESC"}, timeout=10)
+elapsed_dc = _time.perf_counter() - t0
+assert dc_resp.status_code == 200, f"Expected 200, got {dc_resp.status_code}"
+dc_data = dc_resp.json()
+assert dc_data["company"] and dc_data["model"], "Expected company/model in cached details"
+assert isinstance(dc_data["components"], list), "Expected components list"
+assert elapsed_dc < 3.0, f"Details-cache read took {elapsed_dc:.2f}s — expected < 3s (no web/Claude call)"
+print(f"OK -- details-cache hit in {elapsed_dc:.3f}s")
+
+# ── Follow-up cache: unknown bike → 404 ──
+print("\n-- Follow-up cache: details-cache unknown bike → 404 --")
+dc_404 = httpx.get(DETAILS_CACHE_URL, params={"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=10)
+assert dc_404.status_code == 404, f"Expected 404, got {dc_404.status_code}"
+print("OK -- unknown bike correctly returned 404")
+
 # Smoke test: /v1/bike/used happy path
 USED_URL = "http://localhost:8000/v1/bike/used"
 used_payload = {"company": "Trek", "model": "Marlin 5"}

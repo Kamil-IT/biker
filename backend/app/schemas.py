@@ -188,6 +188,13 @@ class BikeSearchResponse(BaseModel):
     bikes: list[BikeResult]
 
 
+class CachedSearchResponse(BaseModel):
+    """Follow-up read served purely from the search cache (no web/Claude call)."""
+    query: str
+    cached: bool
+    bikes: list[BikeResult]
+
+
 class BikeReviewRequest(BaseModel):
     company: str
     model: str

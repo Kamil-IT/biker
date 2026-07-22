@@ -54,6 +54,11 @@ def close_cache() -> None:
         _conn = None
 
 
+def get_conn() -> sqlite3.Connection:
+    assert _conn is not None, "cache not initialised — call init_cache() first"
+    return _conn
+
+
 def _normalise(fields: dict) -> str:
     return json.dumps(
         {k: v.strip().lower() for k, v in fields.items()},
