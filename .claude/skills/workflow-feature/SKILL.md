@@ -1,3 +1,8 @@
+---
+name: workflow-feature
+description: Batch-process multiple backlog tasks — scan backlog/ for TODO_* files, spawn a worker agent per task, track completion, and loop until the backlog is empty. Use when clearing several backlog tasks in one run rather than implementing a single feature.
+---
+
 # workflow-feature
 
 Multi-task batch processor: scan backlog, spawn workers, track completion, loop until done.

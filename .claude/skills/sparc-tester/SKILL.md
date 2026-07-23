@@ -1,3 +1,8 @@
+---
+name: sparc-tester
+description: TDD workflow and smoke-test templates for biker endpoints and components — writes tests into backend/scripts/test_search.py. Use after implementing an endpoint and before opening a PR, when fixing a bug (regression test), or when verifying a refactor did not break anything.
+---
+
 # SPARC: Test-Driven Development Skill
 
 TDD approach for biker endpoints and components. Write tests before or alongside implementation.
