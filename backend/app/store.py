@@ -11,7 +11,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from .cache import get_conn
+from .cache import get_conn, _normalise
+from .price_parse import parse_price
 from .schemas import BikeResult, BikeSearchResponse, BikeDetailsResponse
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,65 @@ def find_bikes_by_brand(brand: str) -> list[BikeResult]:
                 matches.append(BikeResult.model_validate(b))
     logger.info("find_bikes_by_brand | brand=%r matches=%d", brand, len(matches))
     return matches
+
+
+def find_bike_by_brand_model(brand: str, model: str) -> list[BikeResult]:
+    """Lookup-by-attribute: pull every cached bike matching brand AND model,
+    across all fresh cached searches. Purely a cache read — no web/Claude call."""
+    try:
+        conn = get_conn()
+        rows = conn.execute("SELECT bikes, time_stored, ttl FROM search_cache").fetchall()
+        want = (_norm(brand), _norm(model))
+        matches: list[BikeResult] = []
+        seen: set[tuple[str, str]] = set()
+        for bikes_json, time_stored, ttl in rows:
+            if not _is_fresh(time_stored, ttl):
+                continue
+            for b in json.loads(bikes_json):
+                key = (_norm(b.get("brand", "")), _norm(b.get("model", "")))
+                if key != want or key in seen:
+                    continue
+                seen.add(key)
+                matches.append(BikeResult.model_validate(b))
+        logger.info(
+            "find_bike_by_brand_model | brand=%r model=%r matches=%d", brand, model, len(matches)
+        )
+        return matches
+    except Exception as exc:  # noqa: BLE001 — cache reads must never break the request
+        logger.warning("find_bike_by_brand_model failed (non-fatal) | %s", exc)
+        return []
+
+
+# The four offer endpoints whose cached responses carry a price for a bike.
+_OFFER_ENDPOINTS = ("/v1/bike/offer", "/v1/bike/ceneo", "/v1/bike/decathlon", "/v1/bike/used")
+
+
+def find_offer_prices(brand: str, model: str) -> list[float]:
+    """Every parseable offer price for this bike across all offer endpoints.
+
+    Reads the generic `cache` table directly — offer rows are keyed on the same
+    normalised {company, model} shape `_norm()` produces, so no extra mapping is
+    needed. Unparseable prices are dropped, not reported as 0."""
+    try:
+        conn = get_conn()
+        rows = conn.execute(
+            "SELECT response FROM cache WHERE endpoint IN (?, ?, ?, ?) AND request = ?",
+            (*_OFFER_ENDPOINTS, _normalise({"company": brand, "model": model})),
+        ).fetchall()
+        prices: list[float] = []
+        for (response,) in rows:
+            for offer in json.loads(response).get("offers", []):
+                price = parse_price(offer.get("price") or "")
+                if price is not None:
+                    prices.append(price)
+        logger.info(
+            "find_offer_prices | brand=%r model=%r rows=%d prices=%d",
+            brand, model, len(rows), len(prices),
+        )
+        return prices
+    except Exception as exc:  # noqa: BLE001 — cache reads must never break the request
+        logger.warning("find_offer_prices failed (non-fatal) | %s", exc)
+        return []
 
 
 # ── bike_details_cache ────────────────────────────────────────────────────

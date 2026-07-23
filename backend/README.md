@@ -27,8 +27,9 @@ python scripts/test_offer.py    # smoke-test POST /v1/bike/offer
 cd backend
 
 # 1) Deterministic tier — no model, no API key, runs on every commit.
-#    Verifies the scorer's JSON parsing + graceful-degradation contract.
-pytest scripts/test_scoring.py -m "not llm"
+#    Verifies the scorer's JSON parsing + graceful-degradation contract,
+#    plus every pure unit test under tests/ (both collected by default).
+pytest -m "not llm"
 
 # 2) Live eval tier — full-dataset directional eval (run nightly/pre-release).
 #    Scores 11 canonical queries against all 11 category prompts and asserts the
@@ -53,7 +54,10 @@ Prerequisites & notes for the live tier:
   is covered separately by the deterministic tier and the real-API prod path.
 
 `pytest.ini` registers the `llm` marker and scopes default collection to
-`scripts/test_scoring.py` so the standalone smoke scripts above are not auto-run.
+`scripts/test_scoring.py` **and `tests/`**, so a bare `pytest` run covers the prompt-eval
+suite plus every pure unit test (currently `tests/test_price_parse.py`). The rest of
+`scripts/` stays excluded — those are standalone smoke scripts that hit a live server at
+import time and must not be auto-run.
 
 ### Evaluate any prompt (ad-hoc)
 
@@ -87,6 +91,41 @@ Two queryable SQLite tables (in the same `cache.db`, created on startup by `app/
 - This layer is **additive** — the generic per-endpoint cache is unchanged.
 
 The follow-up read endpoints are [`GET /v1/bike/search-cache`](#get-v1bikesearch-cache) and [`GET /v1/bike/details-cache`](#get-v1bikedetails-cache).
+
+## Search Cache
+
+`POST /v1/bike/search` resolves through a **three-step cascade**, stopping at the first step that produces bikes:
+
+| # | Step | Cost | Condition |
+|---|------|------|-----------|
+| 1 | Generic response cache (`app/cache.py`) | 0 outbound calls | Exact normalised match on the full request (every filter field) |
+| 2 | **Brand+model DB lookup** (`app/store.py`) | 0 outbound calls | `brand` **and** `model` both provided, and a fresh `search_cache` row holds that bike |
+| 3 | AI pipeline | 11 + N calls | Everything else — a miss at 1 and 2 |
+
+Step 2 is the addition. `find_bike_by_brand_model(brand, model)` scans `search_cache`, skips rows past their 24 h TTL, and returns every de-duplicated bike whose normalised brand **and** model match. A hit **short-circuits** — the AI pipeline never runs. The response shape is identical (`BikeSearchResponse`); only `len(bikes)` differs, since it returns just the bikes that actually match rather than padding to 5. A miss, a stale row, or an all-filtered-out result falls through to step 3 unchanged.
+
+### Which filters are honoured on the DB path
+
+**Only `price_max`.** It is gated by joining the generic cache's offer rows:
+
+- `find_offer_prices(brand, model)` reads every cached response from `/v1/bike/offer`, `/v1/bike/ceneo`, `/v1/bike/decathlon` and `/v1/bike/used` for that bike, and parses each offer's `price` string via `app/price_parse.py`.
+- The join key is `_normalise({"company": brand, "model": model})` — imported from `cache.py` so the lookup key is byte-identical to how offer rows were written. `store.py`'s own `_norm()` (strip + lowercase) produces the same normalisation, so no extra mapping is needed.
+- **Cheapest across all sources** gates the filter: `min()` of every parseable price from all four endpoints, new and used alike.
+- **Lenient when no price is parseable.** A bike with no offer rows — or whose prices are all sentinels like `'Price on request'` — passes the filter. Only ~21 % of cached bikes have a matching offer row, so strict filtering would discard the great majority of hits. The tradeoff: an over-budget bike may be returned unverified.
+
+**Not honoured on the DB path:** `year`, `frame_size`, `wheel_size`, `frame_material`, `brake_type`, `drivetrain`, `gender`, `rider_height_cm`, `rider_weight_kg`, `battery_capacity_wh`.
+
+This is a deliberate, documented limitation, not an oversight. `BikeResult` stores only `brand`, `model`, `accessories`, `match_score`, `explanation`; `BikeOffer` adds only `price`, `is_new`, `url`, `photos`, `source`, `city`. **No stored model carries any of those fields**, so there is nothing to filter against. Rather than silently dropping the constraints or faking a match, the DB path ignores them — a request combining `brand` + `model` with, say, `frame_size: "M"` may be served from the DB with that size unverified. Callers that need those constraints enforced should omit `brand` or `model` so the request routes to the AI pipeline.
+
+### A DB hit deliberately does not warm the generic cache
+
+`set_cached` is never called on the step-2 path. The generic `cache` table has **no `ttl` column** and `get_cached` never checks age — writing a DB-sourced result there would pin a 24 h-TTL `search_cache` answer permanently, outliving the very TTL that makes it safe to serve. The same no-TTL property is why the joined offer prices never expire either: a stale scraped price can gate `price_max` indefinitely.
+
+Note the offer cache's brand/model split does not always agree with `search_cache`'s — e.g. `('decathlon', 'rockrider st 100')` vs the offer row's `('rockrider', 'st 100')`. Those simply fail to join, and the lenient rule keeps the bike.
+
+`parse_price()` handles the real formats found in the cache: `zł` / `PLN` / `zl` currency tokens, regular/NBSP/narrow-NBSP thousands separators, and both `,` and `.` decimals (with both present the **last** separator is the decimal point; a lone separator is decimal only when exactly 2 digits follow). It returns `None` — never raises — for anything with no digits.
+
+**Tests:** `tests/test_price_parse.py` covers the parser (collected by a bare `pytest` run — see [Category-Scoring Prompt Eval](#category-scoring-prompt-eval)). The cascade itself is covered by `scripts/test_search.py` TC-20 – TC-25 against a live server: DB hit, AI fallback, stale-row fall-through, `price_max` gating both ways, lenient unknown price, and no regression on the generic-cache path.
 
 ## Endpoints
 
@@ -124,10 +163,11 @@ Content-Type: application/json
 All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M, Max price: 6000 PLN — comfortable bike…"` and passes it through the existing scoring and bike-finding pipeline. All fields participate in the SQLite cache key, so two searches that differ only in a filter return distinct results.
 
 **Flow:**
+0. SQLite reads only — generic cache, then (when `brand` **and** `model` are both given) the `search_cache` brand+model lookup with its `price_max` offer join. **A hit at either step returns immediately, making zero outbound HTTP calls.** Steps 1–2 run only on a miss. See [Search Cache](#search-cache)
 1. `POST https://api.anthropic.com/v1/messages` × 11 — score each bike category (parallel via `asyncio.gather`)
 2. `POST https://api.anthropic.com/v1/messages` × N — find real bikes per top category (parallel)
 
-On the happy path the result is also written to the queryable `search_cache` table (see [Follow-up cache tables](#follow-up-cache-tables)).
+On the happy path the result is also written to the queryable `search_cache` table (see [Follow-up cache tables](#follow-up-cache-tables)). A DB-served result is **not** written back to the generic cache — see [Search Cache](#search-cache) for why.
 
 ---
 
