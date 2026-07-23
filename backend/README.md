@@ -226,7 +226,8 @@ Content-Type: application/json
 
 - `score` — a single synthesised editorial verdict (integer 0–10), as before.
 - `rating` — the **aggregate** rating (float 0–10) computed from per-source scores across the curated sources.
-- `sources_used` — count of curated sources that contributed a score to the aggregate.
+- `sources_used` — count of curated sources that contributed a score to the aggregate; unaffected by the disagreement rule below — every consulted source still counts.
+- `ref` — source URLs, guaranteed-ordered Tier 1 → Tier 2 → Tier 3 (best professional source first), not just whatever order the model emitted them in.
 
 **Aggregation methodology** (curated source list and tier weights in [`backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md`](../backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md)):
 Claude searches the curated sources and returns a per-source score for each source it found a review on, tagged with a `type`. The backend computes a weighted mean and normalises to 0–10:
@@ -238,6 +239,8 @@ Claude searches the curated sources and returns a per-source score for each sour
 | `community` | mtbr.com, reddit.com, forumrowerowe.org / bikestats.pl | 1× |
 
 `rating = Σ(score × weight) / Σ(weight)`, rounded to 1 decimal. A non-zero rating **requires at least one professional (`pro_numeric` or `pro_qualitative`) source**; if only community sources are found, `rating` is `0.0` and `sources_used` is `0`.
+
+**Source disagreement:** when the spread between the highest and lowest per-source score exceeds `DISAGREEMENT_THRESHOLD` (3.0 points, a module-level constant in `app/bike_review_finder.py`), a weighted mean would hide a genuinely divisive verdict, so `rating` is anchored instead — to the mean of the `pro_numeric` scores, falling back to `pro_qualitative` if no `pro_numeric` source is present. `sources_used` is not affected; every consulted source still counts. When the rule fires, the backend (not the model) appends a sentence to `explanation` stating the spread and which camp the rating follows. Below the threshold, aggregation is the unchanged weighted mean above.
 
 The curated list is a starting point, not a whitelist: if no curated source covers the model, Claude may use any other credible review site or owner forum, tagged with the closest matching `type`. This prevents a bike with real but non-curated coverage from returning nothing.
 
