@@ -29,38 +29,136 @@ _FALLBACK = BikeReviewResponse(
 _SOURCE_WEIGHTS = {"pro_numeric": 3.0, "pro_qualitative": 2.0, "community": 1.0}
 _PRO_TYPES = {"pro_numeric", "pro_qualitative"}
 
+# TODO-018 — source-disagreement rule. When the highest and lowest per-source
+# scores differ by MORE than this many points (on the 0–10 scale), a weighted
+# mean would hide the split, so we anchor the rating to the professional
+# sources instead and say so in the explanation.
+#
+# Evidence for the value: the research behind TODO-013 wrote it as "~3 points"
+# without a measured corpus, and the repo has no captured spread data to fit
+# against. 3.0 holds up against the scoring bands the prompt itself defines
+# (0–3 poor, 4–5 average, 6–7 good, 8–9 excellent): a spread of <=3 keeps every
+# source inside two adjacent bands — normal reviewer variance — while a spread
+# of >3 means at least one source calls the bike average-or-worse while another
+# calls it excellent. That is the divisive case a buyer must be told about.
+DISAGREEMENT_THRESHOLD = 3.0
 
-def _aggregate_rating(per_source: list) -> tuple[float, int]:
-    """Weighted mean of per-source scores, normalised to 0–10.
+# Rank used to order `ref` and to pick the anchor tier: Tier 1 → 2 → 3.
+_TIER_RANK = {"pro_numeric": 0, "pro_qualitative": 1, "community": 2}
+_UNKNOWN_TIER_RANK = 3
 
-    Returns (rating, sources_used). Requires >=1 professional source for a
-    non-zero rating; otherwise returns (0.0, 0)."""
-    weighted_sum = 0.0
-    weight_total = 0.0
-    used = 0
-    has_pro = False
 
+def _clean_sources(per_source: list) -> list[dict]:
+    """Keep only entries with a known tier type and a parseable 0–10 score."""
+    cleaned: list[dict] = []
     for entry in per_source:
         if not isinstance(entry, dict):
             continue
         stype = str(entry.get("type", "")).strip().lower()
-        weight = _SOURCE_WEIGHTS.get(stype)
-        if weight is None:
+        if stype not in _SOURCE_WEIGHTS:
             continue
         try:
             score = float(entry.get("score"))
         except (TypeError, ValueError):
             continue
-        score = max(0.0, min(10.0, score))
-        weighted_sum += score * weight
-        weight_total += weight
-        used += 1
-        if stype in _PRO_TYPES:
-            has_pro = True
+        cleaned.append(
+            {
+                "type": stype,
+                "score": max(0.0, min(10.0, score)),
+                "url": str(entry.get("url") or ""),
+                "source": str(entry.get("source") or ""),
+            }
+        )
+    return cleaned
 
-    if weight_total == 0 or not has_pro:
-        return 0.0, 0
-    return round(weighted_sum / weight_total, 1), used
+
+def _aggregate_rating(per_source: list) -> tuple[float, int, dict]:
+    """Aggregate per-source scores into a single 0–10 rating.
+
+    Normally a weighted mean (pro_numeric 3x, pro_qualitative 2x, community
+    1x). When the spread between the highest and lowest score exceeds
+    DISAGREEMENT_THRESHOLD, the mean is replaced by the mean of the best tier
+    present (Tier 1, else Tier 2) so a divisive bike is not smoothed into a
+    middling number.
+
+    Returns (rating, sources_used, info) where info describes what happened:
+    `{"disagreement": bool, "spread": float, "low": float, "high": float,
+      "anchor_tier": str | None, "weighted_mean": float}`. Requires >=1
+    professional source for a non-zero rating; otherwise returns (0.0, 0, ...)."""
+    cleaned = _clean_sources(per_source)
+    info = {
+        "disagreement": False,
+        "spread": 0.0,
+        "low": 0.0,
+        "high": 0.0,
+        "anchor_tier": None,
+        "weighted_mean": 0.0,
+    }
+
+    has_pro = any(e["type"] in _PRO_TYPES for e in cleaned)
+    if not cleaned or not has_pro:
+        return 0.0, 0, info
+
+    weighted_sum = sum(e["score"] * _SOURCE_WEIGHTS[e["type"]] for e in cleaned)
+    weight_total = sum(_SOURCE_WEIGHTS[e["type"]] for e in cleaned)
+    weighted_mean = round(weighted_sum / weight_total, 1)
+
+    scores = [e["score"] for e in cleaned]
+    low, high = min(scores), max(scores)
+    spread = round(high - low, 1)
+    info.update(
+        {"spread": spread, "low": low, "high": high, "weighted_mean": weighted_mean}
+    )
+
+    # sources_used counts every consulted source regardless of the rule taken.
+    used = len(cleaned)
+
+    if spread <= DISAGREEMENT_THRESHOLD:
+        return weighted_mean, used, info
+
+    for tier in ("pro_numeric", "pro_qualitative"):
+        anchored = [e["score"] for e in cleaned if e["type"] == tier]
+        if anchored:
+            info["disagreement"] = True
+            info["anchor_tier"] = tier
+            return round(sum(anchored) / len(anchored), 1), used, info
+
+    # Unreachable while has_pro is required, but keep the documented fallback:
+    # no professional source to anchor to → behave exactly as before.
+    return weighted_mean, used, info
+
+
+_TIER_LABEL = {
+    "pro_numeric": "professional reviews that publish a score",
+    "pro_qualitative": "professional reviews",
+}
+
+
+def _disagreement_note(info: dict) -> str:
+    """One sentence stating the spread and which camp the rating follows."""
+    label = _TIER_LABEL.get(info.get("anchor_tier"), "professional reviews")
+    return (
+        f"Sources disagree on this bike: individual scores range from "
+        f"{info['low']:.0f} to {info['high']:.0f} out of 10, a spread of "
+        f"{info['spread']:.0f} points — wider than the {DISAGREEMENT_THRESHOLD:.0f}-point "
+        f"threshold at which we stop averaging. The rating shown therefore follows the "
+        f"{label} rather than the blended average of "
+        f"{info['weighted_mean']:.1f}, which would hide the split."
+    )
+
+
+def _order_ref(refs: list[str], per_source: list) -> list[str]:
+    """Order `ref` by source tier (1 → 2 → 3), stable within a tier.
+
+    The model emits `ref` in whatever order it happened to compile — a Reddit
+    thread can land above BikeRadar. Sorting here makes the priority ordering
+    the guide asks for a guarantee rather than an accident. URLs with no
+    matching `per_source` entry keep their relative order at the end."""
+    rank_by_url = {}
+    for entry in _clean_sources(per_source):
+        if entry["url"] and entry["url"] not in rank_by_url:
+            rank_by_url[entry["url"]] = _TIER_RANK[entry["type"]]
+    return sorted(refs, key=lambda u: rank_by_url.get(u, _UNKNOWN_TIER_RANK))
 
 
 def _strip_code_fence(text: str) -> str:
@@ -226,13 +324,29 @@ async def find_bike_review(company: str, model: str) -> BikeReviewResponse:
     per_source = data.get("per_source", [])
     if not isinstance(per_source, list):
         per_source = []
-    rating, sources_used = _aggregate_rating(per_source)
+    rating, sources_used, info = _aggregate_rating(per_source)
+
+    explanation = _CITE_TAG.sub("", str(data.get("explanation", ""))).strip()
+    if info["disagreement"]:
+        logger.info(
+            "source disagreement | spread=%.1f low=%.1f high=%.1f "
+            "weighted_mean=%.1f anchored=%.1f tier=%s",
+            info["spread"],
+            info["low"],
+            info["high"],
+            info["weighted_mean"],
+            rating,
+            info["anchor_tier"],
+        )
+        explanation = f"{explanation} {_disagreement_note(info)}".strip()
+
+    ref = _order_ref([str(u) for u in data.get("ref", []) if u], per_source)
 
     try:
         return BikeReviewResponse(
             score=int(data.get("score", 0)),
-            explanation=_CITE_TAG.sub("", str(data.get("explanation", ""))).strip(),
-            ref=[str(u) for u in data.get("ref", []) if u],
+            explanation=explanation,
+            ref=ref,
             rating=rating,
             sources_used=sources_used,
         )

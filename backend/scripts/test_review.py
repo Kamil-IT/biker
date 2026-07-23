@@ -1,8 +1,36 @@
 import json
 import time
+from urllib.parse import urlparse
+
 import httpx
 
 URL = "http://localhost:8000/v1/bike/review"
+
+# Curated tier list (TODO-018 / backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md).
+# Domains not in this map are unranked and ignored by the ordering check below —
+# the model may legitimately cite an outlet outside the curated list.
+_DOMAIN_TIER = {
+    "bikeradar.com": 1,
+    "cyclingweekly.com": 1,
+    "bikeperfect.com": 1,
+    "pinkbike.com": 2,
+    "bikemag.com": 2,
+    "gcn.com": 2,
+    "mtbr.com": 3,
+    "reddit.com": 3,
+    "forumrowerowe.org": 3,
+    "bikestats.pl": 3,
+}
+
+
+def _tier_of(url: str) -> int | None:
+    host = urlparse(url).netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    for domain, tier in _DOMAIN_TIER.items():
+        if host == domain or host.endswith("." + domain):
+            return tier
+    return None
 # Use a widely-reviewed mainstream model: a niche variant can legitimately have
 # no reviews, which would make this smoke test flaky for the wrong reason.
 payload = {"company": "Trek", "model": "Marlin 5"}
@@ -30,6 +58,16 @@ assert isinstance(data["explanation"], str), "explanation must be a string"
 assert data["explanation"].count(".") >= 3, "explanation must be several sentences"
 assert "<cite" not in data["explanation"], "explanation must not leak citation markup"
 assert isinstance(data["ref"], list) and data["ref"], "ref must be a non-empty list"
+
+# TODO-018: ref must be ordered best-tier-first (Tier 1 -> 2 -> 3). Unknown
+# domains (not in the curated list) are excluded from the check — they carry
+# no rank guarantee — but ranked domains must appear in non-decreasing tier
+# order relative to each other.
+ranked_tiers = [t for t in (_tier_of(u) for u in data["ref"]) if t is not None]
+assert ranked_tiers == sorted(ranked_tiers), (
+    f"ref must be ordered Tier 1 -> 2 -> 3 among curated domains, got tiers {ranked_tiers} "
+    f"for ref={data['ref']}"
+)
 
 # TODO-014: aggregate rating fields
 assert "rating" in data, "response must include rating"
