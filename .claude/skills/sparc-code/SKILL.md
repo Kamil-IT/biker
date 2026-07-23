@@ -1,3 +1,8 @@
+---
+name: sparc-code
+description: Structured Specification → Pseudocode → Implementation → Testing workflow for biker code. Use when adding a POST /v1/bike/* or /v1/equipment/* endpoint, a new app/*_finder.py module, a new frontend component, or a refactor touching 3+ files.
+---
+
 # SPARC: Code Implementation Skill
 
 Structured code implementation for biker backend endpoints and frontend components.

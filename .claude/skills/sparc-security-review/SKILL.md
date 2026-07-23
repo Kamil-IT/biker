@@ -1,3 +1,8 @@
+---
+name: sparc-security-review
+description: Security audit checklist and cURL pen-tests for biker backend endpoints — input validation, prompt injection, API-key exposure, error handling. Use after implementing a new endpoint, finder module, or third-party integration (Allegro, OLX, Ceneo, Decathlon).
+---
+
 # SPARC: Security Review for API Endpoints
 
 Security audit for biker backend endpoints. Run after implementation of any new endpoint or finder module.

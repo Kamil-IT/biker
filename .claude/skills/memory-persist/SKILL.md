@@ -1,3 +1,8 @@
+---
+name: memory-persist
+description: Capture and recall reusable implementation patterns in the Obsidian vault (obsidian/bike-memory/). Use after completing a feature to save what worked, or before starting one to search for a similar past solution.
+---
+
 # Skill: Memory Persistence & Pattern Capture
 
 Capture successful patterns and learnings from biker development to reuse across tasks.
