@@ -20,6 +20,7 @@ Merged is the bar. A task with finished code and an open PR is not done and does
 | 011 | SQLite follow-up cache | [#51](https://github.com/Kamil-IT/biker/pull/51) |
 | ISSUE_003 | Parse brand constraint | [#50](https://github.com/Kamil-IT/biker/pull/50) |
 | 008 ⚠️ | Remove aggregate rating bar | committed directly to `main` |
+| 018 | Review source disagreement + `ref` order | [#65](https://github.com/Kamil-IT/biker/pull/65) — *moved here in its own PR, ahead of merge, as requested* |
 
 > ⚠️ **ID collision.** "Remove aggregate rating bar" was numbered **008**, which is already held by `backlog/blocked/TODO_008_ALLEGRO_API_OFFER.md`. Two different tasks now share that ID. The Allegro task is the older claimant and is referenced by PR #42's title, body and branch name, so renumbering *this* task is the cheaper fix — 019 is the next free ID. Left as-is pending a decision, since renaming someone else's task ID is not a call to make silently.
 
