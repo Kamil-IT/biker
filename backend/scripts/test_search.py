@@ -564,6 +564,33 @@ def _drop_search_row(query: str) -> None:
         conn.close()
 
 
+def _purge_bike_from_search_cache(brand: str, model: str) -> int:
+    """Delete every search_cache row containing this bike.
+
+    The AI path ends with save_search(), so a fallback result is written into
+    search_cache — and the new DB-first branch then serves it for the next 24 h.
+    That includes bikes the model invented: ask for a brand+model that does not
+    exist and the AI will sometimes echo it back, after which the request is a
+    DB hit forever after. The fallback tests must clear that or they only test
+    the fallback once, then silently start testing the DB path instead.
+    """
+    conn = _db()
+    try:
+        removed = 0
+        for row_id, bikes_json in conn.execute("SELECT id, bikes FROM search_cache").fetchall():
+            if any(
+                b.get("brand", "").strip().lower() == brand.strip().lower()
+                and b.get("model", "").strip().lower() == model.strip().lower()
+                for b in json.loads(bikes_json)
+            ):
+                conn.execute("DELETE FROM search_cache WHERE id = ?", (row_id,))
+                removed += 1
+        conn.commit()
+        return removed
+    finally:
+        conn.close()
+
+
 def _offer_key(company: str, model: str) -> str:
     return _norm_key({"company": company, "model": model})
 
@@ -700,18 +727,29 @@ finally:
 print("\n── [TC-21] AI fallback: unknown brand+model ──")
 tc21_body = {"brand": "Zzyzx", "model": "Nonesuch QQ999"}
 tc21_key = _norm_key(tc21_body)
-_cache_row_delete("/v1/bike/search", tc21_key)  # force a real fallback each run
+# Both caches must be cold or this stops being a fallback test — see
+# _purge_bike_from_search_cache for why the search_cache side matters.
+_cache_row_delete("/v1/bike/search", tc21_key)
+_purged = _purge_bike_from_search_cache("Zzyzx", "Nonesuch QQ999")
+if _purged:
+    print(f"     purged {_purged} search_cache row(s) left by an earlier fallback run")
 resp_tc21 = httpx.post(URL, json=tc21_body, timeout=300)
 data_tc21 = _show("[TC-21]", tc21_body, resp_tc21)
 assert resp_tc21.status_code == 200, f"Expected 200, got {resp_tc21.status_code}"
 assert isinstance(data_tc21["bikes"], list) and len(data_tc21["bikes"]) > 0, \
     "AI fallback must still return bikes"
-assert not any(_matches(b, "Zzyzx", "Nonesuch QQ999") for b in data_tc21["bikes"]), \
-    "The nonsense bike is in no cache — it must not appear in the result"
-# The AI path *does* warm the generic cache (unlike the DB path).
+# Deliberately no assertion about *which* bikes come back. The model sometimes
+# echoes the requested brand+model as one of its five results even though no
+# such bike exists, so bike identity cannot tell the DB path from the AI path.
+# The side effect can: only the AI path calls set_cached.
+
 assert _cache_row_exists("/v1/bike/search", tc21_key), \
     "AI-fallback path should have written a generic-cache row"
 print(f"OK — AI fallback returned {len(data_tc21['bikes'])} bikes and warmed the cache")
+# Leave nothing behind: the AI may have invented this bike and save_search will
+# have persisted it, which would turn the next run's fallback into a DB hit.
+_purge_bike_from_search_cache("Zzyzx", "Nonesuch QQ999")
+_cache_row_delete("/v1/bike/search", tc21_key)
 
 
 # ── [TC-22] Stale search_cache row is not served — request falls through to AI ──
@@ -727,14 +765,27 @@ _seed_search_row(
 print("     seeded a search_cache row aged 48 h against a 24 h TTL")
 try:
     _cache_row_delete("/v1/bike/search", tc22_key)  # force a real fallback each run
+    _purge_bike_from_search_cache(STALE_BRAND, STALE_MODEL)  # drop echoes from earlier runs
+    _seed_search_row(  # re-seed: the purge above also removes this test's fixture
+        FIX_STALE_QUERY,
+        [_bike(STALE_BRAND, STALE_MODEL, "Seeded by TC-22, deliberately expired.")],
+        age_seconds=48 * 60 * 60,
+    )
     resp_tc22 = httpx.post(URL, json=tc22_body, timeout=300)
     data_tc22 = _show("[TC-22]", tc22_body, resp_tc22)
     assert resp_tc22.status_code == 200, f"Expected 200, got {resp_tc22.status_code}"
-    assert not any(_matches(b, STALE_BRAND, STALE_MODEL) for b in data_tc22["bikes"]), \
-        "A stale search_cache row must not be served — it leaked into the response"
+    # Identify the stale row by its fixture marker, not by brand+model: the AI
+    # sometimes echoes the requested brand+model back as one of its results, so
+    # brand+model alone cannot prove the cached row leaked. The accessories
+    # marker only exists on the row this test seeded.
+    assert not any(b["accessories"] == ["TODO-009 fixture"] for b in data_tc22["bikes"]), \
+        "A stale search_cache row must not be served — the seeded row leaked into the response"
     assert len(data_tc22["bikes"]) > 0, "Fallback must still return bikes"
+    assert _cache_row_exists("/v1/bike/search", tc22_key), \
+        "Expected the AI pipeline to run and warm the generic cache"
     print(f"OK — stale row ignored, AI fallback returned {len(data_tc22['bikes'])} bikes")
 finally:
+    _purge_bike_from_search_cache(STALE_BRAND, STALE_MODEL)
     _drop_search_row(FIX_STALE_QUERY)
     _cache_row_delete("/v1/bike/search", tc22_key)
 
