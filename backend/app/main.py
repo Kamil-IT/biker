@@ -26,6 +26,7 @@ from .bike_description_finder import find_bike_description  # noqa: E402
 from .bike_photos_finder import find_bike_photos  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_finder import find_bike_offers  # noqa: E402
+from .bike_offer_allegro_api_finder import find_allegro_api_offers  # noqa: E402
 from .bike_used_finder import find_used_bikes  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
 from .bike_offer_decathlon_finder import find_decathlon_offers  # noqa: E402
@@ -243,6 +244,23 @@ async def bike_offer(req: BikeOfferRequest) -> BikeOfferResponse:
     logger.info("offer complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     if result.offers:
         set_cached("/v1/bike/offer", _fields, result)
+    return result
+
+
+@app.post("/v1/bike/allegro", response_model=BikeOfferResponse)
+async def bike_allegro(req: BikeOfferRequest) -> BikeOfferResponse:
+    logger.info("allegro API request | company=%r model=%r", req.company, req.model)
+    _fields = {"company": req.company, "model": req.model}
+    cached = get_cached("/v1/bike/allegro", _fields, BikeOfferResponse)
+    if cached is not None:
+        return cached
+
+    t_start = time.perf_counter()
+    result = await find_allegro_api_offers(req.company, req.model)
+    elapsed = time.perf_counter() - t_start
+    logger.info("allegro API complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
+    if result.offers:
+        set_cached("/v1/bike/allegro", _fields, result)
     return result
 
 

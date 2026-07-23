@@ -225,6 +225,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | Description finder | `app/bike_description_finder.py` | Single `web_search` call with prompt caching to generate a 4–5 sentence plain-text bike overview; runs in parallel with details finder |
 | Review finder | `app/bike_review_finder.py` | Single `web_search` call across curated sources (tier list and weights in `backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md`); synthesises score 0–10, explanation, source URLs, plus a per-source score array from which it computes a weighted aggregate `rating` (0–10) and `sources_used` count (pro/numeric 3×, pro/qualitative 2×, community 1×; non-zero rating requires ≥1 pro source). When the highest and lowest per-source score spread by more than `DISAGREEMENT_THRESHOLD` (3.0), `rating` anchors to the pro/numeric mean (falling back to pro/qualitative) instead of the weighted mean, and a disagreement sentence is appended to `explanation`; `sources_used` is unaffected. `ref` is returned sorted Tier 1 → Tier 2 → Tier 3. Tolerates the model narrating before the JSON via a balanced-brace scan over all text blocks, with a no-tool prefilled repair call as a last resort |
 | Offer finder | `app/bike_offer_finder.py` | Single `web_search` call to find 1 current offer on allegro.pl |
+| Allegro API finder | `app/bike_offer_allegro_api_finder.py` | Official Allegro REST API (httpx, **not** Anthropic): OAuth2 client-credentials with in-process token cache, then `GET /offers/listing` for the bikes category; maps up to 3 offers to `BikeOffer`. Sandbox by default (`ALLEGRO_ENV=production` for live) |
 | Used bikes finder | `app/bike_used_finder.py` | Single `web_search` call to find up to 5 used listings on olx.pl with cascade fallback; then Playwright scrapes photos via `olx_image_fetcher.py` |
 | OLX image fetcher | `app/olx_image_fetcher.py` | Playwright (headless=False) scrapes up to 4 `<img>` URLs from each OLX listing URL using `*.apollo.olxcdn.com` regex |
 | Ceneo finder | `app/bike_offer_ceneo_finder.py` | Single `web_search` call to find 1 current offer on ceneo.pl |
@@ -282,6 +283,15 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 - Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches allegro.pl using `app/prompts/bike_offer_allegro.md` as the system prompt
 - Returns `{ offers: [{ brand, model, price, is_new, url, photos, source }], info: str }` (1 offer)
 - On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
+
+**Endpoint** `POST /v1/bike/allegro`
+- Request: `{"company": "Trek", "model": "Marlin 5"}`
+- Uses the **official Allegro REST API** via httpx (not the Anthropic API) — separate from the web-search `/v1/bike/offer`
+- OAuth2 client-credentials grant against `.../auth/oauth/token`; token cached in-process until ~60 s before expiry; then `GET /offers/listing?phrase=<brand> <model>&category.id=1112` (bikes category `Rowery`)
+- Requires `ALLEGRO_CLIENT_ID` / `ALLEGRO_CLIENT_SECRET`; sandbox by default, `ALLEGRO_ENV=production` for live. `/offers/listing` needs a **verified** Allegro app
+- Returns `{ offers: [{ brand, model, price, is_new, url, photos, source: "allegro.pl" }], info: str }` (up to 3 offers)
+- Cache keyed on `{company, model}`, only when offers non-empty
+- On missing creds / error: `{ offers: [], info: <message> }` — never 502
 
 **Endpoint** `POST /v1/bike/used`
 - Request: `{"company": "Trek", "model": "Marlin 5"}`
