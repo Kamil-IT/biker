@@ -37,6 +37,7 @@ from .bike_parser import parse_free_text  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
 from .store import (  # noqa: E402
     init_store, save_search, get_search_by_query, find_bikes_by_brand,
+    find_bike_by_brand_model, find_offer_prices,
     save_bike_details, get_bike_details,
 )
 from .models import init_db  # noqa: E402
@@ -82,6 +83,30 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         # cache.db leaves them permanently empty — see TODO-011.
         save_search(cached.search, cached.bikes)
         return cached
+
+    # TODO-009: a brand+model search can often be answered straight from
+    # search_cache, skipping the whole AI pipeline. Only price_max is gated —
+    # no other filter has backing data in the cache (see backend/README.md).
+    if req.brand and req.model:
+        db_bikes = find_bike_by_brand_model(req.brand, req.model)
+        if db_bikes and req.price_max is not None:
+            kept = []
+            for b in db_bikes:
+                prices = find_offer_prices(b.brand, b.model)
+                # Decision 3: unknown price passes.
+                if not prices or min(prices) <= req.price_max:
+                    kept.append(b)
+            db_bikes = kept
+        if db_bikes:
+            enriched = req.enriched_query()
+            logger.info(
+                "search served from DB | brand=%r model=%r bikes=%d",
+                req.brand, req.model, len(db_bikes),
+            )
+            # Decision 5: deliberately no set_cached here — the generic cache
+            # has no TTL, so warming it would pin a 24 h result permanently.
+            return BikeSearchResponse(search=enriched, bikes=db_bikes)
+        # fall through to the AI pipeline
 
     enriched = req.enriched_query()
     logger.info("search request | enriched_query=%r", enriched)
