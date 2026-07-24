@@ -1,0 +1,1285 @@
+{
+  "source": "Wikidata SPARQL",
+  "source_url": "https://query.wikidata.org/sparql",
+  "licence": "CC0 1.0 Public Domain",
+  "retrieved": "2026-07-23",
+  "queries": {
+    "instances_of_bicycle": 132,
+    "bicycle_model_class": 28
+  },
+  "count": 159,
+  "models": [
+    {
+      "qid": "Q119810595",
+      "model": "795 Blade RS",
+      "brand": "Look",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q119810595"
+    },
+    {
+      "qid": "Q2412220",
+      "model": "A-bike",
+      "brand": null,
+      "year": null,
+      "country": "United Kingdom",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q2412220"
+    },
+    {
+      "qid": "Q130332826",
+      "model": "Ahooga",
+      "brand": null,
+      "year": null,
+      "country": "Belgium",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q130332826"
+    },
+    {
+      "qid": "Q2843028",
+      "model": "American Star Bicycle",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q2843028"
+    },
+    {
+      "qid": "Q2861239",
+      "model": "Ariel",
+      "brand": null,
+      "year": null,
+      "country": "United Kingdom",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q2861239"
+    },
+    {
+      "qid": "Q138330522",
+      "model": "Automatisiertes Lastenrad",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q138330522"
+    },
+    {
+      "qid": "Q4827803",
+      "model": "Avatar 2000",
+      "brand": null,
+      "year": "1980",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q4827803"
+    },
+    {
+      "qid": "Q126113589",
+      "model": "Aviette Metalloplan",
+      "brand": "métalloplan",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q126113589"
+    },
+    {
+      "qid": "Q814462",
+      "model": "Behemoth (Fahrrad)",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q814462"
+    },
+    {
+      "qid": "Q136304228",
+      "model": "Betriebsfahrrad",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q136304228"
+    },
+    {
+      "qid": "Q131932878",
+      "model": "Bianchi Arcadex",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q131932878"
+    },
+    {
+      "qid": "Q595380",
+      "model": "Birdy",
+      "brand": "Riese & Müller",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q595380"
+    },
+    {
+      "qid": "Q23021035",
+      "model": "BMC Speedfox",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q23021035"
+    },
+    {
+      "qid": "Q16530738",
+      "model": "BMC Team Elite 29",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q16530738"
+    },
+    {
+      "qid": "Q108296681",
+      "model": "BMC Trailfox",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q108296681"
+    },
+    {
+      "qid": "Q125129839",
+      "model": "Boneshaker",
+      "brand": null,
+      "year": "1861",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q125129839"
+    },
+    {
+      "qid": "Q4943963",
+      "model": "Bootie",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q4943963"
+    },
+    {
+      "qid": "Q116578833",
+      "model": "Buffalo Bicycle",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q116578833"
+    },
+    {
+      "qid": "Q136379669",
+      "model": "Bäckerrad",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q136379669"
+    },
+    {
+      "qid": "Q110264150",
+      "model": "Carbotec Industrial",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q110264150"
+    },
+    {
+      "qid": "Q120861966",
+      "model": "Cervélo P5",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q120861966"
+    },
+    {
+      "qid": "Q115157247",
+      "model": "Cortina",
+      "brand": "Kruitbosch Zwolle B. V.",
+      "year": "2006",
+      "country": "Netherlands",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q115157247"
+    },
+    {
+      "qid": "Q56298342",
+      "model": "Cresta",
+      "brand": null,
+      "year": null,
+      "country": "Switzerland",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q56298342"
+    },
+    {
+      "qid": "Q125871244",
+      "model": "Crosseta",
+      "brand": "GAC",
+      "year": "1970",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q125871244"
+    },
+    {
+      "qid": "Q131824660",
+      "model": "DHL Deutsche Post Rytle Cargobike",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q131824660"
+    },
+    {
+      "qid": "Q1275842",
+      "model": "ErokIT",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q1275842"
+    },
+    {
+      "qid": "Q115586425",
+      "model": "Escape Disc 1 (2022)",
+      "brand": "Giant Bicycles",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q115586425"
+    },
+    {
+      "qid": "Q140571532",
+      "model": "Fahrrad 93",
+      "brand": "Condor",
+      "year": "1993",
+      "country": "Switzerland",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q140571532"
+    },
+    {
+      "qid": "Q3564117",
+      "model": "Fitness-Car",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q3564117"
+    },
+    {
+      "qid": "Q136304232",
+      "model": "Fitnessrad",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q136304232"
+    },
+    {
+      "qid": "Q136190717",
+      "model": "Freakbike",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q136190717"
+    },
+    {
+      "qid": "Q134563049",
+      "model": "Garelli Basic",
+      "brand": "Garelli",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q134563049"
+    },
+    {
+      "qid": "Q134570860",
+      "model": "Garelli Car 50",
+      "brand": "Garelli",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q134570860"
+    },
+    {
+      "qid": "Q134561898",
+      "model": "Garelli Eureka",
+      "brand": "Garelli",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q134561898"
+    },
+    {
+      "qid": "Q134570859",
+      "model": "Garelli Europed",
+      "brand": "Garelli",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q134570859"
+    },
+    {
+      "qid": "Q134550828",
+      "model": "Garelli Garellino",
+      "brand": "Garelli",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q134550828"
+    },
+    {
+      "qid": "Q134550504",
+      "model": "Garelli Gulp",
+      "brand": "Garelli",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q134550504"
+    },
+    {
+      "qid": "Q134563487",
+      "model": "Garelli Noi",
+      "brand": "Garelli",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q134563487"
+    },
+    {
+      "qid": "Q134576420",
+      "model": "Garelli Velo Mosquito",
+      "brand": "Garelli",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q134576420"
+    },
+    {
+      "qid": "Q4134254",
+      "model": "Gauja (motorized bicycle)",
+      "brand": "Sarkanā zvaigzne",
+      "year": null,
+      "country": "Soviet Union",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q4134254"
+    },
+    {
+      "qid": "Q30765852",
+      "model": "gravel bike",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q30765852"
+    },
+    {
+      "qid": "Q3776067",
+      "model": "Graziella",
+      "brand": "Bottecchia Cicli",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q3776067"
+    },
+    {
+      "qid": "Q131531693",
+      "model": "Guru Photon SL",
+      "brand": "Guru Cycles Inc.",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q131531693"
+    },
+    {
+      "qid": "Q112971981",
+      "model": "Helkama Aino",
+      "brand": "Helkama",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112971981"
+    },
+    {
+      "qid": "Q112972003",
+      "model": "Helkama Ainotar",
+      "brand": "Helkama",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112972003"
+    },
+    {
+      "qid": "Q112999987",
+      "model": "Helkama Hopeasauma",
+      "brand": "Helkama",
+      "year": "1955",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112999987"
+    },
+    {
+      "qid": "Q112972789",
+      "model": "Helkama Jekku",
+      "brand": "Helkama",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112972789"
+    },
+    {
+      "qid": "Q112974419",
+      "model": "Helkama Jopo",
+      "brand": "Helkama",
+      "year": "1964",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112974419"
+    },
+    {
+      "qid": "Q112999915",
+      "model": "Helkama Kaunotar",
+      "brand": "Helkama",
+      "year": "1975",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112999915"
+    },
+    {
+      "qid": "Q112974054",
+      "model": "Helkama Kulkuri",
+      "brand": "Helkama",
+      "year": "1975",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112974054"
+    },
+    {
+      "qid": "Q18688785",
+      "model": "Helkama Kuningaskulkuri",
+      "brand": "Helkama",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q18688785"
+    },
+    {
+      "qid": "Q112972442",
+      "model": "Helkama Oiva",
+      "brand": "Helkama",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112972442"
+    },
+    {
+      "qid": "Q112972408",
+      "model": "Helkama Saana",
+      "brand": "Helkama",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112972408"
+    },
+    {
+      "qid": "Q112972810",
+      "model": "Helkama Senator",
+      "brand": "Helkama",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112972810"
+    },
+    {
+      "qid": "Q112972828",
+      "model": "Helkama Vaeltaja",
+      "brand": "Helkama",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112972828"
+    },
+    {
+      "qid": "Q112972837",
+      "model": "Helkama Victor",
+      "brand": "Helkama",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112972837"
+    },
+    {
+      "qid": "Q131932881",
+      "model": "Ibis Hakka MX (2019)",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q131932881"
+    },
+    {
+      "qid": "Q110235677",
+      "model": "Inspired Cycle Engineering",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q110235677"
+    },
+    {
+      "qid": "Q27902700",
+      "model": "J-Rad",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q27902700"
+    },
+    {
+      "qid": "Q30963357",
+      "model": "K1B",
+      "brand": "Kyiv Motorcycle Plant",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q30963357"
+    },
+    {
+      "qid": "Q119347414",
+      "model": "Kettwiesel",
+      "brand": "Hase Bikes",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q119347414"
+    },
+    {
+      "qid": "Q131932859",
+      "model": "Kish gravel 2022",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q131932859"
+    },
+    {
+      "qid": "Q136257468",
+      "model": "Kompaktfahrrad",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q136257468"
+    },
+    {
+      "qid": "Q124219759",
+      "model": "Kwiggle",
+      "brand": null,
+      "year": "2010",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q124219759"
+    },
+    {
+      "qid": "Q105421753",
+      "model": "La Souplette bicycle - CnAM 14557",
+      "brand": null,
+      "year": "1895",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q105421753"
+    },
+    {
+      "qid": "Q138035470",
+      "model": "Leezen Heroes",
+      "brand": null,
+      "year": "2018",
+      "country": "Germany",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q138035470"
+    },
+    {
+      "qid": "Q117196633",
+      "model": "Leo Tolstoy's bicycle",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q117196633"
+    },
+    {
+      "qid": "Q50397132",
+      "model": "Lexus HB",
+      "brand": null,
+      "year": "2009",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q50397132"
+    },
+    {
+      "qid": "Q126599001",
+      "model": "LOOK P24",
+      "brand": "Look",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q126599001"
+    },
+    {
+      "qid": "Q6685099",
+      "model": "Lotus 108",
+      "brand": "Lotus Cars",
+      "year": null,
+      "country": "United Kingdom",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q6685099"
+    },
+    {
+      "qid": "Q136121275",
+      "model": "Lucien Michard",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q136121275"
+    },
+    {
+      "qid": "Q138720468",
+      "model": "Lulu Bike",
+      "brand": "MyLuluBike",
+      "year": "2025",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q138720468"
+    },
+    {
+      "qid": "Q137270582",
+      "model": "Mando Footloose",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q137270582"
+    },
+    {
+      "qid": "Q139597253",
+      "model": "Marin Nicasio 1 (2025)",
+      "brand": "Marin Bikes",
+      "year": "2025",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q139597253"
+    },
+    {
+      "qid": "Q113335642",
+      "model": "Michaux bicycle - CnAM 14064",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q113335642"
+    },
+    {
+      "qid": "Q1715277",
+      "model": "Michaux-Perreaux steam velocipede",
+      "brand": "Pierre Michaux",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q1715277"
+    },
+    {
+      "qid": "Q6884416",
+      "model": "Miyata 310",
+      "brand": "Morita Miyata Corporation",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q6884416"
+    },
+    {
+      "qid": "Q105941395",
+      "model": "Monareta",
+      "brand": "Monark",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q105941395"
+    },
+    {
+      "qid": "Q117662487",
+      "model": "Oltre RC",
+      "brand": "Bianchi Bicycles",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q117662487"
+    },
+    {
+      "qid": "Q117662464",
+      "model": "Oltre RC Tour de France",
+      "brand": "Bianchi Bicycles",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q117662464"
+    },
+    {
+      "qid": "Q106233891",
+      "model": "Orbea Lobular",
+      "brand": "Orbea",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q106233891"
+    },
+    {
+      "qid": "Q106233912",
+      "model": "Orbea Orca",
+      "brand": "Orbea",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q106233912"
+    },
+    {
+      "qid": "Q140571193",
+      "model": "Ordonnanzrad 05",
+      "brand": "Ralf Bohle",
+      "year": "1905",
+      "country": "Switzerland",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q140571193"
+    },
+    {
+      "qid": "Q136825514",
+      "model": "Passenger Bike",
+      "brand": "Mäx & Mäleon",
+      "year": null,
+      "country": "Germany",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q136825514"
+    },
+    {
+      "qid": "Q444741",
+      "model": "Pedersen bicycle",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q444741"
+    },
+    {
+      "qid": "Q1554036",
+      "model": "penny-farthing",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q1554036"
+    },
+    {
+      "qid": "Q64828034",
+      "model": "Pibal",
+      "brand": "Peugeot",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q64828034"
+    },
+    {
+      "qid": "Q121338471",
+      "model": "Pinarello Dogma F10",
+      "brand": "Pinarello",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q121338471"
+    },
+    {
+      "qid": "Q131932883",
+      "model": "Pinarello Grevil",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q131932883"
+    },
+    {
+      "qid": "Q112660836",
+      "model": "Primera Gent",
+      "brand": "Stevens Bikes",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q112660836"
+    },
+    {
+      "qid": "Q45108258",
+      "model": "Progress",
+      "brand": "KhVZ",
+      "year": "1950",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q45108258"
+    },
+    {
+      "qid": "Q811141",
+      "model": "Prone bicycle",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q811141"
+    },
+    {
+      "qid": "Q10616451",
+      "model": "Q10616451",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q10616451"
+    },
+    {
+      "qid": "Q110521628",
+      "model": "Q110521628",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q110521628"
+    },
+    {
+      "qid": "Q11958467",
+      "model": "Q11958467",
+      "brand": "Den Beste Sykkel",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q11958467"
+    },
+    {
+      "qid": "Q11964215",
+      "model": "Q11964215",
+      "brand": "Den Beste Sykkel",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q11964215"
+    },
+    {
+      "qid": "Q12006664",
+      "model": "Q12006664",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q12006664"
+    },
+    {
+      "qid": "Q136172432",
+      "model": "Q136172432",
+      "brand": null,
+      "year": null,
+      "country": "Kosovo",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q136172432"
+    },
+    {
+      "qid": "Q16657588",
+      "model": "Q16657588",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q16657588"
+    },
+    {
+      "qid": "Q2207542",
+      "model": "Q2207542",
+      "brand": null,
+      "year": null,
+      "country": "Netherlands",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q2207542"
+    },
+    {
+      "qid": "Q2493979",
+      "model": "Q2493979",
+      "brand": null,
+      "year": null,
+      "country": "Belgium",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q2493979"
+    },
+    {
+      "qid": "Q2555353",
+      "model": "Q2555353",
+      "brand": null,
+      "year": null,
+      "country": "Netherlands",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q2555353"
+    },
+    {
+      "qid": "Q30897036",
+      "model": "Q30897036",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q30897036"
+    },
+    {
+      "qid": "Q3962160",
+      "model": "Q3962160",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q3962160"
+    },
+    {
+      "qid": "Q4336964",
+      "model": "Q4336964",
+      "brand": "Šiaulių dviračių gamykla",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q4336964"
+    },
+    {
+      "qid": "Q48326558",
+      "model": "Q48326558",
+      "brand": "Minsk motorcycle-bicycle factory",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q48326558"
+    },
+    {
+      "qid": "Q97204225",
+      "model": "Q97204225",
+      "brand": "Antonov",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q97204225"
+    },
+    {
+      "qid": "Q97310478",
+      "model": "Q97310478",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q97310478"
+    },
+    {
+      "qid": "Q105337425",
+      "model": "QR-pyörä",
+      "brand": null,
+      "year": "2020",
+      "country": "Finland",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q105337425"
+    },
+    {
+      "qid": "Q126942929",
+      "model": "Radrouten in Italien",
+      "brand": null,
+      "year": null,
+      "country": "Italy",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q126942929"
+    },
+    {
+      "qid": "Q7286893",
+      "model": "Raleigh Burner",
+      "brand": "Raleigh Bicycle Company",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q7286893"
+    },
+    {
+      "qid": "Q16987990",
+      "model": "Raleigh Chopper",
+      "brand": "Raleigh Bicycle Company",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q16987990"
+    },
+    {
+      "qid": "Q7286921",
+      "model": "Raleigh Grifter",
+      "brand": "Raleigh Bicycle Company",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q7286921"
+    },
+    {
+      "qid": "Q7286944",
+      "model": "Raleigh Strika",
+      "brand": "Raleigh Bicycle Company",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q7286944"
+    },
+    {
+      "qid": "Q7286948",
+      "model": "Raleigh Twenty",
+      "brand": "Raleigh Bicycle Company",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q7286948"
+    },
+    {
+      "qid": "Q42847642",
+      "model": "Raleigh Winkie",
+      "brand": "Raleigh Bicycle Company",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q42847642"
+    },
+    {
+      "qid": "Q125968405",
+      "model": "Rijwielfabriek Karel Lengs & Zonen",
+      "brand": null,
+      "year": "1898",
+      "country": "Netherlands",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q125968405"
+    },
+    {
+      "qid": "Q9313125",
+      "model": "Romet bicycles",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q9313125"
+    },
+    {
+      "qid": "Q9313119",
+      "model": "Romet Flaming",
+      "brand": "Romet",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q9313119"
+    },
+    {
+      "qid": "Q9313123",
+      "model": "Romet Gil",
+      "brand": "Romet",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q9313123"
+    },
+    {
+      "qid": "Q9322494",
+      "model": "Romet Mistral",
+      "brand": "Romet",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q9322494"
+    },
+    {
+      "qid": "Q9313149",
+      "model": "Romet Sport",
+      "brand": "Romet",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q9313149"
+    },
+    {
+      "qid": "Q9322503",
+      "model": "Romet Wagant",
+      "brand": "Romet",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q9322503"
+    },
+    {
+      "qid": "Q9322504",
+      "model": "Romet Wigry 3",
+      "brand": "Romet",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q9322504"
+    },
+    {
+      "qid": "Q130210977",
+      "model": "Saltafoss",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q130210977"
+    },
+    {
+      "qid": "Q9336040",
+      "model": "Shimano Tourney",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q9336040"
+    },
+    {
+      "qid": "Q10000083",
+      "model": "SOBI 20",
+      "brand": "Velamos",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q10000083"
+    },
+    {
+      "qid": "Q126689473",
+      "model": "Solar-powered bicycle",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q126689473"
+    },
+    {
+      "qid": "Q14368450",
+      "model": "Spartamet",
+      "brand": "Sparta B.V.",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q14368450"
+    },
+    {
+      "qid": "Q136358189",
+      "model": "Stance Bike",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q136358189"
+    },
+    {
+      "qid": "Q111703171",
+      "model": "Statue Praplečka",
+      "brand": null,
+      "year": null,
+      "country": "Czech Republic",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q111703171"
+    },
+    {
+      "qid": "Q136358190",
+      "model": "Stehrad",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q136358190"
+    },
+    {
+      "qid": "Q120170803",
+      "model": "Surly Long Haul Trucker",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q120170803"
+    },
+    {
+      "qid": "Q7656051",
+      "model": "Swift Folder",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q7656051"
+    },
+    {
+      "qid": "Q105421652",
+      "model": "The Souplette",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q105421652"
+    },
+    {
+      "qid": "Q125097323",
+      "model": "The Vrigstad bike",
+      "brand": "Fredrik Runstedt",
+      "year": "1868",
+      "country": "Sweden",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q125097323"
+    },
+    {
+      "qid": "Q7801944",
+      "model": "Tikit",
+      "brand": "Bike Friday",
+      "year": null,
+      "country": "United States",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q7801944"
+    },
+    {
+      "qid": "Q136825559",
+      "model": "Transporter Bike (Mäx & Mäleon)",
+      "brand": "Mäx & Mäleon",
+      "year": null,
+      "country": "Germany",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q136825559"
+    },
+    {
+      "qid": "Q102234496",
+      "model": "Trek FX Sport Carbon 4",
+      "brand": "Trek Bicycle Corporation",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q102234496"
+    },
+    {
+      "qid": "Q9364553",
+      "model": "Ukraine",
+      "brand": "KhVZ",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q9364553"
+    },
+    {
+      "qid": "Q30963520",
+      "model": "V-901",
+      "brand": "KhVZ",
+      "year": null,
+      "country": "Soviet Union",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q30963520"
+    },
+    {
+      "qid": "Q28707755",
+      "model": "V-902",
+      "brand": "LMZ",
+      "year": null,
+      "country": "Soviet Union",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q28707755"
+    },
+    {
+      "qid": "Q16645287",
+      "model": "Vallabici",
+      "brand": null,
+      "year": null,
+      "country": "Spain",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q16645287"
+    },
+    {
+      "qid": "Q99454934",
+      "model": "VanMoof Electrified S2",
+      "brand": "VanMoof",
+      "year": "2019",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q99454934"
+    },
+    {
+      "qid": "Q99454942",
+      "model": "VanMoof Electrified X2",
+      "brand": "VanMoof",
+      "year": "2019",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q99454942"
+    },
+    {
+      "qid": "Q99432532",
+      "model": "VanMoof S3",
+      "brand": "VanMoof",
+      "year": "2020",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q99432532"
+    },
+    {
+      "qid": "Q99454675",
+      "model": "VanMoof Smart S",
+      "brand": "VanMoof",
+      "year": "2018",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q99454675"
+    },
+    {
+      "qid": "Q99454678",
+      "model": "VanMoof Smart X",
+      "brand": "VanMoof",
+      "year": "2018",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q99454678"
+    },
+    {
+      "qid": "Q99432826",
+      "model": "VanMoof X3",
+      "brand": "VanMoof",
+      "year": "2020",
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q99432826"
+    },
+    {
+      "qid": "Q135684463",
+      "model": "Velo de transport",
+      "brand": null,
+      "year": null,
+      "country": "Burundi",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q135684463"
+    },
+    {
+      "qid": "Q3501938",
+      "model": "Velocar",
+      "brand": "Mochet",
+      "year": null,
+      "country": "France",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q3501938"
+    },
+    {
+      "qid": "Q1553808",
+      "model": "Wasserfahrrad",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q1553808"
+    },
+    {
+      "qid": "Q8032161",
+      "model": "wooden bicycle",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q8032161"
+    },
+    {
+      "qid": "Q111732181",
+      "model": "yellow bicycle",
+      "brand": null,
+      "year": "2018",
+      "country": "Czech Republic",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q111732181"
+    },
+    {
+      "qid": "Q8071804",
+      "model": "Zigo",
+      "brand": null,
+      "year": null,
+      "country": "United States",
+      "wikidata_url": "https://www.wikidata.org/wiki/Q8071804"
+    },
+    {
+      "qid": "Q134720020",
+      "model": "ZMV Kova 215 A",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q134720020"
+    },
+    {
+      "qid": "Q134984310",
+      "model": "Zwift Ride Smart Frame",
+      "brand": null,
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q134984310"
+    },
+    {
+      "qid": "Q248191",
+      "model": "Zündapp ZD 10",
+      "brand": "Zündapp",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q248191"
+    },
+    {
+      "qid": "Q248194",
+      "model": "Zündapp ZD 50 TS",
+      "brand": "Zündapp",
+      "year": null,
+      "country": null,
+      "wikidata_url": "https://www.wikidata.org/wiki/Q248194"
+    }
+  ]
+}
