@@ -35,12 +35,12 @@ from .equipment_photos_finder import find_equipment_photos  # noqa: E402
 from .equipment_review_finder import find_equipment_review  # noqa: E402
 from .bike_parser import parse_free_text  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
-from .store import (  # noqa: E402
-    init_store, save_search, get_search_by_query, find_bikes_by_brand,
-    find_bike_by_brand_model, find_offer_prices,
+from .store import init_store, find_offer_prices  # noqa: E402
+from .repository import (  # noqa: E402
+    save_search, get_search_by_query, find_bikes_by_brand, find_bike_by_brand_model,
     save_bike_details, get_bike_details,
 )
-from .models import init_db  # noqa: E402
+from .models import init_db, verify_schema  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,6 +55,10 @@ async def lifespan(app: FastAPI):
     init_cache()
     init_store()
     init_db()
+    # Refuse to start on a half-migrated database. Without this the ORM cache
+    # helpers swallow the resulting OperationalErrors as "non-fatal" and the
+    # app serves traffic with search/details persistence silently dead.
+    verify_schema()
     yield
     close_cache()
 
