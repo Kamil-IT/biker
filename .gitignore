@@ -18,3 +18,8 @@ obsidian/bike-memory/
 
 # Stray empty scratch file
 backend/dict
+
+# Transient SQLite WAL/SHM for the TODO-019 parity fixture
+backend/tests/fixtures/*.db-shm
+backend/tests/fixtures/*.db-wal
+backend/tests/__pycache__/

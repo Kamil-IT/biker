@@ -7,8 +7,21 @@ cd backend
 python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env   # then edit .env with your real ANTHROPIC_API_KEY
+python scripts/migrate_bike_details.py   # REQUIRED on an existing cache.db — see note below
 uvicorn app.main:app --reload --port 8000
 ```
+
+> **Run the migration before starting the app on a pre-existing `cache.db`.** `init_db()` uses
+> SQLAlchemy's `create_all()`, which creates missing tables but never `ALTER`s an existing one — so an
+> older `bike_results` table keeps its old columns and gains neither `search_id` nor `position`.
+> `repository.save_search` then raises `OperationalError` on every write. Nothing is cached, the
+> DB-first search branch never hits, and **every search runs the full AI pipeline**. `repository`
+> detects this specific failure and logs it at **ERROR** naming the remedy, so it no longer blends
+> into routine non-fatal cache warnings — but that is a detector, not a fix. See
+> [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md) for how to verify.
+>
+> The same script also repairs placeholder (all-lowercase) brand casing left by earlier builds, on
+> **every** run — no `--force` needed — as long as `search_cache` still exists.
 
 ```bash
 # In a second terminal:
@@ -16,6 +29,12 @@ python scripts/test_search.py   # smoke-test POST /v1/bike/search
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
 python scripts/test_review.py   # smoke-test POST /v1/bike/review
 python scripts/test_offer.py    # smoke-test POST /v1/bike/offer
+```
+
+```bash
+# One-off: backfill legacy blob bike details into the ORM tables (idempotent)
+python scripts/migrate_bike_details.py
+pytest scripts/test_details_parity.py -v   # blob vs ORM read parity
 ```
 
 ## Category-Scoring Prompt Eval
@@ -77,20 +96,57 @@ wraps this for quick reuse. Use it for ad-hoc prompt iteration; use the pytest
 
 ## Follow-up cache tables
 
-Two queryable SQLite tables (in the same `cache.db`, created on startup by `app/store.py`) sit **on top of** the generic response cache (`app/cache.py`). They let follow-up requests be served without any web/Claude call:
+Two queryable layers (in the same `cache.db`) sit **on top of** the generic response cache (`app/cache.py`). Both are now normalised SQLAlchemy tables written by `app/repository.py`. They let follow-up requests be served without any web/Claude call:
 
-| Table | Key | Stores | TTL |
-|-------|-----|--------|-----|
-| `search_cache` | normalised enriched `query` | JSON list of `BikeResult` | 24 h |
-| `bike_details_cache` | `(company, model)` | `description`, `components`, `photos` (JSON) | 30 days |
+| Layer | Tables | Key | TTL |
+|-------|--------|-----|-----|
+| Search | `searches` + `bike_results` + `accessories` | `searches.query` — the `norm()`'d enriched query | 24 h |
+| Details | `bikes` + `bike_details` + `bike_detail_photos` | `bikes.(brand_norm, model_norm)` — `.strip().lower()` of brand+model | 30 days |
+
+Both reference the shared `bikes` identity row, so a bike found by search and a bike with cached details are the same row.
 
 - Both are indexed on their key columns and upsert on conflict (a re-run refreshes the entry).
-- Reads check the row's `time_stored + ttl`; a stale row is treated as a miss (never served).
-- `search_cache` is also queryable **by attribute** — `find_bikes_by_brand(brand)` scans fresh cached searches and returns de-duplicated bikes of that brand, powering `GET /v1/bike/search-cache?brand=`.
+- Freshness: searches check `searches.created_at + ttl_seconds`; details check `bike_details.updated_at + ttl_seconds`. A stale row is treated as a miss (never served).
+- Search results carry an explicit **`position`** — the 5 bikes are allocated by score weight, so their order is meaningful, and a row set (unlike the old JSON blob) does not preserve it for free. Reads order by `position`.
+- Searches are also queryable **by attribute** — `find_bikes_by_brand(brand)` returns de-duplicated bikes of that brand across fresh cached searches, powering `GET /v1/bike/search-cache?brand=`.
 - Writes are best-effort: a cache-table failure is logged but never breaks the underlying request.
 - This layer is **additive** — the generic per-endpoint cache is unchanged.
 
 The follow-up read endpoints are [`GET /v1/bike/search-cache`](#get-v1bikesearch-cache) and [`GET /v1/bike/details-cache`](#get-v1bikedetails-cache).
+
+### Details storage — normalised ORM tables
+
+Bike details used to live in a `bike_details_cache` JSON-blob table in `app/store.py`. That half now goes through `app/repository.py` and the normalised ORM tables (TODO-019); the response payload is byte-identical, so the frontend is unaffected.
+
+- `bikes` is the shared identity row — the same row backs search results and offers, so `brand`/`model` are stored with their **real casing**, never normalised. They are the single source of display casing for search results: a stored value equal to its own normalised form is treated as a **placeholder** (the old details blob keyed on `strip().lower()`, so every row it seeded looks like that) and is upgraded by the first caller supplying real casing. The rule is monotonic — an all-lowercase value never overwrites real casing — so it cannot oscillate. Without it, every brand that had been through the details cache would render as `cannondale` rather than `Cannondale`.
+- Lookup goes through the normalised companion columns **`brand_norm` / `model_norm`**, populated by `models.norm()` (Python `.strip().lower()`) via a `@validates("brand", "model")` handler on `Bike` — which fires on construction *and* on later assignment, though not on a bulk `query().update()` — and constrained by `UNIQUE(brand_norm, model_norm)`. Lookups match those columns exactly, so `"Trek"`/`"Marlin 5"` and `"trek"`/`"marlin 5"` resolve to the same row — matching what the blob cache's `strip().lower()` key achieved. A save reuses an existing identity rather than creating a second one.
+- **Do not replace this with SQL `lower()`.** SQLite's built-in `lower()` is ASCII-only and Python's is not; they diverge only when an **uppercase non-ASCII** character is involved — `RIESE & MÜLLER` lowercases to `riese & mÜller` in SQLite but `riese & müller` in Python, and `Škoda` stays `Škoda` in SQLite against Python's `škoda`. The canonical spelling `Riese & Müller` is unaffected, which is what makes this easy to miss. When it does hit, the lookup misses and `save_bike_details` mints a duplicate `bikes` identity — precisely the case-split problem this migration exists to fix.
+- The response echoes the **caller's** casing, not the stored row's — same as the blob path did.
+- `photos` are rows in `bike_detail_photos` ordered by `display_order`, not a JSON array. Zero rows deserialise back to `photos: []`.
+- `description` and `components` remain JSON columns on `bike_details`.
+- Re-saving an unchanged row refreshes its TTL, because `updated_at` carries `onupdate=now` — the same behaviour the blob upsert had when it rewrote `time_stored`.
+
+See [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md) for the full schema and what is still pending (search).
+
+#### `scripts/migrate_bike_details.py`
+
+One-off backfill that copies every `bike_details_cache` row into `bikes` + `bike_details` + `bike_detail_photos`, preserving each row's real age (`time_stored` → `created_at`/`updated_at`, `ttl` → `ttl_seconds`) and the original photo ordering (array index → `display_order`). It also brings `bikes` up to the current schema: adds `brand_norm` / `model_norm` if absent and backfills them for **every pre-existing `bikes` row** (not just the ones it creates — older rows would otherwise be invisible to the normalised lookup and get duplicated on the next save), merges `bikes` rows that share a normalised identity, creates the `uq_bike_brand_model_norm` unique index, and removes the test-script leftovers (`bike_results` / `accessories` rows, and any `bikes` row nothing references).
+
+```bash
+cd backend
+python scripts/migrate_bike_details.py                # idempotent — re-running is a no-op
+python scripts/migrate_bike_details.py --force        # rebuild details rows that already exist
+python scripts/migrate_bike_details.py --drop-legacy  # also DROP TABLE bike_details_cache
+python scripts/migrate_bike_details.py --db other.db  # operate on a different SQLite file
+```
+
+It is importable too — `migrate(db_path=None, drop_blob_table=False, force=False, verbose=True) -> dict` returns a stats dict (rows migrated, photos written, rows merged, leftovers deleted, plus `blob_tables_dropped`, a **list of dropped table names**). Dropping the legacy blob tables is opt-in from both entry points — `migrate(drop_blob_table=True)` or `--drop-legacy` — so a default call from either keeps them.
+
+A bike that already has a `bike_details` row is left alone, so the default run is safe to repeat. Dropping the legacy blob tables (`bike_details_cache`, `search_cache`) is deliberately **not** part of a default run — the parity test needs to read the blob tables alongside the ORM ones. Pass `--drop-legacy` once parity is green.
+
+#### `scripts/test_details_parity.py`
+
+Pytest regression for the ORM read path (`pytest scripts/test_details_parity.py -v`). For each cached bike it reads the same record through the legacy blob path and the ORM path and asserts the two `BikeDetailsResponse` objects are equal field for field — `company`/`model` casing echo, full `description`, the whole `components` tree including nested `SpecItem` ordering, and `photos` in the same order — plus a forced-stale row returning `None` from both. It runs against a **copy** of the pre-migration `cache.db` in the scratchpad (override with `TODO019_SNAPSHOT_DB`), so staleness can be forced without touching real data, and it carries its own ~15-line blob reader rather than importing the removed `store` helpers, so it stays runnable after the cutover.
 
 ## Search Cache
 
@@ -99,17 +155,18 @@ The follow-up read endpoints are [`GET /v1/bike/search-cache`](#get-v1bikesearch
 | # | Step | Cost | Condition |
 |---|------|------|-----------|
 | 1 | Generic response cache (`app/cache.py`) | 0 outbound calls | Exact normalised match on the full request (every filter field) |
-| 2 | **Brand+model DB lookup** (`app/store.py`) | 0 outbound calls | `brand` **and** `model` both provided, and a fresh `search_cache` row holds that bike |
+| 2 | **Brand+model DB lookup** (`app/repository.py`) | 0 outbound calls | `brand` **and** `model` both provided, and a fresh cached search holds that bike |
 | 3 | AI pipeline | 11 + N calls | Everything else — a miss at 1 and 2 |
 
-Step 2 is the addition. `find_bike_by_brand_model(brand, model)` scans `search_cache`, skips rows past their 24 h TTL, and returns every de-duplicated bike whose normalised brand **and** model match. A hit **short-circuits** — the AI pipeline never runs. The response shape is identical (`BikeSearchResponse`); only `len(bikes)` differs, since it returns just the bikes that actually match rather than padding to 5. A miss, a stale row, or an all-filtered-out result falls through to step 3 unchanged.
+Step 2 is the addition. `find_bike_by_brand_model(brand, model)` scans cached searches, skips rows past their 24 h TTL, and returns every de-duplicated bike whose normalised brand **and** model match. A hit **short-circuits** — the AI pipeline never runs. The response shape is identical (`BikeSearchResponse`); only `len(bikes)` differs, since it returns just the bikes that actually match rather than padding to 5. A miss, a stale row, or an all-filtered-out result falls through to step 3 unchanged.
 
 ### Which filters are honoured on the DB path
 
 **Only `price_max`.** It is gated by joining the generic cache's offer rows:
 
 - `find_offer_prices(brand, model)` reads every cached response from `/v1/bike/offer`, `/v1/bike/ceneo`, `/v1/bike/decathlon` and `/v1/bike/used` for that bike, and parses each offer's `price` string via `app/price_parse.py`.
-- The join key is `_normalise({"company": brand, "model": model})` — imported from `cache.py` so the lookup key is byte-identical to how offer rows were written. `store.py`'s own `_norm()` (strip + lowercase) produces the same normalisation, so no extra mapping is needed.
+- The join key is `_normalise({"company": brand, "model": model})` — imported from `cache.py` so the lookup key is byte-identical to how offer rows were written. `models.norm()` (strip + lowercase) produces the same normalisation, so no extra mapping is needed.
+- `find_offer_prices` is the **one helper still in `app/store.py`** (now ~54 lines; its `init_store()` creates no tables and survives only as the app's startup hook), because it reads the raw `cache` table rather than an ORM table. `bike_offers` exists in the schema but is empty and unpopulated — see [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md).
 - **Cheapest across all sources** gates the filter: `min()` of every parseable price from all four endpoints, new and used alike.
 - **Lenient when no price is parseable.** A bike with no offer rows — or whose prices are all sentinels like `'Price on request'` — passes the filter. Only ~21 % of cached bikes have a matching offer row, so strict filtering would discard the great majority of hits. The tradeoff: an over-budget bike may be returned unverified.
 
@@ -119,9 +176,9 @@ This is a deliberate, documented limitation, not an oversight. `BikeResult` stor
 
 ### A DB hit deliberately does not warm the generic cache
 
-`set_cached` is never called on the step-2 path. The generic `cache` table has **no `ttl` column** and `get_cached` never checks age — writing a DB-sourced result there would pin a 24 h-TTL `search_cache` answer permanently, outliving the very TTL that makes it safe to serve. The same no-TTL property is why the joined offer prices never expire either: a stale scraped price can gate `price_max` indefinitely.
+`set_cached` is never called on the step-2 path. The generic `cache` table has **no `ttl` column** and `get_cached` never checks age — writing a DB-sourced result there would pin a 24 h-TTL cached-search answer permanently, outliving the very TTL that makes it safe to serve. The same no-TTL property is why the joined offer prices never expire either: a stale scraped price can gate `price_max` indefinitely.
 
-Note the offer cache's brand/model split does not always agree with `search_cache`'s — e.g. `('decathlon', 'rockrider st 100')` vs the offer row's `('rockrider', 'st 100')`. Those simply fail to join, and the lenient rule keeps the bike.
+Note the offer cache's brand/model split does not always agree with the search tables' — e.g. `('decathlon', 'rockrider st 100')` vs the offer row's `('rockrider', 'st 100')`. Those simply fail to join, and the lenient rule keeps the bike.
 
 `parse_price()` handles the real formats found in the cache: `zł` / `PLN` / `zl` currency tokens, regular/NBSP/narrow-NBSP thousands separators, and both `,` and `.` decimals (with both present the **last** separator is the decimal point; a lone separator is decimal only when exactly 2 digits follow). It returns `None` — never raises — for anything with no digits.
 
@@ -163,20 +220,20 @@ Content-Type: application/json
 All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M, Max price: 6000 PLN — comfortable bike…"` and passes it through the existing scoring and bike-finding pipeline. All fields participate in the SQLite cache key, so two searches that differ only in a filter return distinct results.
 
 **Flow:**
-0. SQLite reads only — generic cache, then (when `brand` **and** `model` are both given) the `search_cache` brand+model lookup with its `price_max` offer join. **A hit at either step returns immediately, making zero outbound HTTP calls.** Steps 1–2 run only on a miss. See [Search Cache](#search-cache)
+0. SQLite reads only — generic cache, then (when `brand` **and** `model` are both given) the cached-search brand+model lookup with its `price_max` offer join. **A hit at either step returns immediately, making zero outbound HTTP calls.** Steps 1–2 run only on a miss. See [Search Cache](#search-cache)
 1. `POST https://api.anthropic.com/v1/messages` × 11 — score each bike category (parallel via `asyncio.gather`)
 2. `POST https://api.anthropic.com/v1/messages` × N — find real bikes per top category (parallel)
 
-On the happy path the result is also written to the queryable `search_cache` table (see [Follow-up cache tables](#follow-up-cache-tables)). A DB-served result is **not** written back to the generic cache — see [Search Cache](#search-cache) for why.
+On the happy path the result is also written to the queryable `searches` + `bike_results` tables via `repository.save_search`, each bike keeping its score-weighted rank in `position` (see [Follow-up cache tables](#follow-up-cache-tables)). A DB-served result is **not** written back to the generic cache — see [Search Cache](#search-cache) for why.
 
 ---
 
 ### `GET /v1/bike/search-cache`
 
-Follow-up read served **purely from the `search_cache` table** — makes **no** web/Claude call. Two modes:
+Follow-up read served **purely from the search tables** (`searches` + `bike_results`, read via `app/repository.py`) — makes **no** web/Claude call. Two modes:
 
-- `?query=<enriched query>` — exact (case-insensitive, trimmed) repeat of a prior search. Returns 404 if not cached or the entry is older than its 24 h TTL.
-- `?brand=<brand>` — lookup-by-attribute: every cached bike of that brand across all fresh cached searches (de-duplicated by brand+model).
+- `?query=<enriched query>` — exact (case-insensitive, trimmed) repeat of a prior search, matched on `searches.query`. Returns 404 if not cached or the entry is older than its 24 h TTL. Bikes come back in their original score-weighted order (`ORDER BY bike_results.position`).
+- `?brand=<brand>` — lookup-by-attribute: every cached bike of that brand across all fresh cached searches (de-duplicated by brand+model). **`brand` is matched exactly** (against `bikes.brand_norm`, so casing and surrounding whitespace are ignored) — a partial brand name will not match. This matches the behaviour this endpoint has always shipped: the live implementation in `store.py` did an exact normalised compare too. The ORM's previously unused `ilike` substring variant was never wired to an endpoint, so no caller loses anything.
 
 ```http
 GET http://localhost:8000/v1/bike/search-cache?query=Brand:%20Trek%20%E2%80%94%20trail%20riding
@@ -200,7 +257,7 @@ Returns 422 if neither `query` nor `brand` is provided.
 
 ### `GET /v1/bike/details-cache`
 
-Follow-up details lookup served **purely from the `bike_details_cache` table** — makes **no** web/Claude call. Returns 404 if the `(company, model)` pair is not cached or the entry is older than its 30-day TTL.
+Follow-up details lookup served **purely from the ORM details tables** (`bikes` + `bike_details` + `bike_detail_photos`, read via `app/repository.py`) — makes **no** web/Claude call. Returns 404 if the `(company, model)` pair is not cached or the entry is older than its 30-day TTL. The `company`/`model` match is case-insensitive, and the response echoes the casing you asked with.
 
 ```http
 GET http://localhost:8000/v1/bike/details-cache?company=Canyon&model=Grizl%20CF%207%20ESC
@@ -228,7 +285,7 @@ Content-Type: application/json
 
 **Response includes:** `description` (4–5 sentence plain-text overview), `components` (category tree), `photos` (up to 8 manufacturer product image URLs).
 
-On the happy path the result is also written to the queryable `bike_details_cache` table (see [Follow-up cache tables](#follow-up-cache-tables)).
+On the happy path the result is also written to the queryable ORM details tables via `repository.save_bike_details` (see [Details storage — normalised ORM tables](#details-storage--normalised-orm-tables)). A cached repeat is served from those tables with **zero outbound calls**; the lookup is case-insensitive and the response echoes the caller's casing.
 
 **Flow (all three run in parallel via `asyncio.gather`):**
 1. `POST https://api.anthropic.com/v1/messages` × 8 — Claude Haiku with `web_search_20250305` tool, one focused search per component category (sequential): Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories
