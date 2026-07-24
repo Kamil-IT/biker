@@ -1,9 +1,11 @@
 # Bike brand & model dataset
 
-`docs/bike-brands-models.json` — **1,553 brands** and **4,599 models**, aggregated from
+`docs/bike-brands-models.json` — **1,550 brands** and **4,055 models**, aggregated from
 openly-licensed or publicly-published sources on 2026-07-23.
 
-Per-source raw files live in `docs/sources/` and are regenerable independently.
+Per-source raw files live in `docs/sources/` and are regenerable independently. The merged
+file is built from them by `scripts/build_bike_dataset.py`, which also normalises the model
+titles — never hand-edit the merged file, re-run the script.
 
 ## What this is not
 
@@ -28,12 +30,36 @@ For scale: global production is ~130M bikes/year. The largest commercial catalog
 | Source | Provides | Count | Licence |
 |---|---|---:|---|
 | Bike Index API v3 | brands | 1,495 | Software AGPL-3.0; **data licence unstated** |
-| Shopify storefront `/products.json` | models | 3,188 | Public storefront JSON |
-| Specialized PL product sitemap | models | 1,252 | Public sitemap, URLs only |
-| Wikidata SPARQL | models | 159 | **CC0 1.0** |
+| Shopify storefront `/products.json` | models | 2,661 | Public storefront JSON |
+| Specialized PL product sitemap | models | 1,251 | Public sitemap, URLs only |
+| Wikidata SPARQL | models | 143 | **CC0 1.0** |
 
-Only 95 of the 1,553 brands carry any models — the Bike Index list is a brand *gazetteer*, and
+Only 91 of the 1,550 brands carry any models — the Bike Index list is a brand *gazetteer*, and
 model data was obtainable for a small subset of it.
+
+## Normalisation
+
+Raw collector output was not usable as-is. `scripts/build_bike_dataset.py` applies these
+passes and records the counts under `normalisation` in the output file:
+
+| Pass | Rows | What it fixes |
+|---|---:|---|
+| `variants_collapsed` | 1,079 | Colour/spec variants sharing a base title (`4130 All-Road - Alpine Bloom`, `- Root Beer` → `4130 All-Road`) |
+| `brand_prefix_stripped` | 815 | Model name repeating the brand (`Bombtrack Arise` → `Arise`) |
+| `year_lifted` | 297 | `(2026)` in the title moved into the `year` field |
+| `dropped_component` | 70 | Parts/apparel that leaked past the collector filter |
+| `bundle_suffix_cut` | 32 | Promo bundles (`XP Trike2 750 + FREE Cargo Package…`) |
+| `generic_lead_dropped` | 22 | Leading generic segment (`Bicycle - R1 - Pebble` → `R1 - Pebble`) |
+| `dropped_qid` | 16 | Wikidata rows whose label was an unresolved `Q…` id |
+| `region_tag_stripped` | 12 | Trailing locale tag (`… eTrike [CA]`) |
+
+Rows whose title changed keep the original under `raw_title`. Collapsed rows carry a
+`variants` count.
+
+Note on the component filter: the **title wins over `product_type`**. Some storefronts file
+every product under a bike-ish type — State Bicycle Co. lists Fizik saddles as
+`product_type: "Bicycles"` — so a bike-ish type cannot clear a part-ish title. Frameset kits
+are exempt and kept with `confidence: "low"`.
 
 ## Sources deliberately excluded
 
@@ -74,13 +100,18 @@ none of the catalogue sources expose model year in a URL or product title.
 
 ## Known limitations
 
-- **Colour and size variants inflate model counts.** Some Shopify shops (Lectric, Squid, Surly)
-  publish each variant as a separate product. Rows are deduped on `(brand, model, source)`,
-  which collapsed 621 Specialized duplicates, but titles that differ by a colour word survive as
-  separate rows. Normalising titles to bare model names would need a further pass.
-- **173 rows are `confidence: "low"`** — overwhelmingly Specialized framesets and frame kits
-  (real named models, but not complete bikes), plus ~10 ambiguous slugs where Specialized reuses
-  a bike name for footwear (Hellga, Ruze).
+- **Colour variants are only partly collapsed.** The collapse keys on a `" - "` or `"(…)"`
+  separator, so `4130 All-Road - Root Beer` merges but `XP Trike2 750 Dusk Blue` does not —
+  the colour is embedded with no separator. **~200 rows (4%) still contain a colour word**,
+  concentrated in Salsa (55), Lectric (42) and Specialized (25). Fixing this needs a colour
+  vocabulary, which was not attempted: some models legitimately contain a colour word, so a
+  generic strip would corrupt real names.
+- **366 rows are `confidence: "low"`** — overwhelmingly framesets and frame kits (real named
+  models, but not complete bikes), plus ~10 ambiguous Specialized slugs where a bike name is
+  reused for footwear (Hellga, Ruze).
+- **Brand is the storefront's house brand, not the product's maker.** For multi-brand shops
+  this misattributes third-party goods; most such rows were components and are now dropped,
+  but the mapping is still wrong in principle.
 - **845 Specialized sitemap URLs were unusable** — they carry no model slug at all
   (`/pl/p/<id>` form), so no name is derivable without crawling the pages.
 - **Bike Index's data licence is unstated.** Fine for local lookups and brand normalisation;
@@ -92,8 +123,14 @@ none of the catalogue sources expose model year in a URL or product title.
 ## Regenerating
 
 Each `docs/sources/*.json` file is produced independently and records its own `source_url`,
-`licence` and `retrieved` date. Re-run a collector, then re-run the merge to rebuild
-`bike-brands-models.json`.
+`licence` and `retrieved` date. After refreshing any of them, rebuild the merged file:
+
+```bash
+python scripts/build_bike_dataset.py
+```
+
+The script is deterministic — same inputs give the same output — and re-validates the JSON it
+writes before exiting.
 
 ## Intended use
 
