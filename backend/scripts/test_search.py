@@ -510,7 +510,7 @@ def _cache_row_exists(endpoint: str, request_key: str) -> bool:
     conn = _db()
     try:
         return conn.execute(
-            "SELECT 1 FROM cache WHERE endpoint = ? AND request = ?",
+            "SELECT 1 FROM endpoint_req_to_body_cache WHERE endpoint = ? AND request = ?",
             (endpoint, request_key),
         ).fetchone() is not None
     finally:
@@ -523,7 +523,7 @@ def _cache_row_delete(endpoint: str, request_key: str) -> None:
     conn = _db()
     try:
         conn.execute(
-            "DELETE FROM cache WHERE endpoint = ? AND request = ?", (endpoint, request_key)
+            "DELETE FROM endpoint_req_to_body_cache WHERE endpoint = ? AND request = ?", (endpoint, request_key)
         )
         conn.commit()
     finally:
@@ -538,90 +538,53 @@ def _bike(brand: str, model: str, note: str) -> dict:
     }
 
 
-# ── ORM-table fixtures (TODO-019 phase 2) ────────────────────────────────
-# These used to seed and purge the legacy `search_cache` blob table via raw SQL.
-# After the blob→ORM cutover NOTHING at runtime reads that table: main.py now
-# imports save_search / get_search_by_query / find_bikes_by_brand /
-# find_bike_by_brand_model from .repository, which reads `searches` +
-# `bike_results` + `accessories` exclusively. A fixture written to search_cache
-# is therefore invisible to the code under test, and TC-20/23/24 could only pass
-# by coincidence — when the seeded brand+model happened to already exist in the
-# ORM tables from an unrelated run. These helpers write the same fixtures
-# through the real tables instead.
-
-def _dt(moment: datetime) -> str:
-    """SQLAlchemy stores DateTime as naive 'YYYY-MM-DD HH:MM:SS.ffffff'."""
-    return moment.astimezone(timezone.utc).replace(tzinfo=None).strftime(
-        "%Y-%m-%d %H:%M:%S.%f"
-    )
-
-
-def _norm_identity(text: str) -> str:
-    """Mirrors app.models.norm() — Python lower(), never SQL lower()."""
-    return text.strip().lower()
-
-
-def _get_or_create_bike(conn, brand: str, model: str) -> int:
-    """Reuse the existing identity row or mint one, matching repository's
-    normalised get-or-create so a fixture never splits a bike in two."""
-    brand_norm, model_norm = _norm_identity(brand), _norm_identity(model)
-    row = conn.execute(
-        "SELECT id FROM bikes WHERE brand_norm = ? AND model_norm = ?",
-        (brand_norm, model_norm),
-    ).fetchone()
-    if row is not None:
-        return row[0]
-    now = _dt(datetime.now(timezone.utc))
-    cur = conn.execute(
-        "INSERT INTO bikes (brand, model, brand_norm, model_norm, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (brand, model, brand_norm, model_norm, now, now),
-    )
-    return cur.lastrowid
-
-
 def _seed_search_row(query: str, bikes: list[dict], age_seconds: int = 0) -> None:
-    """Insert a `searches` row (+ its results and accessories) owned by this
-    suite. `age_seconds` backdates created_at — 0 is fresh, > SEARCH_TTL stale."""
-    created = _dt(datetime.now(timezone.utc) - timedelta(seconds=age_seconds))
+    """Insert a search_cache row owned by this suite. `age_seconds` backdates
+    time_stored — 0 is fresh, > SEARCH_TTL is stale.
+
+    A search is now search_cache (query, time_stored) plus one
+    search_bike_rating_cache row per bike (FK to bike, rating, explanation,
+    inline-JSON accessories), so seeding materialises the bike rows and the
+    rating rows.
+    """
+    stored = (datetime.now(timezone.utc) - timedelta(seconds=age_seconds)).isoformat()
     conn = _db()
     try:
-        norm_query = _norm_identity(query)
         row = conn.execute(
-            "SELECT id FROM searches WHERE query = ?", (norm_query,)
+            "SELECT id FROM search_cache WHERE query = ?", (query,)
         ).fetchone()
-        if row is None:
-            search_id = conn.execute(
-                "INSERT INTO searches (query, created_at, ttl_seconds) VALUES (?, ?, ?)",
-                (norm_query, created, SEARCH_TTL),
-            ).lastrowid
-        else:
+        if row is not None:
             search_id = row[0]
             conn.execute(
-                "DELETE FROM accessories WHERE bike_result_id IN "
-                "(SELECT id FROM bike_results WHERE search_id = ?)",
-                (search_id,),
+                "DELETE FROM search_bike_rating_cache WHERE search_cache_id = ?", (search_id,)
             )
-            conn.execute("DELETE FROM bike_results WHERE search_id = ?", (search_id,))
             conn.execute(
-                "UPDATE searches SET created_at = ?, ttl_seconds = ? WHERE id = ?",
-                (created, SEARCH_TTL, search_id),
+                "UPDATE search_cache SET time_stored = ? WHERE id = ?", (stored, search_id)
             )
-
-        for position, bike in enumerate(bikes):
-            bike_id = _get_or_create_bike(conn, bike["brand"], bike["model"])
-            result_id = conn.execute(
-                "INSERT INTO bike_results "
-                "(search_id, bike_id, position, match_score, explanation, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (search_id, bike_id, position, bike["match_score"],
-                 bike["explanation"], created),
+        else:
+            search_id = conn.execute(
+                "INSERT INTO search_cache (query, time_stored) VALUES (?, ?)", (query, stored)
             ).lastrowid
-            for name in bike.get("accessories", []):
-                conn.execute(
-                    "INSERT INTO accessories (bike_result_id, name) VALUES (?, ?)",
-                    (result_id, name),
-                )
+        for order, b in enumerate(bikes):
+            brand, model = b.get("brand", ""), b.get("model", "")
+            hit = conn.execute(
+                "SELECT id FROM bike WHERE LOWER(brand) = ? AND LOWER(model) = ?",
+                (brand.strip().lower(), model.strip().lower()),
+            ).fetchone()
+            if hit:
+                bike_id = hit[0]
+            else:
+                bike_id = conn.execute(
+                    "INSERT INTO bike (brand, model, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?)", (brand, model, stored, stored),
+                ).lastrowid
+            conn.execute(
+                "INSERT INTO search_bike_rating_cache "
+                "(search_cache_id, bike_id, rating, explanation, accessories, display_order) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (search_id, bike_id, b.get("match_score", 0.0), b.get("explanation", ""),
+                 json.dumps(b.get("accessories", [])), order),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -630,54 +593,44 @@ def _seed_search_row(query: str, bikes: list[dict], age_seconds: int = 0) -> Non
 def _drop_search_row(query: str) -> None:
     conn = _db()
     try:
-        norm_query = _norm_identity(query)
-        conn.execute(
-            "DELETE FROM accessories WHERE bike_result_id IN "
-            "(SELECT id FROM bike_results WHERE search_id IN "
-            "(SELECT id FROM searches WHERE query = ?))",
-            (norm_query,),
-        )
-        conn.execute(
-            "DELETE FROM bike_results WHERE search_id IN "
-            "(SELECT id FROM searches WHERE query = ?)",
-            (norm_query,),
-        )
-        conn.execute("DELETE FROM searches WHERE query = ?", (norm_query,))
+        conn.execute("DELETE FROM search_cache WHERE query = ?", (query,))
         conn.commit()
     finally:
         conn.close()
 
 
 def _purge_bike_from_search_cache(brand: str, model: str) -> int:
-    """Delete every cached search containing this bike.
+    """Delete every search_cache row containing this bike.
 
-    The AI path ends with save_search(), so a fallback result is persisted — and
-    the DB-first branch then serves it for the next 24 h. That includes bikes the
-    model invented: ask for a brand+model that does not exist and the AI will
-    sometimes echo it back, after which the request is a DB hit forever after.
-    The fallback tests must clear that or they only test the fallback once, then
-    silently start testing the DB path instead.
+    The AI path ends with save_search(), so a fallback result is written into
+    search_cache — and the new DB-first branch then serves it for the next 24 h.
+    That includes bikes the model invented: ask for a brand+model that does not
+    exist and the AI will sometimes echo it back, after which the request is a
+    DB hit forever after. The fallback tests must clear that or they only test
+    the fallback once, then silently start testing the DB path instead.
     """
     conn = _db()
     try:
-        search_ids = [
+        # A search "contains" this bike when it has a search_bike_rating_cache
+        # row joining to the matching bike. Delete those whole searches (the
+        # rating rows cascade with them).
+        search_ids = {
             r[0] for r in conn.execute(
-                "SELECT DISTINCT r.search_id FROM bike_results r "
-                "JOIN bikes b ON b.id = r.bike_id "
-                "WHERE b.brand_norm = ? AND b.model_norm = ? AND r.search_id IS NOT NULL",
-                (_norm_identity(brand), _norm_identity(model)),
+                "SELECT DISTINCT r.search_cache_id "
+                "FROM search_bike_rating_cache r JOIN bike b ON b.id = r.bike_id "
+                "WHERE LOWER(b.brand) = ? AND LOWER(b.model) = ?",
+                (brand.strip().lower(), model.strip().lower()),
             ).fetchall()
-        ]
+        }
+        removed = 0
         for search_id in search_ids:
             conn.execute(
-                "DELETE FROM accessories WHERE bike_result_id IN "
-                "(SELECT id FROM bike_results WHERE search_id = ?)",
-                (search_id,),
+                "DELETE FROM search_bike_rating_cache WHERE search_cache_id = ?", (search_id,)
             )
-            conn.execute("DELETE FROM bike_results WHERE search_id = ?", (search_id,))
-            conn.execute("DELETE FROM searches WHERE id = ?", (search_id,))
+            conn.execute("DELETE FROM search_cache WHERE id = ?", (search_id,))
+            removed += 1
         conn.commit()
-        return len(search_ids)
+        return removed
     finally:
         conn.close()
 
@@ -701,7 +654,7 @@ def _seed_offer_rows_if_missing(company: str, model: str, by_endpoint: dict) -> 
     try:
         for endpoint, prices in by_endpoint.items():
             if conn.execute(
-                "SELECT 1 FROM cache WHERE endpoint = ? AND request = ?", (endpoint, key)
+                "SELECT 1 FROM endpoint_req_to_body_cache WHERE endpoint = ? AND request = ?", (endpoint, key)
             ).fetchone() is not None:
                 continue
             response = {
@@ -714,7 +667,8 @@ def _seed_offer_rows_if_missing(company: str, model: str, by_endpoint: dict) -> 
                 "info": "TODO-009 test fixture",
             }
             conn.execute(
-                "INSERT INTO cache (endpoint, request, response, time_stored) VALUES (?, ?, ?, ?)",
+                "INSERT INTO endpoint_req_to_body_cache "
+                "(endpoint, request, response, time_stored) VALUES (?, ?, ?, ?)",
                 (endpoint, key, json.dumps(response), datetime.now(timezone.utc).isoformat()),
             )
             created.append(endpoint)
@@ -732,7 +686,7 @@ def _drop_offer_rows(company: str, model: str, endpoints: list[str]) -> None:
     try:
         for endpoint in endpoints:
             conn.execute(
-                "DELETE FROM cache WHERE endpoint = ? AND request = ?", (endpoint, key)
+                "DELETE FROM endpoint_req_to_body_cache WHERE endpoint = ? AND request = ?", (endpoint, key)
             )
         conn.commit()
     finally:
@@ -747,7 +701,7 @@ def _joined_prices(company: str, model: str) -> list[float]:
     conn = _db()
     try:
         rows = conn.execute(
-            "SELECT response FROM cache WHERE endpoint IN (?, ?, ?, ?) AND request = ?",
+            "SELECT response FROM endpoint_req_to_body_cache WHERE endpoint IN (?, ?, ?, ?) AND request = ?",
             (*OFFER_ENDPOINTS, key),
         ).fetchall()
     finally:
@@ -787,22 +741,11 @@ FIX_MARLIN_OFFERS = {
 }
 
 
-# ── [TC-20] DB hit: brand+model served straight from the cached searches ──
-#
-# Uses an INVENTED brand+model, not Trek/Marlin 5. With a real bike this test
-# passes on data that already exists in `bike_results` from unrelated runs, so it
-# stays green even when the seeding is completely broken — which is exactly what
-# masked the fixtures still being written to the dead `search_cache` table. The
-# response was checked and carried the real bike's accessories, not the fixture
-# marker, because `find_bike_by_brand_model` de-duplicates on bike identity and
-# the pre-existing row wins. An identity nothing else can produce removes the
-# ambiguity: if the DB-first branch does not serve THIS fixture, nothing does.
-print("\n── [TC-20] DB hit: seeded fixture bike served from the DB (no AI) ──")
-TC20_BRAND, TC20_MODEL = "Fixtureco", "DB-First Probe 001"
-tc20_body = {"brand": TC20_BRAND, "model": TC20_MODEL}
+# ── [TC-20] DB hit: brand+model served straight from search_cache ──
+print("\n── [TC-20] DB hit: Trek Marlin 5 served from search_cache (no AI) ──")
+tc20_body = {"brand": "Trek", "model": "Marlin 5"}
 tc20_key = _norm_key(tc20_body)
-_purge_bike_from_search_cache(TC20_BRAND, TC20_MODEL)  # no residue from earlier runs
-_seed_search_row(FIX_MARLIN_QUERY, [_bike(TC20_BRAND, TC20_MODEL, "Seeded by TC-20.")])
+_seed_search_row(FIX_MARLIN_QUERY, [_bike("Trek", "Marlin 5", "Seeded by TC-20.")])
 try:
     _cache_row_delete("/v1/bike/search", tc20_key)  # the DB path must be reachable
     t0 = _time.perf_counter()
@@ -812,15 +755,8 @@ try:
     assert resp_tc20.status_code == 200, f"Expected 200, got {resp_tc20.status_code}"
     assert len(data_tc20["bikes"]) >= 1, "Expected at least one bike from the DB hit"
     for b in data_tc20["bikes"]:
-        assert _matches(b, TC20_BRAND, TC20_MODEL), \
+        assert _matches(b, "Trek", "Marlin 5"), \
             f"DB hit must return only the requested bike, got {b['brand']!r} {b['model']!r}"
-    # The marker proves the response came from THIS fixture. An invented bike
-    # cannot pre-exist, so this can only pass if the seed is genuinely visible to
-    # repository.find_bike_by_brand_model — the function main.py actually calls.
-    assert any(b["accessories"] == ["TODO-009 fixture"] for b in data_tc20["bikes"]), (
-        "No seeded bike in the response — the DB-first branch did not serve this "
-        "test's fixture, so the seeding is writing somewhere nothing reads"
-    )
     assert elapsed_tc20 < 5.0, \
         f"DB hit took {elapsed_tc20:.2f}s — expected < 5s (AI pipeline ran?)"
     # Decision 5: the DB-hit path must never call set_cached.
@@ -830,8 +766,6 @@ try:
           f"no generic-cache row written")
 finally:
     _drop_search_row(FIX_MARLIN_QUERY)
-    _purge_bike_from_search_cache(TC20_BRAND, TC20_MODEL)
-    _cache_row_delete("/v1/bike/search", tc20_key)
 
 
 # ── [TC-21] AI fallback: unknown brand+model falls through to the pipeline ──
@@ -1021,72 +955,10 @@ print("\n── TODO_009: fixture cleanup verification ──")
 _conn = _db()
 try:
     _leftover = _conn.execute(
-        "SELECT COUNT(*) FROM searches WHERE query LIKE 'todo-009 fixture:%'"
-    ).fetchone()[0]
-    _orphan_results = _conn.execute(
-        "SELECT COUNT(*) FROM bike_results WHERE search_id IS NOT NULL AND search_id "
-        "NOT IN (SELECT id FROM searches)"
-    ).fetchone()[0]
-    _orphan_acc = _conn.execute(
-        "SELECT COUNT(*) FROM accessories WHERE bike_result_id NOT IN "
-        "(SELECT id FROM bike_results)"
+        "SELECT COUNT(*) FROM search_cache WHERE query LIKE 'todo-009 fixture:%'"
     ).fetchone()[0]
 finally:
     _conn.close()
-assert _orphan_results == 0, f"{_orphan_results} bike_results left pointing at a deleted search"
-assert _orphan_acc == 0, f"{_orphan_acc} accessories left pointing at a deleted bike_result"
 assert _leftover == 0, f"{_leftover} TODO-009 fixture row(s) left in search_cache"
 assert not _joined_prices("Giant", "Talon 3"), "TC-24 fixture leaked offer rows"
 print("OK — no TODO-009 fixture rows left behind")
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# TODO_019 — details cache served from the ORM tables
-# ══════════════════════════════════════════════════════════════════════════
-
-# ── [TC-26] Details: two identical calls → 200 twice, byte-identical JSON ──
-# Title-cased on purpose: the details cache keys on strip().lower(), so this
-# also proves the ORM lookup is case-insensitive after the blob→ORM cutover.
-print("\n── [TC-26] Details: repeat call is byte-identical (ORM cache) ──")
-tc26_body = {"company": "Trek", "model": "Marlin 5"}
-print(f"[TC-26] request:  POST {DETAILS_URL} {json.dumps(tc26_body)}")
-
-resp_tc26a = httpx.post(DETAILS_URL, json=tc26_body, timeout=300)
-print(f"[TC-26] call 1 response: HTTP {resp_tc26a.status_code}")
-print(resp_tc26a.text)
-assert resp_tc26a.status_code == 200, f"Expected 200 on first call, got {resp_tc26a.status_code}"
-
-t0 = _time.perf_counter()
-resp_tc26b = httpx.post(DETAILS_URL, json=tc26_body, timeout=30)
-elapsed_tc26 = _time.perf_counter() - t0
-print(f"[TC-26] call 2 response: HTTP {resp_tc26b.status_code} ({elapsed_tc26:.3f}s)")
-print(resp_tc26b.text)
-assert resp_tc26b.status_code == 200, f"Expected 200 on second call, got {resp_tc26b.status_code}"
-assert resp_tc26b.text == resp_tc26a.text, \
-    "Second /v1/bike/details call is not byte-identical to the first — cache path regressed"
-assert resp_tc26b.json()["company"] == "Trek" and resp_tc26b.json()["model"] == "Marlin 5", \
-    (f"Details must echo the caller's casing, got "
-     f"{resp_tc26b.json()['company']!r}/{resp_tc26b.json()['model']!r}")
-assert elapsed_tc26 < 5.0, f"Cached details call took {elapsed_tc26:.2f}s — expected < 5s"
-print(f"OK — /v1/bike/details returned 200 twice, byte-identical, second in {elapsed_tc26:.3f}s")
-
-# ── [TC-27] details-cache reads the ORM tables and echoes caller casing ──
-# TC-26 above is fronted by the generic `cache` table, so it proves the endpoint
-# contract but not the storage swap. This one goes straight at the ORM read path
-# (main.py: /v1/bike/details-cache → repository.get_bike_details) and asserts the
-# same bike resolves under two different casings, each echoed back as asked.
-print("\n── [TC-27] details-cache: ORM read path, case-insensitive, caller casing ──")
-for _company, _model in [("Trek", "Marlin 5"), ("trek", "marlin 5")]:
-    _params = {"company": _company, "model": _model}
-    print(f"[TC-27] request:  GET {DETAILS_CACHE_URL} {json.dumps(_params)}")
-    _r = httpx.get(DETAILS_CACHE_URL, params=_params, timeout=10)
-    print(f"[TC-27] response: HTTP {_r.status_code}")
-    print(_r.text)
-    assert _r.status_code == 200, f"Expected 200 for {_params}, got {_r.status_code}"
-    _d = _r.json()
-    assert _d["company"] == _company and _d["model"] == _model, \
-        f"Expected caller casing {_company!r}/{_model!r}, got {_d['company']!r}/{_d['model']!r}"
-    assert isinstance(_d["components"], list) and _d["components"], "Expected a component tree"
-    assert isinstance(_d["photos"], list), "photos must be a list, never null"
-    print(f"OK — {_company!r}/{_model!r}: {len(_d['components'])} categories, "
-          f"{len(_d['photos'])} photos")

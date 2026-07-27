@@ -5,57 +5,56 @@
 Three new files implement a complete relational database layer for bike data:
 
 ### 1. `app/models.py` — SQLAlchemy ORM Models
-Defines 7 tables with relationships and constraints:
+Defines 8 tables with relationships and constraints:
 
 #### Entity Relationship Diagram
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                      BIKES (core)                       │
+│                      BIKE (core)                        │
 │  id | brand | model | created_at | updated_at          │
 │  UNIQUE(brand, model)                                   │
 └──────────────────┬──────────────────────────────────────┘
                    │
-        ┌──────────┼──────────┐
-        │          │          │
-        ↓          ↓          ↓
-┌──────────────┐ ┌──────────────────┐ ┌──────────────┐
-│ BikeResults  │ │ BikeDetails      │ │ BikeOffers   │
-│ (search)     │ │ (specs)          │ │ (listings)   │
-│ 1:N          │ │ 1:1              │ │ 1:N          │
-└──┬───────────┘ └──┬───────────────┘ └──┬───────────┘
-   │                │                     │
-   ↓                ↓                     ↓
-┌──────────────┐ ┌──────────────────┐ ┌──────────────┐
-│ Accessories  │ │ BikeDetailPhotos │ │ BikeOffer    │
-│ (strings)    │ │ (URLs + order)   │ │ Photos       │
-└──────────────┘ └──────────────────┘ └──────────────┘
+        ┌──────────┼──────────────────┐
+        │          │                  │
+        ↓          ↓                  ↓
+┌──────────────┐ ┌──────────────┐ ┌──────────────────────────┐
+│ BikeDetails  │ │ BikeOffer    │ │ SearchBikeRating         │
+│ (specs) 1:1  │ │ (listings)   │ │ (per-search rated bike)  │
+│              │ │ 1:N          │ │ FK bike + FK search_cache│
+└──┬───────────┘ └──┬───────────┘ └──────────┬───────────────┘
+   │                │                          │
+   ↓                ↓                          ↑ N:1
+┌──────────────────┐ ┌──────────────┐   ┌──────────────┐
+│ BikeDetailPhotos │ │ BikeOffer    │   │ SearchCache  │
+│ (URLs + order)   │ │ Photos       │   │ (query)      │
+└──────────────────┘ └──────────────┘   └──────────────┘
 ```
 
 #### Table Details
 
 **`Bike`** — Master bike record
 - Primary identity by (brand, model)
-- Shared across search results, details, and offers
+- Shared across search ratings, details, and offers
 - Timestamp tracking (created_at, updated_at)
-- One-to-many: bike_results, bike_offers
-- One-to-one: bike_details
+- One-to-many: bike_offer, search_bike_rating_cache
+- One-to-one: bike_detail
 
-**`BikeResult`** — One search result
-- Belongs to one Bike
-- Stores: match_score, explanation
-- One-to-many: accessories
-- TTL: 24 hours (inferred from created_at)
-
-**`Accessory`** — An item in a bike result
-- Belongs to BikeResult
-- Single field: name (string)
+**`SearchCache`** / **`SearchBikeRating`** — the search cache
+- `search_cache`: one row per query (`query`, `time_stored`)
+- `search_bike_rating_cache`: one row per bike a search returned — FK to
+  `search_cache` + `bike`, plus `rating`, `explanation`, `accessories` (inline
+  JSON), `display_order`
+- TTL: 24 h from `store.SEARCH_TTL_SECONDS` vs `time_stored`
+- (Replaced the earlier `bike_results` + `accessories` tables, now removed)
 
 **`BikeDetails`** — Full specifications for one bike
 - Unique per Bike (one-to-one)
 - Stores description as JSON (BikeDescription model)
-- Stores components as JSON (list[BikeCategory])
+- Components are normalised into `bike_details_component` →
+  `bike_details_component_element` → `bike_details_component_spec`, not a JSON blob
 - One-to-many: photos (ordered)
-- TTL: 30 days (configurable via ttl_seconds field)
+- TTL: 30 days (module constant `repository.TTL_DETAILS`, not stored per record)
 - Timestamps: created_at, updated_at
 
 **`BikeDetailPhoto`** — Photo URL for bike specs
@@ -79,15 +78,16 @@ Defines 7 tables with relationships and constraints:
 Provides the same interface as the old `app/store.py` but using ORM:
 
 ```python
-# Search operations
-save_search(query: str, bikes: list[BikeResult], ttl: int) → None
-get_search_by_query(query: str) → Optional[list[BikeResult]]
-find_bikes_by_brand(brand: str) → list[BikeResult]
-
-# Details operations
+# Details operations (the only functions this module still owns)
 save_bike_details(company: str, model: str, data: BikeDetailsResponse, ttl: int) → None
 get_bike_details(company: str, model: str) → Optional[BikeDetailsResponse]
+rebuild_components(rows) → list[BikeCategory]
 ```
+
+The search helpers (`save_search` / `get_search_by_query` / `find_bikes_by_brand`)
+that once lived here were removed with the `bike_results` + `accessories` tables;
+the live search cache is `search_cache` + `search_bike_rating_cache` in
+`app/store.py`.
 
 Each function:
 - Uses `get_session()` to get a SQLAlchemy Session
@@ -127,14 +127,16 @@ Complete guide covering:
 - Nullable `city` field in BikeOffer
 - Used listings from OLX include city; new from Allegro don't
 
-### 5. **TTL as Stored Field**
-- `bike_details.ttl_seconds` allows per-record expiry
-- Checked at query time (not automatic cleanup)
-- Reason: Lazy deletion avoids frequent DB maintenance
+### 5. **TTL as Module Constant**
+- `repository.TTL_DETAILS` applies uniformly to every bike_details row
+- Compared against `updated_at` at query time (not automatic cleanup)
+- Reason: Lazy deletion avoids frequent DB maintenance; no caller ever varied
+  the TTL per record, so storing it per row only risked stale rows outliving a
+  changed constant
 
 ### 6. **Foreign Key Cascades**
 - Delete a Bike → auto-deletes its results, details, offers
-- Delete a BikeResult → auto-deletes its accessories
+- Delete a SearchCache → auto-deletes its search_bike_rating_cache rows
 - Maintains referential integrity
 
 ## Migration Path
