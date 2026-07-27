@@ -18,9 +18,14 @@ def init_cache() -> None:
     db_existed = _DB_PATH.exists()
     _conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
     _conn.execute("PRAGMA journal_mode=WAL")
+    # SQLite ships with FK enforcement OFF per connection, so ON DELETE CASCADE
+    # never fires unless we ask. Without this, deleting a search_cache row orphans
+    # its search_bike_rating_cache children (and every other CASCADE is inert).
+    _conn.execute("PRAGMA foreign_keys=ON")
     if db_existed:
         row = _conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='cache'"
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name='endpoint_req_to_body_cache'"
         ).fetchone()
         table_existed = row is not None
     else:
@@ -28,7 +33,7 @@ def init_cache() -> None:
     if not table_existed:
         _conn.execute(
             """
-            CREATE TABLE cache (
+            CREATE TABLE endpoint_req_to_body_cache (
                 endpoint    TEXT NOT NULL,
                 request     TEXT NOT NULL,
                 response    TEXT NOT NULL,
@@ -43,7 +48,9 @@ def init_cache() -> None:
         logger.info(
             "cache loaded | path=%s rows=%d",
             _DB_PATH,
-            _conn.execute("SELECT COUNT(*) FROM cache").fetchone()[0],
+            _conn.execute(
+                "SELECT COUNT(*) FROM endpoint_req_to_body_cache"
+            ).fetchone()[0],
         )
 
 
@@ -73,7 +80,8 @@ T = TypeVar("T", bound=BaseModel)
 def get_cached(endpoint: str, fields: dict, model_cls: Type[T]) -> Optional[T]:
     assert _conn is not None
     row = _conn.execute(
-        "SELECT response FROM cache WHERE endpoint = ? AND request = ?",
+        "SELECT response FROM endpoint_req_to_body_cache "
+        "WHERE endpoint = ? AND request = ?",
         (endpoint, _normalise(fields)),
     ).fetchone()
     if row is None:
@@ -87,7 +95,8 @@ def set_cached(endpoint: str, fields: dict, response: BaseModel) -> None:
     assert _conn is not None
     try:
         _conn.execute(
-            "INSERT OR IGNORE INTO cache (endpoint, request, response, time_stored) VALUES (?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO endpoint_req_to_body_cache "
+            "(endpoint, request, response, time_stored) VALUES (?, ?, ?, ?)",
             (
                 endpoint,
                 _normalise(fields),

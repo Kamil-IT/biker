@@ -15,7 +15,7 @@ from sqlalchemy import (
     create_engine,
 )
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship, sessionmaker, validates
+from sqlalchemy.orm import relationship, sessionmaker
 from pathlib import Path
 
 Base = declarative_base()
@@ -23,40 +23,12 @@ _engine = None
 _SessionLocal = None
 
 
-DEFAULT_DB_PATH = Path(__file__).parent.parent / "cache.db"
-
-
-def norm(text: str) -> str:
-    """The canonical identity form of a brand or model.
-
-    Python's `str.lower()` — NOT SQLite's `lower()`/`LIKE`, which are ASCII-only
-    and leave characters like `Ü` untouched. That difference is why `bikes`
-    carries `brand_norm`/`model_norm` columns instead of lowercasing in SQL.
-    """
-    return text.strip().lower()
-
-
-def configure_db(db_path) -> None:
-    """Point the ORM at a different SQLite file (migrations, tests).
-
-    Rebuilds the engine and session factory, so call it before any session is
-    opened. Pass `None` to go back to the default `backend/cache.db`.
-    """
-    global _engine, _SessionLocal
-    path = DEFAULT_DB_PATH if db_path is None else db_path
-    _engine = create_engine(
-        f"sqlite:///{path}",
-        connect_args={"check_same_thread": False},
-        echo=False,
-    )
-    _SessionLocal = sessionmaker(bind=_engine)
-
-
 def get_engine():
     global _engine
     if _engine is None:
+        db_path = Path(__file__).parent.parent / "cache.db"
         _engine = create_engine(
-            f"sqlite:///{DEFAULT_DB_PATH}",
+            f"sqlite:///{db_path}",
             connect_args={"check_same_thread": False},
             echo=False,
         )
@@ -71,174 +43,55 @@ def get_session():
 
 
 def init_db():
-    """Create all tables.
-
-    NOTE: `create_all` creates *missing tables* only — it never ALTERs a table
-    that already exists. A database created by an older build therefore keeps
-    its old columns and no error is raised here. `verify_schema()` is what
-    catches that; call it at startup, after this.
-    """
+    """Create all tables."""
     engine = get_engine()
     Base.metadata.create_all(engine)
-
-
-class SchemaMismatchError(RuntimeError):
-    """The live database is missing tables/columns the ORM expects."""
-
-
-def verify_schema(raise_on_mismatch: bool = True) -> list[str]:
-    """Compare every mapped table against the live schema.
-
-    Exists because `create_all()` silently tolerates an out-of-date table, and
-    the resulting failures surface deep inside cache helpers whose exception
-    handlers treat everything as non-fatal — so a half-migrated database looks
-    exactly like a cold cache while the feature is entirely dead. This turns
-    that into a refusal to start.
-
-    Deliberately NOT called from `init_db()`: the migration script calls
-    `init_db()` before it ALTERs anything, and it is the one tool that must be
-    allowed to open a database whose schema is out of date.
-    """
-    from sqlalchemy import inspect  # local import — keeps module import cheap
-
-    inspector = inspect(get_engine())
-    problems: list[str] = []
-    for table_name, table in Base.metadata.tables.items():
-        if not inspector.has_table(table_name):
-            problems.append(f"{table_name}: table is missing entirely")
-            continue
-        live = {c["name"] for c in inspector.get_columns(table_name)}
-        missing = [c.name for c in table.columns if c.name not in live]
-        if missing:
-            problems.append(f"{table_name}: missing column(s) {', '.join(missing)}")
-
-    if problems and raise_on_mismatch:
-        raise SchemaMismatchError(
-            "Database schema is out of date:\n  - "
-            + "\n  - ".join(problems)
-            + "\n\n`init_db()` creates missing tables but never ALTERs an existing one, "
-            "so this cannot fix itself.\nRun:  python scripts/migrate_bike_details.py"
-            f"\nAgainst: {DEFAULT_DB_PATH}"
-        )
-    return problems
 
 
 class Bike(Base):
     """Base bike entity — shared identity across results, details, and offers."""
 
-    __tablename__ = "bikes"
+    __tablename__ = "bike"
 
     id = Column(Integer, primary_key=True)
     brand = Column(String(255), nullable=False, index=True)
     model = Column(String(255), nullable=False, index=True)
-    # Lookup keys: `norm()` of brand/model. Real casing stays in brand/model;
-    # every identity lookup goes through these so "Riese & Müller" and
-    # "riese & müller" resolve to one row.
-    brand_norm = Column(String(255), nullable=False, server_default="", index=True)
-    model_norm = Column(String(255), nullable=False, server_default="", index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
-    results = relationship("BikeResult", back_populates="bike", cascade="all, delete-orphan")
+    # Search results are no longer their own table — a search's rated bikes live
+    # in search_bike_rating_cache (which FKs to bike). Details and offers below.
     details = relationship("BikeDetails", back_populates="bike", cascade="all, delete-orphan", uselist=False)
     offers = relationship("BikeOffer", back_populates="bike", cascade="all, delete-orphan")
 
-    __table_args__ = (
-        UniqueConstraint("brand", "model", name="uq_bike_brand_model"),
-        UniqueConstraint("brand_norm", "model_norm", name="uq_bike_brand_model_norm"),
-    )
-
-    @validates("brand", "model")
-    def _sync_norm(self, key: str, value: str) -> str:
-        """Keep brand_norm/model_norm in lockstep with brand/model.
-
-        A `@validates` handler rather than an `__init__` override so it also
-        fires on later assignment (`bike.brand = "..."`), which would otherwise
-        leave a stale norm column and break every subsequent lookup. It does
-        NOT fire on a bulk `query().update()` — use the ORM for brand/model
-        edits, or write both columns yourself.
-        """
-        if value is not None:
-            setattr(self, f"{key}_norm", norm(value))
-        return value
-
-
-class Search(Base):
-    """One cached search — owns the query identity and its freshness.
-
-    Without this row a search has nothing to be keyed or expired by: the query
-    string is not an attribute of any single result, and TTL applies to the set
-    as a whole. `bike_results` hangs off it, so results reference `bikes` by id
-    instead of being flattened into a JSON blob.
-    """
-
-    __tablename__ = "searches"
-
-    id = Column(Integer, primary_key=True)
-    # The `norm()`'d enriched query — same key the blob `search_cache` used.
-    query = Column(String(2048), nullable=False, unique=True, index=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    ttl_seconds = Column(Integer, default=24 * 60 * 60)  # 24 hours
-
-    results = relationship(
-        "BikeResult",
-        back_populates="search",
-        cascade="all, delete-orphan",
-        order_by="BikeResult.position",
-    )
-
-
-class BikeResult(Base):
-    """Search result — one bike from a search query."""
-
-    __tablename__ = "bike_results"
-
-    id = Column(Integer, primary_key=True)
-    search_id = Column(Integer, ForeignKey("searches.id", ondelete="CASCADE"), nullable=True, index=True)
-    bike_id = Column(Integer, ForeignKey("bikes.id", ondelete="CASCADE"), nullable=False, index=True)
-    # The bikes are allocated by score weight, so their order is meaningful and
-    # has to be stored explicitly — a row set has no inherent ordering.
-    position = Column(Integer, nullable=False, default=0)
-    match_score = Column(Float, nullable=False)
-    explanation = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-    # Relationships
-    search = relationship("Search", back_populates="results")
-    bike = relationship("Bike", back_populates="results")
-    accessories = relationship("Accessory", back_populates="bike_result", cascade="all, delete-orphan")
-
-
-class Accessory(Base):
-    """Accessory list item for a bike result."""
-
-    __tablename__ = "accessories"
-
-    id = Column(Integer, primary_key=True)
-    bike_result_id = Column(Integer, ForeignKey("bike_results.id", ondelete="CASCADE"), nullable=False, index=True)
-    name = Column(String(255), nullable=False)
-
-    # Relationships
-    bike_result = relationship("BikeResult", back_populates="accessories")
+    __table_args__ = (UniqueConstraint("brand", "model", name="uq_bike_brand_model"),)
 
 
 class BikeDetails(Base):
     """Full bike specifications and details."""
 
-    __tablename__ = "bike_details"
+    __tablename__ = "bike_detail"
 
     id = Column(Integer, primary_key=True)
-    bike_id = Column(Integer, ForeignKey("bikes.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
     description = Column(Text, nullable=False)  # JSON serialized BikeDescription
-    components = Column(Text, nullable=False)  # JSON serialized list[BikeCategory]
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-    ttl_seconds = Column(Integer, default=30 * 24 * 60 * 60)  # 30 days
 
     # Relationships
     bike = relationship("Bike", back_populates="details")
     photos = relationship("BikeDetailPhoto", back_populates="details", cascade="all, delete-orphan")
+    components = relationship(
+        "BikeDetailComponent",
+        back_populates="details",
+        cascade="all, delete-orphan",
+        order_by=(
+            "BikeDetailComponent.component_order, "
+            "BikeDetailComponent.element_order, "
+            "BikeDetailComponent.spec_order"
+        ),
+    )
 
 
 class BikeDetailPhoto(Base):
@@ -247,7 +100,7 @@ class BikeDetailPhoto(Base):
     __tablename__ = "bike_detail_photos"
 
     id = Column(Integer, primary_key=True)
-    bike_details_id = Column(Integer, ForeignKey("bike_details.id", ondelete="CASCADE"), nullable=False, index=True)
+    bike_detail_id = Column(Integer, ForeignKey("bike_detail.id", ondelete="CASCADE"), nullable=False, index=True)
     url = Column(String(2048), nullable=False)
     display_order = Column(Integer, default=0)
 
@@ -255,13 +108,59 @@ class BikeDetailPhoto(Base):
     details = relationship("BikeDetails", back_populates="photos")
 
 
+# --- Component spec tree -------------------------------------------------
+# The category -> subcategory -> element -> spec tree that used to live in a
+# single `bike_details.components` TEXT blob, flattened into ONE fully
+# denormalised table: one row per spec, carrying its element, subcategory and
+# category alongside it. Components stay queryable across bikes ("every bike
+# running a Shimano GRX rear derailleur") without any join.
+
+
+class BikeDetailComponent(Base):
+    """One spec row, with its whole ancestry denormalised onto it.
+
+    ('Frame', 'Fork', 'Canyon FK0143 CF', 'Weight', '580 g')
+
+    Reconstructing the nested response means grouping by the three *_order
+    columns, NOT by name: order alone is authoritative, so two elements sharing
+    a name inside one subcategory stay distinct instead of silently merging.
+
+    An element with no specs still gets exactly one row, with spec_key /
+    spec_value / spec_order all NULL — that is how `specs: []` survives the
+    round-trip. NULL means "no spec here", distinct from a spec whose key is "".
+    """
+
+    __tablename__ = "bike_detail_component"
+
+    id = Column(Integer, primary_key=True)
+    bike_detail_id = Column(Integer, ForeignKey("bike_detail.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # category / subcategory level — repeat across the rows that share them
+    category = Column(String(255), nullable=False, index=True)
+    subcategory = Column(String(255), nullable=False, index=True)
+    component_order = Column(Integer, nullable=False, default=0)
+
+    # element level — repeats across that element's spec rows
+    element_name = Column(String(512), nullable=False, index=True)
+    element_description = Column(Text, nullable=False, default="")
+    element_order = Column(Integer, nullable=False, default=0)
+
+    # spec level — NULL when the element carries no specs at all
+    spec_key = Column(String(255), nullable=True, index=True)
+    spec_value = Column(String(1024), nullable=True)
+    spec_order = Column(Integer, nullable=True)
+
+    # Relationships
+    details = relationship("BikeDetails", back_populates="components")
+
+
 class BikeOffer(Base):
     """Marketplace offer/listing for a bike."""
 
-    __tablename__ = "bike_offers"
+    __tablename__ = "bike_offer"
 
     id = Column(Integer, primary_key=True)
-    bike_id = Column(Integer, ForeignKey("bikes.id", ondelete="CASCADE"), nullable=False, index=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
     price = Column(String(100), nullable=False)
     is_new = Column(Boolean, nullable=False)
     url = Column(String(2048), nullable=False, unique=True, index=True)
@@ -283,9 +182,63 @@ class BikeOfferPhoto(Base):
     __tablename__ = "bike_offer_photos"
 
     id = Column(Integer, primary_key=True)
-    bike_offer_id = Column(Integer, ForeignKey("bike_offers.id", ondelete="CASCADE"), nullable=False, index=True)
+    bike_offer_id = Column(Integer, ForeignKey("bike_offer.id", ondelete="CASCADE"), nullable=False, index=True)
     url = Column(String(2048), nullable=False)
     display_order = Column(Integer, default=0)
 
     # Relationships
     offer = relationship("BikeOffer", back_populates="photos")
+
+
+# --- Search cache --------------------------------------------------------
+# One cached search query fans out to many rated bikes. `search_cache` holds
+# just the query and when it was stored; each bike it returned is one row in
+# `search_bike_rating_cache`, which FKs to the canonical `bike`. This replaces
+# the earlier design where `search_cache.bikes` was a JSON array of ids.
+
+
+class SearchCache(Base):
+    """One cached search. Its rated bikes live in search_bike_rating_cache.
+
+    Freshness is `time_stored + store.SEARCH_TTL_SECONDS` (24 h), a module
+    constant rather than a per-row column — mirrors how details TTL works.
+    """
+
+    __tablename__ = "search_cache"
+
+    id = Column(Integer, primary_key=True)
+    query = Column(Text, nullable=False, unique=True, index=True)
+    time_stored = Column(String(64), nullable=False)  # ISO-8601 UTC
+
+    # Relationships
+    ratings = relationship(
+        "SearchBikeRating",
+        back_populates="search",
+        cascade="all, delete-orphan",
+        order_by="SearchBikeRating.display_order",
+    )
+
+
+class SearchBikeRating(Base):
+    """One bike returned by one cached search — one row = one bike.
+
+    Carries the per-*search* fields (rating, explanation, accessories) while
+    the bike identity is a FK to `bike`. accessories is an inline JSON array of
+    strings; brand/model are NOT duplicated here, they come via the `bike` FK.
+    """
+
+    __tablename__ = "search_bike_rating_cache"
+
+    id = Column(Integer, primary_key=True)
+    search_cache_id = Column(
+        Integer, ForeignKey("search_cache.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
+    rating = Column(Float, nullable=False)
+    explanation = Column(Text, nullable=False, default="")
+    accessories = Column(Text, nullable=False, default="[]")  # JSON array of strings
+    display_order = Column(Integer, nullable=False, default=0)
+
+    # Relationships
+    search = relationship("SearchCache", back_populates="ratings")
+    bike = relationship("Bike")
