@@ -140,7 +140,6 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
   const refs = review.ref.filter(Boolean)
 
   const hasRating = typeof review.rating === 'number' && (review.sources_used ?? 0) > 0
-  const ratingPct = hasRating ? Math.max(0, Math.min(100, (review.rating! / 10) * 100)) : 0
 
   // 0–10 → 1–5 filled stars. Prefer the aggregate rating; equipment reviews
   // have no `rating`, so they fall back to the headline score.
@@ -163,28 +162,6 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
           <span className="font-mono text-[11px] text-muted">/10</span>
         </div>
       </div>
-
-      {hasRating && (
-        <div className="mb-4 bg-sand rounded-xl border border-border px-4 py-3">
-          <div className="flex items-center justify-between mb-2">
-            <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
-              Aggregate rating
-            </span>
-            <div className="flex items-baseline gap-1">
-              <span
-                className="font-display font-bold text-terra tabular-nums leading-none text-[18px]"
-                aria-label={`Aggregate rating ${review.rating} out of 10`}
-              >
-                {review.rating!.toFixed(1)}
-              </span>
-              <span className="font-mono text-[11px] text-muted">/10</span>
-            </div>
-          </div>
-          <p className="font-mono text-[10px] text-muted mt-2">
-            Rating from {review.sources_used} {review.sources_used === 1 ? 'source' : 'sources'}
-          </p>
-        </div>
-      )}
 
       <p className="font-body italic text-ink text-[13px] leading-relaxed">
         {clean}

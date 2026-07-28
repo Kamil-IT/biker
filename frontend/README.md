@@ -20,7 +20,7 @@ The SPA has three views, switched by `App.tsx` (no router):
 | `POST /v1/bike/details` | `{ company, model }` | `BikeDetailsResponse` |
 | `POST /v1/bike/review` · `/offer` · `/ceneo` · `/decathlon` · `/used` | `{ company, model }` | review / offers |
 
-`BikeReviewResponse` also carries an aggregate `rating` (0–10, weighted across curated review sources) and `sources_used` count; `ReviewSection` renders these as a rating bar with a "Rating from X sources" caption above the expert-review prose, and derives the source-table stars from `rating`. Equipment reviews carry neither field, so they show no rating bar and fall back to `score` for the stars.
+`BikeReviewResponse` also carries an aggregate `rating` (0–10, weighted across curated review sources) and `sources_used` count; `ReviewSection` does not display the aggregate rating itself — it only derives the source-table stars from `rating`. Equipment reviews carry neither field, so they fall back to `score` for the stars.
 | `POST /v1/equipment/details` | `{ company?, model, category? }` | `EquipmentDetailsResponse` (overview, component tree, photos — no offers) |
 | `POST /v1/equipment/review` | `{ company?, model }` | `EquipmentReviewResponse` (`score`, `explanation`, `ref[]` — review/forum links only) |
 
