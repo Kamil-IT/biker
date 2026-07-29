@@ -23,3 +23,9 @@ backend/dict
 backend/tests/fixtures/*.db-shm
 backend/tests/fixtures/*.db-wal
 backend/tests/__pycache__/
+
+# Agent backfill spool (transient)
+docs/bikes/scratch/
+# Per-run queue state (1.8MB, churns every run). rounds.json is the durable log.
+docs/bikes/pipeline/state/queue.json
+backend/cache.db.bak

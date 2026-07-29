@@ -1,0 +1,106 @@
+[
+  {
+    "round": 1,
+    "finished": "2026-07-28T19:03:48.892491+00:00",
+    "db": {
+      "bike": 182,
+      "bike_detail": 121,
+      "bike_detail_component": 5773,
+      "bike_detail_photos": 357
+    },
+    "outcome": {
+      "saved": 8,
+      "photos_total": 26,
+      "photos_zero": 2,
+      "photos_ge4": 3
+    }
+  },
+  {
+    "round": 2,
+    "finished": "2026-07-28T19:26:14.217565+00:00",
+    "db": {
+      "bike": 192,
+      "bike_detail": 131,
+      "bike_detail_component": 6539,
+      "bike_detail_photos": 410
+    },
+    "outcome": {
+      "saved": 10,
+      "photos_total": 45,
+      "photos_zero": 0,
+      "photos_ge4": 6
+    },
+    "delta": {
+      "bike": 10,
+      "bike_detail": 10,
+      "bike_detail_component": 766,
+      "bike_detail_photos": 53
+    }
+  },
+  {
+    "round": 3,
+    "finished": "2026-07-28T19:44:48.000409+00:00",
+    "db": {
+      "bike": 202,
+      "bike_detail": 141,
+      "bike_detail_component": 7443,
+      "bike_detail_photos": 479
+    },
+    "outcome": {
+      "saved": 10,
+      "photos_total": 77,
+      "photos_zero": 0,
+      "photos_ge4": 10
+    },
+    "delta": {
+      "bike": 10,
+      "bike_detail": 10,
+      "bike_detail_component": 904,
+      "bike_detail_photos": 69
+    }
+  },
+  {
+    "round": 4,
+    "finished": "2026-07-28T20:04:49.219424+00:00",
+    "db": {
+      "bike": 212,
+      "bike_detail": 151,
+      "bike_detail_component": 8106,
+      "bike_detail_photos": 632
+    },
+    "outcome": {
+      "saved": 10,
+      "photos_total": 80,
+      "photos_zero": 0,
+      "photos_ge4": 10
+    },
+    "delta": {
+      "bike": 10,
+      "bike_detail": 10,
+      "bike_detail_component": 663,
+      "bike_detail_photos": 153
+    }
+  },
+  {
+    "round": 5,
+    "finished": "2026-07-28T21:06:37.804672+00:00",
+    "db": {
+      "bike": 285,
+      "bike_detail": 224,
+      "bike_detail_component": 13364,
+      "bike_detail_photos": 1062
+    },
+    "outcome": {
+      "saved": 73,
+      "skipped": 13,
+      "researching": 12
+    },
+    "delta": {
+      "bike": 73,
+      "bike_detail": 73,
+      "bike_detail_component": 5258,
+      "bike_detail_photos": 430
+    },
+    "note": "round 5 expanded to 98 bikes; 4 spec + 1 photo + 1 browser scout"
+  }
+]
