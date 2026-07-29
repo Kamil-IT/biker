@@ -1,0 +1,237 @@
+{
+  "researched_on": "2026-07-29",
+  "scope": "Polish sites to buy bikes from, ranked for buying quality and separately assessed for machine-fetchability as sources for the docs/bikes backfill pipeline.",
+  "probe_method": "curl -sL with a full desktop UA (Mozilla/5.0 Windows NT 10.0 Win64 x64 Chrome/120). Recorded: home HTTP status, /products.json?limit=1 status, /sitemap.xml status, home body size, count of application/ld+json blocks on the HOME page, platform fingerprint. ld_json_blocks_home is a home-page count, NOT a promise about product pages.",
+  "key_findings": [
+    "Every listed site answers a real UA; several return nothing or 403 without one. decathlon.pl 403s all HTML even with a UA.",
+    "Shopify products.json is effectively dead in Poland: 1 of 16 probed sites (rowerowy.com). The pipeline's shopify_index.py strategy does not carry over.",
+    "The transferable route is sitemap -> product page -> schema.org JSON-LD. Confirmed working end-to-end only on rowertour.com.",
+    "Product-level JSON-LD was verified on a real product detail page for rowertour.com only. Other sites were confirmed at home/category level."
+  ],
+  "sites": [
+    {
+      "rank": 1,
+      "name": "CentrumRowerowe.pl",
+      "url": "https://www.centrumrowerowe.pl/",
+      "why": "Market leader. Owned by listed Dadelo S.A., own warehouse, ~3000 m2 flagship near Warsaw Okecie plus salons in Wroclaw, Gdansk, Poznan, Krakow, Rzeszow, Zabrze, Bydgoszcz. Same prices online and in store.",
+      "type": "retailer",
+      "probe": {
+        "home_status": 200,
+        "home_requires_real_ua": true,
+        "products_json_status": 404,
+        "sitemap_status": null,
+        "home_bytes": 167678,
+        "ld_json_blocks_home": 2,
+        "platform": "unknown"
+      },
+      "notes": "Returned an empty body without a UA and 167 KB with one. No /sitemap.xml."
+    },
+    {
+      "rank": 2,
+      "name": "Sprint-Rowery.pl",
+      "url": "https://sprint-rowery.pl/",
+      "why": "Widest bike selection claim in PL. Large showrooms in Bialystok and Warszawa, 0% installments, bikes shipped assembled. Strongest content and customer-education arm.",
+      "type": "retailer",
+      "probe": {
+        "home_status": 200,
+        "home_requires_real_ua": false,
+        "products_json_status": 404,
+        "sitemap_status": 404,
+        "home_bytes": 924198,
+        "ld_json_blocks_home": 2,
+        "platform": "Magento"
+      },
+      "notes": null
+    },
+    {
+      "rank": 3,
+      "name": "RowerTour.com",
+      "url": "https://www.rowertour.com/",
+      "why": "Bydgoszcz, founded 2012 by two ex-racers, now one of the largest PL online bike shops.",
+      "type": "retailer",
+      "probe": {
+        "home_status": 200,
+        "home_requires_real_ua": false,
+        "products_json_status": 404,
+        "sitemap_status": 200,
+        "home_bytes": 936901,
+        "ld_json_blocks_home": 4,
+        "platform": "unknown"
+      },
+      "notes": "Best structured data of the whole set. Split sitemap index including sitemap_shop_products_*.xml. Product detail pages carry a full schema.org Product node - verified live: name, brand, priceCurrency PLN, price, availability, image[]. Best candidate for a direct (non-LLM) offer finder.",
+      "verified_product_jsonld": true
+    },
+    {
+      "rank": 4,
+      "name": "SklepRowerowy.PL",
+      "url": "https://skleprowerowy.pl/",
+      "why": "Full service: bikes, parts, apparel, service, bikefitting.",
+      "type": "retailer",
+      "probe": {
+        "home_status": 200,
+        "home_requires_real_ua": false,
+        "products_json_status": 404,
+        "sitemap_status": 404,
+        "home_bytes": 589688,
+        "ld_json_blocks_home": 3,
+        "platform": "PrestaShop"
+      },
+      "notes": null
+    },
+    {
+      "rank": 5,
+      "name": "BikeSalon.pl",
+      "url": "https://bikesalon.pl/",
+      "why": "Strong Warsaw retailer (ul. Ostrobramska), rated 4.44 stars over 186 reviews.",
+      "type": "retailer",
+      "probe": {
+        "home_status": 200,
+        "home_requires_real_ua": true,
+        "products_json_status": 403,
+        "sitemap_status": 403,
+        "home_bytes": 188676,
+        "ld_json_blocks_home": 1,
+        "platform": "WordPress"
+      },
+      "notes": "Most bot-hostile of the ten - sitemap 403."
+    },
+    {
+      "rank": 6,
+      "name": "Green Bike",
+      "url": "https://www.greenbike.pl/",
+      "why": "Retailer AND manufacturer (Goetze.bike) - one of the biggest PL bike producers and employers in the sector.",
+      "type": "retailer+manufacturer",
+      "probe": {
+        "home_status": 200,
+        "home_requires_real_ua": false,
+        "products_json_status": 404,
+        "sitemap_status": 200,
+        "home_bytes": 54414,
+        "ld_json_blocks_home": 0,
+        "platform": "unknown"
+      },
+      "notes": "Thin 54 KB home and zero JSON-LD."
+    },
+    {
+      "rank": 7,
+      "name": "Bikestacja.pl",
+      "url": "https://www.bikestacja.pl/",
+      "why": "Broad city / road / MTB range. Has an English storefront at /en/.",
+      "type": "retailer",
+      "probe": {
+        "home_status": 200,
+        "home_requires_real_ua": false,
+        "products_json_status": 404,
+        "sitemap_status": 200,
+        "home_bytes": 166606,
+        "ld_json_blocks_home": 1,
+        "platform": "unknown"
+      },
+      "notes": "Flat (non-index) sitemap."
+    },
+    {
+      "rank": 8,
+      "name": "sklep.rowery.pl",
+      "url": "https://sklep.rowery.pl/",
+      "why": "Long-running portal shop.",
+      "type": "retailer",
+      "probe": {
+        "home_status": 200,
+        "home_requires_real_ua": false,
+        "products_json_status": 404,
+        "sitemap_status": 404,
+        "home_bytes": 1051851,
+        "ld_json_blocks_home": 2,
+        "platform": "Shoper"
+      },
+      "notes": null
+    },
+    {
+      "rank": 9,
+      "name": "Rowerowy.com",
+      "url": "https://rowerowy.com/",
+      "why": "Gravity specialist - dirt, pumptrack, enduro, all-mountain, DH. 20+ years of mail order.",
+      "type": "retailer",
+      "probe": {
+        "home_status": 200,
+        "home_requires_real_ua": false,
+        "products_json_status": 200,
+        "sitemap_status": 404,
+        "home_bytes": null,
+        "ld_json_blocks_home": null,
+        "platform": "Shopify"
+      },
+      "notes": "The ONLY Shopify in the set. pipeline/shopify_index.py works against it as-is - add to SITES.",
+      "pipeline_ready": true
+    },
+    {
+      "rank": 10,
+      "name": "Kross",
+      "url": "https://kross.pl/",
+      "why": "Largest PL brand's own store. First-party spec truth. Pair with romet.pl, unibike.pl, legrand.pl.",
+      "type": "manufacturer",
+      "probe": {
+        "home_status": 200,
+        "home_requires_real_ua": false,
+        "products_json_status": 404,
+        "sitemap_status": 404,
+        "home_bytes": 240880,
+        "ld_json_blocks_home": 0,
+        "platform": "Magento"
+      },
+      "notes": "Sibling manufacturer romet.pl serves a 9101-byte shell - matches WORKFLOW.md round 5's note that romet.pl (Magento PWA) resisted discovery."
+    },
+    {
+      "rank": 11,
+      "name": "Decathlon.pl",
+      "url": "https://www.decathlon.pl/",
+      "why": "Biggest sports retailer in PL by footprint. Own brands Rockrider (MTB), Triban (road), Elops (city), Btwin, Van Rysel (performance) - the only entry that is both manufacturer and sole seller. Cheapest credible entry-level bikes in the country, ~80 stores for pickup and service.",
+      "type": "retailer+manufacturer",
+      "probe": {
+        "home_status": 403,
+        "home_requires_real_ua": true,
+        "products_json_status": 404,
+        "sitemap_status": 200,
+        "home_bytes": 5556,
+        "ld_json_blocks_home": 0,
+        "platform": "unknown"
+      },
+      "notes": "403 on EVERY HTML URL even with a full desktop UA - home, /c/rowery and /browse/... all refused. Only the XML sitemaps answer. Crucially the sitemap index has NO product sitemap: only brands, category-product-listing, filtered-pages, content-pages, services-repair, sports-activities. Category URLs like /sporty/rowery/rowery-xc are enumerable but themselves 403. Worst technically, roughly 2nd-3rd on the buying axis - the two orderings diverge sharply here.",
+      "backend_note": "Vindicates app/bike_offer_decathlon_finder.py going through web_search rather than fetching, and returning photos: []. Against a site that 403s all HTML and publishes no product sitemap that is the only thing that works - not a shortcut to upgrade later.",
+      "scrapeable": false
+    }
+  ],
+  "runners_up": [
+    {
+      "name": "ArenaRowery.pl",
+      "url": "https://www.arenarowery.pl/",
+      "why": "Kross, Scott, Cube, Kellys, Unibike, Romet, Kands, Le Grand, Maxim, e-bikes.",
+      "probe": { "home_status": 200, "sitemap_status": 200, "ld_json_blocks_home": 0, "platform": "unknown" }
+    },
+    {
+      "name": "Interbike.pl",
+      "url": "https://www.interbike.pl/",
+      "why": "Tomar Sport's online arm, ships fully assembled.",
+      "probe": { "home_status": 200, "sitemap_status": 200, "ld_json_blocks_home": 1, "platform": "unknown" }
+    },
+    {
+      "name": "Sportano.pl",
+      "url": "https://sportano.pl/",
+      "why": "Generalist sports retailer with a real bike range. Most machine-friendly of the generalists.",
+      "probe": { "home_status": 200, "sitemap_status": 200, "ld_json_blocks_home": 3, "platform": "Magento" }
+    }
+  ],
+  "recommended_next_steps": [
+    "Add rowerowy.com to SITES in pipeline/shopify_index.py - it is Shopify and needs no new code.",
+    "rowertour.com and sportano.pl are the two best candidates for a fifth backend offer finder: both expose price, currency and availability as structured data, so they need no LLM parsing unlike the existing web_search finders.",
+    "Send a real desktop UA on every request to these hosts - several return empty or 403 without one."
+  ],
+  "sources": [
+    "https://rankingpro.pl/ranking-sklepow-rowerowych/",
+    "https://otonajlepsze.pl/ranking-sklepow-rowerowych-online-5482/",
+    "https://zielona.interia.pl/eko-technologie/czysty-transport/news-w-warszawie-otwarto-najwiekszy-sklep-rowerowy-w-polsce,nId,6695164",
+    "https://ratingcaptain.com/pl/blog/najlepsze-sklepy-rowerowe-w-warszawie-ranking-sklepow-z-rowerami",
+    "https://wtc.org.pl/lista/sklepy-rowerowe/",
+    "https://sprint-rowery.pl/blog/post/romet-czy-kross-jaki-rower-lepszy"
+  ]
+}
