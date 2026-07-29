@@ -6,4 +6,12 @@ __pycache__/
 .pytest_cache/
 dist/
 *.egg-info/
-cache.db
+# cache.db IS tracked — it carries the backfilled bike specifications.
+# Its WAL sidecars are not: they are runtime state, meaningless without the exact
+# .db they belong to, and they change on every read. Always checkpoint before
+# committing (`pragma wal_checkpoint(TRUNCATE)`) or the committed .db will be
+# missing whatever is still sitting in the log.
+cache.db-shm
+cache.db-wal
+cache.db.bak
+cache.db.bak2
