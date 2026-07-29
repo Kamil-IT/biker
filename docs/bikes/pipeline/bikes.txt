@@ -1,0 +1,31 @@
+# brand | model - round 5 expanded for 4 workers
+Ari Bikes | Suncrest
+Ari Bikes | Superior Peak
+Aventon | Level 4 REC Ebike
+Aventon | Level 4 REC Step-Through Ebike
+Bombtrack | Beyond SUS
+Bombtrack | Beyond+ ADV
+Chromag Bikes | Monk
+Chromag Bikes | Primer
+Crust Bikes | Desert Brat
+Crust Bikes | EPO
+Ari Bikes | Timp Peak
+Ari Bikes | Veyo
+Detroit Bikes | Sparrow
+Early Rider | Belter 14
+Early Rider | Belter 16
+Engwe | ENGINE PRO
+Engwe | Engine Pro 2.0
+Fredrik Runstedt | The Vrigstad bike
+Garelli | Basic
+Garelli | Car 50
+Helkama | Hopeasauma
+Helkama | Jekku
+Heybike | Hero
+Heybike | Horizon
+KhVZ | V-901
+Kinesis | Crosslight 5T Disc v2
+Kinesis | FF29 Rolling Chassis
+Knolly Bikes | Cache Titanium SRAM XPLR AXS
+Knolly Bikes | Chilcotin 151
+Kona | Dew
