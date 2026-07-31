@@ -11,6 +11,10 @@ from pathlib import Path
 # writes (cache.db, app/models.py, app/prompts) still lives in backend/.
 BACKEND = Path(__file__).resolve().parents[3] / "backend"
 sys.path.insert(0, str(BACKEND))
+# `pipeline.*` now resolves under docs/bikes/, not backend/ — the package moved
+# with the archive but the import path did not follow it.
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from pipeline.common import PORTS  # noqa: E402
 
@@ -29,7 +33,7 @@ def main() -> int:
         port = PORTS[name]
         cmd = [sys.executable, "-m", "uvicorn", target, "--port", str(port), "--log-level", "warning"]
         print(f"starting {name:20} :{port}")
-        procs.append((name, subprocess.Popen(cmd, cwd=str(BACKEND))))
+        procs.append((name, subprocess.Popen(cmd, cwd=str(ROOT))))
         time.sleep(0.4)
 
     print("\nall services up. Ctrl-C to stop.")
@@ -48,7 +52,7 @@ def main() -> int:
                 print(f"!! {name} exited with {p.returncode} — restarting on :{port}")
                 cmd = [sys.executable, "-m", "uvicorn", target,
                        "--port", str(port), "--log-level", "warning"]
-                procs[i] = (name, subprocess.Popen(cmd, cwd=str(BACKEND)))
+                procs[i] = (name, subprocess.Popen(cmd, cwd=str(ROOT)))
                 time.sleep(1)
     except KeyboardInterrupt:
         print("\nstopping...")

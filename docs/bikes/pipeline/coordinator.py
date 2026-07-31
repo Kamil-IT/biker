@@ -38,8 +38,13 @@ def _load_queue() -> dict:
             line = line.strip()
             if not line or line.startswith("#") or "|" not in line:
                 continue
-            brand, model = (p.strip() for p in line.split("|", 1))
-            bikes.append({"brand": brand, "model": model})
+            # `brand | model` or `brand | model | product_url`. The URL comes from
+            # the consolidated dataset and is authoritative, so it is seeded as a
+            # hint: it removes the handle-guessing that dominated earlier rounds.
+            parts = [p.strip() for p in line.split("|")]
+            brand, model = parts[0], parts[1]
+            bikes.append({"brand": brand, "model": model,
+                          "url": parts[2] if len(parts) > 2 else ""})
     q = {
         "created": _now(),
         "items": {
@@ -51,6 +56,9 @@ def _load_queue() -> dict:
                 "photos": None,
                 "attempts": 0,
                 "notes": [],
+                **({"hints": {"spec_urls": [], "product_url": b["url"],
+                              "notes": ["dataset: authoritative product URL"]}}
+                   if b.get("url") else {}),
             }
             for b in bikes
         },

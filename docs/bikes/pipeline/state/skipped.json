@@ -1,0 +1,112 @@
+{
+  "chromag bikes|samurai": {
+    "brand": "Chromag Bikes",
+    "model": "Samurai",
+    "reason": "frameset only - product_type Bicycles but body_html explicitly calls it a frameset, single $0.00 Default Title variant, description covers only frame/fork geometry (no groupset, wheels, or brakes)"
+  },
+  "chromag bikes|stylus": {
+    "brand": "Chromag Bikes",
+    "model": "Stylus",
+    "reason": "discontinued frame-only archive listing (Stylus 2017, price 0.00, tags: Bike Archive/Frames); a currently-sold complete bike exists as the differently-named Stylus MX, not this model"
+  },
+  "crust bikes|geared wombat": {
+    "brand": "Crust Bikes",
+    "model": "Geared Wombat",
+    "reason": "frameset - product_type Frames, body_html confirms frame/fork only (no groupset, wheels, or brakes); headset not included"
+  },
+  "crust bikes|lightning bolt canti": {
+    "brand": "Crust Bikes",
+    "model": "Lightning Bolt Canti",
+    "reason": "frameset - product_type Frames, body_html confirms frame+fork only road/randonneuring product (no groupset, wheels, or brakes mentioned)"
+  },
+  "canfield bikes|one 2 dh": {
+    "brand": "Canfield Bikes",
+    "model": "ONE.2 DH",
+    "reason": "frameset - title is 'ONE.2 DH - Frameset', sold as frame+shock only, headsets and complete build not included"
+  },
+  "chromag bikes|stylus 2018": {
+    "brand": "Chromag Bikes",
+    "model": "Stylus 2018",
+    "reason": "frameset - single Default Title variant at 2.88kg (frame-only weight), SKU tagged (Archive), body_html describes only tubeset/dropout/chainstay/tire clearance, no groupset mentioned"
+  },
+  "chromag bikes|stylus 2019": {
+    "brand": "Chromag Bikes",
+    "model": "Stylus 2019",
+    "reason": "frameset - handle frames-stylus-19, Bike Archive frame-only listing, sibling of Stylus 2017 skipped/submitted-frame-only last round"
+  },
+  "crust bikes|malocchio": {
+    "brand": "Crust Bikes",
+    "model": "Malocchio",
+    "reason": "frameset - product_type Frames, sold frame-only (headset not included, brakes/wheels/drivetrain all buyer-choice with no stock build)"
+  },
+  "crust bikes|malocchio disc": {
+    "brand": "Crust Bikes",
+    "model": "Malocchio Disc",
+    "reason": "frameset only - product_type is Frames, headset not included, body_html explicitly says set it up with single/double/triple crank (buyer supplies own build), no groupset or wheelset published"
+  },
+  "orange bikes|ad3": {
+    "brand": "Orange Bikes",
+    "model": "AD3",
+    "reason": "deposit-only listing (GBP 1000 deposit, contact for full price identical across all size/colour variants), not a complete purchasable build"
+  },
+  "production privee|shan gt ti": {
+    "brand": "Production Privee",
+    "model": "Shan GT Ti",
+    "reason": "frameset - product_type Frames, URL literally shan-gt-ti-frame, titanium frame sold without groupset/wheels/brakes"
+  },
+  "chromag bikes|stylus 2021": {
+    "brand": "Chromag Bikes",
+    "model": "Stylus 2021",
+    "reason": "discontinued frame-only archive listing (price 0.00, tags: Bike Archive/Frames), same pattern as Stylus 2017; current complete bike sold under the different model name Stylus MX"
+  },
+  "crust bikes|scapegoat": {
+    "brand": "Crust Bikes",
+    "model": "Scapegoat",
+    "reason": "frameset only - product_type is Frames, marketing copy describes only frame/geometry design (steering angle, stack, reach, seat tube, bottom bracket height), no groupset or wheelset published"
+  },
+  "kinesis|racelight t2 bike": {
+    "brand": "Kinesis",
+    "model": "Racelight T2 Bike",
+    "reason": "frameset only - product_type is Bicycle Frame, single $0.00 Black variant, body_html is marketing prose about ride character with no groupset/wheelset spec"
+  },
+  "otso cycles|voytek frankset": {
+    "brand": "Otso Cycles",
+    "model": "Voytek Frankset",
+    "reason": "frameset only - body_html explicitly says Frameset + Crankset = Frankset, sold as frame plus crank only, no other groupset or wheelset"
+  },
+  "chromag bikes|stylus 2024": {
+    "brand": "Chromag Bikes",
+    "model": "Stylus 2024",
+    "reason": "frameset - single Default Title (Archive) variant at 2880g (frame-only weight), price 0.00, body_html describes only tubeset/geometry, no groupset mentioned; same pattern as Stylus 2018 skipped earlier"
+  },
+  "crust bikes|single speed lightning bolt": {
+    "brand": "Crust Bikes",
+    "model": "Single Speed Lightning Bolt",
+    "reason": "frameset - product_type Frames, body_html confirms frame/fork only single-speed frame (headset not included, no groupset)"
+  },
+  "crust bikes|stupid tourist": {
+    "brand": "Crust Bikes",
+    "model": "Stupid Tourist",
+    "reason": "frameset only - product_type is Frames, body_html links out to a separate wheelset product ('If you need a wheelset here you go!'), no groupset published"
+  },
+  "kinesis|racelight t3 bike": {
+    "brand": "Kinesis",
+    "model": "Racelight T3 Bike",
+    "reason": "frameset only - single $0.00 variant, body_html explicitly calls it 'our classic winter training frame' despite product_type Bicycle; no groupset/wheelset published"
+  },
+  "knolly bikes|chilcotin 26": {
+    "brand": "Knolly Bikes",
+    "model": "Chilcotin 26\"",
+    "reason": "discontinued archive listing (handle prefix 'oldermodels-'), $0.00 single Default Title variant, body_html is generic marketing tagline with zero spec content, no geometry/build tables on the rendered page either - not a real purchasable product to spec"
+  },
+  "pashley cycles|euroload trailer": {
+    "brand": "Pashley Cycles",
+    "model": "Euroload Trailer",
+    "reason": "not a bicycle - this is a towed cargo trailer accessory (product_type Carrier Cycle, no frame/drivetrain/wheels of its own as a bike, empty body_html, only color variants)"
+  },
+  "knolly bikes|delirium 27 5": {
+    "brand": "Knolly Bikes",
+    "model": "Delirium 27.5\"",
+    "reason": "archived discontinued listing - handle oldermodels-delirium-27-5, $0.00 single Default Title variant, page fetched successfully but has no spec/build table anywhere (no groupset, fork, or component named), pure marketing narrative only"
+  }
+}
