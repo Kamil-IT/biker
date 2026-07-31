@@ -12,6 +12,11 @@ import logging
 from fastapi import FastAPI
 from pydantic import BaseModel
 
+# Imported for its side effect: it puts backend/ on sys.path so `app.*` resolves.
+# This service is the only one that reaches into `app` without also importing
+# something else from pipeline.common, so the path bootstrap has to be explicit.
+import pipeline.common  # noqa: F401
+
 from app.models import init_db
 from app.repository import get_bike_details, save_bike_details
 from app.schemas import (

@@ -25,6 +25,22 @@ OPTIONAL_CATEGORIES = {"Electric / Powertrain", "Lighting"}
 KNOWN_CATEGORIES = {name for name, _ in DETAIL_CATEGORIES}
 REQUIRED_CATEGORIES = KNOWN_CATEGORIES - OPTIONAL_CATEGORIES
 MIN_CATEGORIES = 3
+# A frameset clears the category floor on the strength of its Frame category
+# alone, provided that category is genuinely detailed. Set high enough that it
+# cannot become a shortcut for a lazy complete-bike record.
+FRAMESET_MIN_FRAME_SPECS = 6
+
+
+def _spec_rows_in(components: list, category: str) -> int:
+    """Count spec rows belonging to one category."""
+    n = 0
+    for c in components:
+        if not isinstance(c, dict) or c.get("category") != category:
+            continue
+        for s in c.get("subcategories", []) or []:
+            for e in s.get("elements", []) or []:
+                n += len(e.get("specs", []) or [])
+    return n
 
 # Placeholder sentinels. "None" is deliberately NOT here: "Suspension: None" on a
 # rigid fork and "Front Derailleur: None" on a 1x are truthful specs, and
@@ -60,11 +76,25 @@ def validate(agg: Aggregate) -> dict:
 
     found = {c.get("category") for c in agg.components if isinstance(c, dict)}
     hit = found & REQUIRED_CATEGORIES
-    if len(hit) < MIN_CATEGORIES:
-        problems.append(f"only {len(hit)} of 8 categories present (need >= {MIN_CATEGORIES})")
-        refetch = "details"
-
     missing_cats = sorted(REQUIRED_CATEGORIES - found)
+
+    frame_specs = _spec_rows_in(agg.components, "Frame")
+
+    # The >= 3 categories floor is a completeness heuristic for COMPLETE BIKES. A
+    # genuine frameset has a frame and nothing else, and bouncing it was actively
+    # harmful: it pressured agents into padding the record to get past the gate.
+    # Round 5 worked around it by inventing a Wheels category; round 7 by spreading
+    # frame-imposed standards (BB92, Boost 12x148) across Drivetrain/Wheels/Saddle.
+    # The second is defensible, the first is not — but a validator that makes
+    # fabrication the path of least resistance is the wrong validator. A frameset
+    # documented in real depth is a complete record OF A FRAMESET.
+    frameset_ok = "Frame" in found and frame_specs >= FRAMESET_MIN_FRAME_SPECS
+    if len(hit) < MIN_CATEGORIES and not frameset_ok:
+        problems.append(
+            f"only {len(hit)} of 8 categories present (need >= {MIN_CATEGORIES}, "
+            f"or a Frame category with >= {FRAMESET_MIN_FRAME_SPECS} spec rows for a frameset)"
+        )
+        refetch = "details"
 
     spec_count = 0
     for c in agg.components:

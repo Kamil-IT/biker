@@ -22,6 +22,7 @@ from pipeline.common import (
     SHOPIFY_PITFALLS,
     SIBLING_RULE,
     SOURCE_LADDER,
+    URL,
 )
 from app.json_extract import extract_json
 from app.schemas import BikeCategory, BikeSubcategory, ComponentElement, SpecItem
@@ -139,7 +140,17 @@ def task(brand: str, model: str, missing: str = "") -> dict:
             "Raw text with narration or code fences is fine — this service extracts the JSON.",
         ],
         "orders": orders,
-        "submit_to": "/submit",
+        # 9102/submit only PARSES a blob and hands it back — it does not mark the
+        # bike done. The completion write lives on the coordinator. Advertising
+        # "/submit" here cost round 6 two agents a detour, one of them looping on
+        # a bike /next kept re-serving because nothing had recorded it.
+        "submit_to": f"{URL['coordinator']}/submit/details",
+        "submit_shape": {
+            "brand": "...", "model": "...",
+            "payload": {"components": ["...9 category objects..."],
+                        "description": "...", "source_urls": ["..."]},
+        },
+        "parse_check": "POST /submit here first to sanity-check a blob (optional).",
     }
 
 

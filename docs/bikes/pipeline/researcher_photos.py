@@ -15,7 +15,7 @@ import time
 from fastapi import FastAPI
 from pydantic import BaseModel
 
-from pipeline.common import PROMPTS_DIR
+from pipeline.common import PROMPTS_DIR, URL
 from pipeline.photo_extract import (
     _UA,
     _SKIP,
@@ -171,7 +171,16 @@ def task(brand: str, model: str) -> dict:
             "invent image URLs yourself. If no official product page exists, post an "
             "empty product_url and photos will be []."
         ),
-        "submit_to": "/scrape",
+        # /scrape only EXTRACTS and hands the photos back; like 9102/submit it does
+        # not mark the bike done. The completion write is on the coordinator.
+        "extract_with": "/scrape",
+        "submit_to": f"{URL['coordinator']}/submit/photos",
+        "submit_shape": {"brand": "...", "model": "...",
+                         "photos": ["url", "..."], "source_urls": ["..."]},
+        # Round 6: every store was Shopify, so `<product_url>.json` -> images[] beat
+        # rendering on all 40 bikes. It is authoritative by construction — do not
+        # then filter it by title matching, and do not scrape when it is available.
+        "shopify_shortcut": "Append .json to /products/<handle> and take images[].",
     }
 
 
