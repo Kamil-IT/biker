@@ -19,6 +19,9 @@ interface SearchResponse {
   bikes: Bike[]
 }
 
+// Shown when /v1/bike/parse answers 400 without a usable detail string.
+const NO_MATCH_FALLBACK = 'Bike not available in our database'
+
 export default function App() {
   // Search state
   const [appState, setAppState]             = useState<AppState>('idle')
@@ -31,6 +34,7 @@ export default function App() {
   const [showFilters, setShowFilters]       = useState(false)
   const [showAdvanced, setShowAdvanced]     = useState(false)
   const [isParsing, setIsParsing]           = useState(false)
+  const [noMatchMsg, setNoMatchMsg]         = useState<string | null>(null)
 
   const updateFilter = <K extends keyof SearchFilters>(key: K, val: SearchFilters[K]) =>
     setFilters(prev => ({ ...prev, [key]: val }))
@@ -77,6 +81,8 @@ export default function App() {
     const { search: _s, ...structured } = payload
     const hasStructured = Object.values(structured).some(v => v !== undefined)
 
+    setNoMatchMsg(null)
+
     // If only free text provided, parse it into structured fields first
     if (payload.search && !hasStructured) {
       setIsParsing(true)
@@ -86,6 +92,14 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ text: payload.search }),
         })
+        // 400 = the backend recognised no bike attribute in the text. Warn and
+        // stop here rather than running a search that has nothing to go on.
+        if (res.status === 400) {
+          const data = await res.json().catch(() => ({}))
+          setNoMatchMsg((data as { detail?: string }).detail ?? NO_MATCH_FALLBACK)
+          setIsParsing(false)
+          return
+        }
         if (res.ok) {
           const parsed: ParseResponse = await res.json()
           const anyExtracted = !!(
@@ -438,6 +452,16 @@ export default function App() {
                   Describe what you're looking for and we'll find the best bikes for you.
                 </p>
               </div>
+
+              {noMatchMsg && (
+                <div
+                  role="alert"
+                  className="mb-4 px-4 py-3 bg-parchment border border-terra/30 rounded-xl font-body text-sm text-ink"
+                >
+                  <strong className="font-medium text-terra">Not found: </strong>
+                  {noMatchMsg}
+                </div>
+              )}
 
               <SearchInput
                 value={query}
