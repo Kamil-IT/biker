@@ -147,7 +147,7 @@ A bike matches when **every** checkable field given matches. A bike missing the 
 | `belt_drive` | `Drivetrain/*` `element_name` contains `belt` | |
 | `bike_type`, `year`, `search` | — | **not checkable**, ignored by the DB step |
 
-A request with **only** non-checkable fields skips the DB and goes straight to the AI call. At most **5** DB bikes are returned (`MAX_DB_RESULTS`), highest `match_score` first — never topped up with AI results.
+A request with **only** non-checkable fields skips the DB and goes straight to the AI call. **Every** matching DB bike is returned (no cap, TODO-025), highest `match_score` first — never topped up with AI results.
 
 `match_score` / `explanation` / `accessories` of a DB hit come from the bike's most recent `search_bike_rating_cache` row when one exists; otherwise `match_score = 10`, `accessories = []` and the explanation lists the matched fields, e.g. `"Matches: carbon frame, 29\" wheels, hydraulic disc brakes."`.
 
@@ -161,7 +161,7 @@ A request with **only** non-checkable fields skips the DB and goes straight to t
 
 ### `POST /v1/bike/search`
 
-Find up to 5 matching bikes — from the DB when its details match, otherwise from one Claude call. All fields are optional but at least one must be provided.
+Find every matching bike (no cap, min 1) — from the DB when its details match, otherwise from one Claude call. All fields are optional but at least one must be provided.
 
 ```http
 POST http://localhost:8000/v1/bike/search
@@ -189,7 +189,7 @@ All fields except `search` default to `null` (no constraint). The backend assemb
 
 **Flow:**
 0. SQLite reads only — generic cache, then the DB details search over `bike` + `bike_detail_component` (skipped when no checkable field is set). **A hit at either step returns immediately, making zero outbound HTTP calls.** See [Search Cache](#search-cache)
-1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns up to 5 bikes as a JSON array, parsed with `app/json_extract.extract_json()`. Runs only on a DB miss
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns every matching bike as a JSON array (min 1: when nothing meets every filter, the closest bike with a low `match_score` and an explanation naming the unmet filter; `max_tokens=8000`, a warning is logged on `stop_reason == "max_tokens"`), parsed with `app/json_extract.extract_json()`. Runs only on a DB miss
 
 A response with no parseable JSON returns `bikes: []` (never a 502) and is not cached; an upstream API error is a 502. When the AI returns bikes, the response is written to the generic cache and to `search_cache` + `search_bike_rating_cache` via `store.save_search`. A DB-served result is **not** written back to either — see [Search Cache](#search-cache).
 

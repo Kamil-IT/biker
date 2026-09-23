@@ -5,8 +5,8 @@ AI-powered bike finder. Describe what you're looking for in plain English and ge
 ## How it works
 
 1. You enter a free-text description (e.g. *"comfortable bike for daily 10 km city commute"*)
-2. The backend first searches its own bike database: every structured filter it can check (brand, model, frame material, wheel size, frame size, gender, electric, battery, brakes, drivetrain, belt drive) is matched against stored bike specs. Matching bikes (up to 5) are returned with no AI call
-3. Only when the database has no match, a single Claude Haiku call recommends up to 5 real bikes
+2. The backend first searches its own bike database: every structured filter it can check (brand, model, frame material, wheel size, frame size, gender, electric, battery, brakes, drivetrain, belt drive) is matched against stored bike specs. All matching bikes are returned (no cap) with no AI call
+3. Only when the database has no match, a single Claude Haiku call recommends every real bike that fits (at least 1 — the closest match when nothing meets every filter)
 4. Click a result to open the details page — the backend fetches specs, description, manufacturer photos, review score, and current Allegro offers in parallel via Claude web search + Playwright
 5. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel). Equipment is informational only — no shopping/offer links
 
@@ -76,7 +76,7 @@ biker/
 │   │   ├── main.py                    # FastAPI app, routes
 │   │   ├── schemas.py                 # Pydantic models
 │   │   ├── repository.py              # ORM data access: bike details + DB-first search (find_bikes_by_details)
-│   │   ├── bike_finder.py             # Single Claude call → up to 5 bikes (DB-miss fallback)
+│   │   ├── bike_finder.py             # Single Claude call → all matching bikes, min 1 (DB-miss fallback)
 │   │   ├── bike_details_finder.py     # Fetch full component specs via web search
 │   │   ├── bike_description_finder.py # Generate plain-text overview via web search
 │   │   ├── bike_review_finder.py      # Aggregate web reviews into score + explanation

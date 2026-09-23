@@ -225,7 +225,6 @@ def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
 # free text are ignored. A missing spec row does not match. Normalise in Python:
 # SQLite's lower() is ASCII-only, so 'RIESE & MÜLLER' would miss 'riese & müller'.
 
-MAX_DB_RESULTS = 5
 BATTERY_TOLERANCE = 0.10  # ±10 % — "500 Wh" should still find a 504 Wh pack
 
 _SPEC_FIELDS = (
@@ -435,7 +434,7 @@ def find_bikes_by_details(req) -> list[BikeResult]:
     """DB-first search over bike + bike_detail_component — no AI call.
 
     [] (→ AI fallback) when no checkable field is set, nothing matches, or the
-    DB errors. At most MAX_DB_RESULTS bikes, best rating first.
+    DB errors. Every match is returned (no cap), best rating first.
     """
     fields = checkable_fields(req)
     if not fields:
@@ -489,10 +488,9 @@ def find_bikes_by_details(req) -> list[BikeResult]:
             ))
         results.sort(key=lambda r: (-r.match_score, _lc(r.brand), _lc(r.model)))
         logger.info(
-            "find_bikes_by_details | fields=%s matches=%d returned=%d",
-            sorted(fields), len(results), min(len(results), MAX_DB_RESULTS),
+            "find_bikes_by_details | fields=%s matches=%d", sorted(fields), len(results),
         )
-        return results[:MAX_DB_RESULTS]
+        return results
     except Exception as exc:  # noqa: BLE001 — a DB read must never break search
         logger.warning("find_bikes_by_details failed (non-fatal) | %s", exc)
         return []

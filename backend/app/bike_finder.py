@@ -15,7 +15,8 @@ _client = AsyncAnthropic()
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 SYSTEM_PROMPT = (PROMPTS_DIR / "bike_search.md").read_text(encoding="utf-8")
 
-TOTAL_BIKES = 5
+# No result cap (TODO-025): room for a long list without cutting the JSON mid-array.
+MAX_TOKENS = 8000
 
 
 def _to_bike(item) -> BikeResult | None:
@@ -34,18 +35,20 @@ def _to_bike(item) -> BikeResult | None:
 
 
 async def find_bikes(user_search: str) -> list[BikeResult]:
-    """ONE Claude call → up to TOTAL_BIKES bikes. Never raises for bad JSON."""
+    """ONE Claude call → every matching bike (min 1, closest match). [] only on bad JSON."""
     t_start = time.perf_counter()
     response = await _client.messages.create(
         model=MODEL,
-        max_tokens=2000,
+        max_tokens=MAX_TOKENS,
         temperature=0,
         system=SYSTEM_PROMPT,
         messages=[{
             "role": "user",
-            "content": f"User search: {user_search}\nFind up to {TOTAL_BIKES} bike(s).",
+            "content": f"User search: {user_search}",
         }],
     )
+    if response.stop_reason == "max_tokens":
+        logger.warning("bike search hit max_tokens=%d — JSON may be truncated", MAX_TOKENS)
     raw = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
     data = extract_json(raw)
     if isinstance(data, dict):
@@ -55,7 +58,6 @@ async def find_bikes(user_search: str) -> list[BikeResult]:
         return []
 
     bikes = [b for b in (_to_bike(item) for item in data) if b and b.brand and b.model]
-    bikes = bikes[:TOTAL_BIKES]
     logger.info(
         "bikes found | count=%d out_tokens=%d elapsed=%.2fs",
         len(bikes), response.usage.output_tokens, time.perf_counter() - t_start,
