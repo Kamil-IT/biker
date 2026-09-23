@@ -1,8 +1,11 @@
 """Data access layer using SQLAlchemy ORM models."""
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Optional
+
+from sqlalchemy import text
 
 from .models import (
     Bike,
@@ -16,6 +19,7 @@ from .models import (
 from .schemas import (
     BikeDetailsResponse,
     BikeDescription,
+    BikeResult,
     BikeCategory,
     BikeSubcategory,
     ComponentElement,
@@ -26,12 +30,8 @@ logger = logging.getLogger(__name__)
 
 TTL_DETAILS = 30 * 24 * 60 * 60  # 30 days
 
-
-# NOTE: the search-cache helpers (save_search / get_search_by_query /
-# find_bikes_by_brand) used to live here, backed by the bike_results +
-# accessories ORM tables. Those tables have been removed — the live search cache
-# is search_cache + search_bike_rating_cache in app/store.py. This module now
-# owns only the bike-details helpers below.
+# The search cache (search_cache + search_bike_rating_cache) lives in store.py.
+# This module owns the bike-details helpers and the DB-first search below.
 
 
 def rebuild_components(rows) -> list[BikeCategory]:
@@ -216,5 +216,285 @@ def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
 
         logger.info("bike_details hit | company=%r model=%r", company, model)
         return response
+    finally:
+        session.close()
+
+
+# ── DB-first bike search (TODO-024) ─────────────────────────────────────────
+# A bike matches when EVERY checkable field given matches; bike_type / year /
+# free text are ignored. A missing spec row does not match. Normalise in Python:
+# SQLite's lower() is ASCII-only, so 'RIESE & MÜLLER' would miss 'riese & müller'.
+
+MAX_DB_RESULTS = 5
+BATTERY_TOLERANCE = 0.10  # ±10 % — "500 Wh" should still find a 504 Wh pack
+
+_SPEC_FIELDS = (
+    "frame_material", "wheel_size", "frame_size", "gender", "is_electric",
+    "battery_capacity_wh", "brake_type", "drivetrain", "belt_drive",
+)
+CHECKABLE_FIELDS = ("brand", "model") + _SPEC_FIELDS
+
+_ELECTRIC = "Electric / Powertrain"
+
+_MATERIAL_SYNONYMS = {
+    "aluminum": ("alumin", "alloy", "al6", "al 6", "6061", "6066", "7005"),
+    "carbon": ("carbon",),
+    "steel": ("steel", "chromoly", "cro-mo", "crmo", "cromo", "hi-ten", "4130"),
+    "titanium": ("titanium",),
+}
+_WHEEL_SYNONYMS = {
+    "700c": ("700c", "700", "28"),
+    "28": ("28", "700c", "700"),
+    "650b": ("650b", "27.5"),
+    "27.5": ("27.5", "650b"),
+}
+_GENDER_PATTERNS = {
+    "male": r"\bmen|\bmale|\bunisex|\buniversal",
+    "female": r"\bwomen|\bfemale|\bladies|\bunisex|\buniversal",
+    "universal": r"\bunisex|\buniversal",
+}
+_BRAKE_PATTERNS = {
+    "hydraulic disc": r"hydraulic",
+    "mechanical disc": r"mechanical|cable[^|]*disc",
+    "v-brake": r"v-?\s?brake|linear[- ]pull",
+    "rim": r"\brim\b|v-?\s?brake|linear[- ]pull|cantilever|dual[- ]pivot|side-?pull",
+}
+_SIZE_ALIASES = {"SM": "S", "MD": "M", "LG": "L", "2XL": "XXL"}
+
+
+def _lc(s: Optional[str]) -> str:
+    return (s or "").strip().lower()
+
+
+def checkable_fields(req) -> dict:
+    """The DB-checkable fields the caller actually set (value is not None)."""
+    return {f: getattr(req, f) for f in CHECKABLE_FIELDS if getattr(req, f) is not None}
+
+
+class _BikeSpecs:
+    """One bike's component rows, kept flat so each matcher filters one list."""
+
+    def __init__(self) -> None:
+        self.categories: set[str] = set()
+        self.rows: list[tuple[str, str, str, str, str]] = []  # cat, sub, element, key, value
+        self.descriptions: dict[str, list[str]] = {}  # category -> element descriptions
+
+    def values(self, key: str, category: Optional[str] = None, sub: Optional[str] = None) -> list[str]:
+        return [
+            v for c, s, _, k, v in self.rows
+            if _lc(k) == key and v and (category is None or c == category) and (sub is None or s == sub)
+        ]
+
+    def blob(self, category: str) -> str:
+        """Element names, descriptions and spec values of one category, lowercased.
+
+        Descriptions matter: many brakes are named only by model ("SRAM Maven
+        Silver") and say "Hydraulic Disc Brake" only in their description.
+        """
+        parts = list(self.descriptions.get(category, []))
+        for c, _, e, _, v in self.rows:
+            if c == category:
+                parts += [e, v]
+        return " | ".join(_lc(p) for p in parts if p)
+
+    def subcategories(self, category: str) -> set[str]:
+        return {s for c, s, *_ in self.rows if c == category}
+
+
+def _match_material(specs: _BikeSpecs, want: str) -> bool:
+    needles = _MATERIAL_SYNONYMS.get(_lc(want), (_lc(want),))
+    return any(any(n in _lc(v) for n in needles) for v in specs.values("material", "Frame", "Frame"))
+
+
+def _match_wheel(specs: _BikeSpecs, want: str) -> bool:
+    token = re.sub(r'"|inch(es)?|\bin\b', "", _lc(want)).strip()
+    needles = _WHEEL_SYNONYMS.get(token, (token,))
+    for v in specs.values("wheel size") + specs.values("size", "Wheels"):
+        if any(re.search(rf"(?<![\d.]){re.escape(n)}(?![\d.])", _lc(v)) for n in needles):
+            return True
+    return False
+
+
+def _match_frame_size(specs: _BikeSpecs, want: str) -> bool:
+    target = _SIZE_ALIASES.get(want.strip().upper(), want.strip().upper())
+    for v in specs.values("sizes", "Frame", "Frame") + specs.values("size", "Frame", "Frame"):
+        tokens = {t for t in re.split(r"[\s,/()\-]+", v.upper()) if t}
+        if target in {_SIZE_ALIASES.get(t, t) for t in tokens}:
+            return True
+    return False
+
+
+def _match_gender(specs: _BikeSpecs, want: str) -> bool:
+    pattern = _GENDER_PATTERNS.get(_lc(want), re.escape(_lc(want)))
+    return any(re.search(pattern, _lc(v)) for v in specs.values("gender"))
+
+
+def _match_battery(specs: _BikeSpecs, want: int) -> bool:
+    for v in specs.values("capacity", _ELECTRIC, "Battery"):
+        m = re.search(r"(\d{2,4}(?:[.,]\d+)?)\s*wh", _lc(v))
+        if m and abs(float(m.group(1).replace(",", ".")) - want) <= want * BATTERY_TOLERANCE:
+            return True
+    return False
+
+
+def _match_brake(specs: _BikeSpecs, want: str) -> bool:
+    blob = specs.blob("Brakes")
+    pattern = _BRAKE_PATTERNS.get(_lc(want), re.escape(_lc(want)))
+    if not blob or re.search(pattern, blob) is None:
+        return False
+    # Rim brakes and discs are exclusive; "rim" can turn up in a disc bike's
+    # description ("rotor mount on the rim side"), so a disc mention vetoes it.
+    return not (_lc(want) in ("rim", "v-brake") and "disc" in blob)
+
+
+def _match_drivetrain(specs: _BikeSpecs, want: str) -> bool:
+    blob = specs.blob("Drivetrain")
+    if not blob:
+        return False
+    m = re.fullmatch(r"([123])\s*x", _lc(want))
+    if not m:
+        return _lc(want) in blob
+    n = m.group(1)
+    # "1x12" / "2x11" / "1x drivetrain"; the lookbehind stops "52x36T" reading as 2x.
+    if re.search(rf"(?<![\d.]){n}\s?x(?!\d{{2}}t)", blob):
+        return True
+    # Otherwise infer from the chainring spec: "32T" (with no front derailleur)
+    # is 1x, "50/34T" is 2x, "48/38/28T" is 3x.
+    has_fd = "Front Derailleur" in specs.subcategories("Drivetrain")
+    for v in specs.values("chainrings", "Drivetrain") + specs.values("chainring", "Drivetrain"):
+        rings = re.findall(r"\d{2}", v.split("(")[0])
+        if n == "1" and len(rings) == 1 and not has_fd:
+            return True
+        if n in ("2", "3") and "/" in v and len(rings) == int(n):
+            return True
+    return False
+
+
+def _match_belt(specs: _BikeSpecs, want: bool) -> bool:
+    has_belt = any("belt" in _lc(e) for c, _, e, _, _ in specs.rows if c == "Drivetrain")
+    return has_belt == want
+
+
+_MATCHERS = {
+    "frame_material": _match_material,
+    "wheel_size": _match_wheel,
+    "frame_size": _match_frame_size,
+    "gender": _match_gender,
+    "is_electric": lambda specs, want: (_ELECTRIC in specs.categories) == want,
+    "battery_capacity_wh": _match_battery,
+    "brake_type": _match_brake,
+    "drivetrain": _match_drivetrain,
+    "belt_drive": _match_belt,
+}
+
+_MATCH_LABELS = {
+    "brand": lambda v: f"brand {v}",
+    "model": lambda v: f"model {v}",
+    "frame_material": lambda v: f"{_lc(v)} frame",
+    "wheel_size": lambda v: f"{v} wheels",
+    "frame_size": lambda v: f"size {v}",
+    "gender": lambda v: f"{_lc(v)} fit",
+    "is_electric": lambda v: "electric" if v else "non-electric",
+    "battery_capacity_wh": lambda v: f"~{v} Wh battery",
+    "brake_type": lambda v: _lc(v) if _lc(v).endswith("brake") else f"{_lc(v)} brakes",
+    "drivetrain": lambda v: f"{v} drivetrain",
+    "belt_drive": lambda v: "belt drive" if v else "no belt drive",
+}
+
+
+def _describe_match(fields: dict) -> str:
+    """'Matches: carbon frame, 29" wheels, hydraulic disc brakes.' for a DB hit."""
+    return "Matches: " + ", ".join(_MATCH_LABELS[f](v) for f, v in fields.items()) + "."
+
+
+def _latest_ratings(session, bike_ids: list[int]) -> dict[int, tuple[float, str, list[str]]]:
+    """Most recent search_bike_rating_cache row per bike, if any."""
+    if not bike_ids:
+        return {}
+    rows = session.execute(
+        text(
+            "SELECT r.bike_id, r.rating, r.explanation, r.accessories "
+            "FROM search_bike_rating_cache r JOIN search_cache s ON s.id = r.search_cache_id "
+            f"WHERE r.bike_id IN ({','.join(str(int(i)) for i in bike_ids)}) "
+            "ORDER BY s.time_stored DESC, r.id DESC"
+        )
+    ).fetchall()
+    out: dict[int, tuple[float, str, list[str]]] = {}
+    for bike_id, rating, explanation, accessories in rows:
+        if bike_id in out:
+            continue
+        try:
+            acc = json.loads(accessories) if accessories else []
+        except (TypeError, ValueError):
+            acc = []
+        out[bike_id] = (float(rating), explanation or "", [str(a) for a in acc])
+    return out
+
+
+def find_bikes_by_details(req) -> list[BikeResult]:
+    """DB-first search over bike + bike_detail_component — no AI call.
+
+    [] (→ AI fallback) when no checkable field is set, nothing matches, or the
+    DB errors. At most MAX_DB_RESULTS bikes, best rating first.
+    """
+    fields = checkable_fields(req)
+    if not fields:
+        return []
+    session = get_session()
+    try:
+        brand, model = _lc(fields.get("brand")), _lc(fields.get("model"))
+        candidates = [
+            b for b in session.query(Bike.id, Bike.brand, Bike.model).all()
+            if (not brand or _lc(b.brand) == brand) and (not model or _lc(b.model) == model)
+        ]
+        spec_fields = {f: v for f, v in fields.items() if f in _MATCHERS}
+        if spec_fields and candidates:
+            detail_by_bike = dict(
+                session.query(BikeDetails.bike_id, BikeDetails.id)
+                .filter(BikeDetails.bike_id.in_([b.id for b in candidates]))
+                .all()
+            )
+            specs = {d: _BikeSpecs() for d in detail_by_bike.values()}
+            rows = (
+                session.query(
+                    BikeDetailComponent.bike_detail_id, BikeDetailComponent.category,
+                    BikeDetailComponent.subcategory, BikeDetailComponent.element_name,
+                    BikeDetailComponent.spec_key, BikeDetailComponent.spec_value,
+                    BikeDetailComponent.element_description, BikeDetailComponent.spec_order,
+                )
+                .filter(BikeDetailComponent.bike_detail_id.in_(list(specs)))
+                .all()
+            )
+            for detail_id, cat, sub, elem, key, value, desc, spec_order in rows:
+                bucket = specs[detail_id]
+                bucket.categories.add(cat)
+                bucket.rows.append((cat, sub, elem or "", key or "", value or ""))
+                if desc and not spec_order:  # once per element, not once per spec row
+                    bucket.descriptions.setdefault(cat, []).append(desc)
+            # A bike with no details cannot prove any spec, so it never matches.
+            candidates = [
+                b for b in candidates
+                if b.id in detail_by_bike
+                and all(_MATCHERS[f](specs[detail_by_bike[b.id]], v) for f, v in spec_fields.items())
+            ]
+
+        ratings = _latest_ratings(session, [b.id for b in candidates])
+        default = (10.0, _describe_match(fields), [])
+        results = []
+        for b in candidates:
+            score, explanation, accessories = ratings.get(b.id, default)
+            results.append(BikeResult(
+                brand=b.brand, model=b.model, accessories=accessories,
+                match_score=score, explanation=explanation,
+            ))
+        results.sort(key=lambda r: (-r.match_score, _lc(r.brand), _lc(r.model)))
+        logger.info(
+            "find_bikes_by_details | fields=%s matches=%d returned=%d",
+            sorted(fields), len(results), min(len(results), MAX_DB_RESULTS),
+        )
+        return results[:MAX_DB_RESULTS]
+    except Exception as exc:  # noqa: BLE001 — a DB read must never break search
+        logger.warning("find_bikes_by_details failed (non-fatal) | %s", exc)
+        return []
     finally:
         session.close()

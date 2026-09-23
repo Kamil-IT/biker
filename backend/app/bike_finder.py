@@ -1,109 +1,63 @@
-import asyncio
-import json
+"""Single-call AI bike finder — the fallback when the DB has no match (TODO-024)."""
 import logging
-import re
 import time
 from pathlib import Path
 
 from anthropic import AsyncAnthropic
 
-from .categories import BIKE_CATEGORIES
-from .schemas import BikeResult, CategoryResult
+from .json_extract import extract_json
+from .schemas import BikeResult
 
 logger = logging.getLogger("biker.finder")
 
 MODEL = "claude-haiku-4-5-20251001"
 _client = AsyncAnthropic()
-_CODE_FENCE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?```$", re.DOTALL)
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+SYSTEM_PROMPT = (PROMPTS_DIR / "bike_search.md").read_text(encoding="utf-8")
 
-_SLUG_MAP: dict[str, str] = {name: slug for name, slug in BIKE_CATEGORIES}
-
-MIN_SCORE = 5
 TOTAL_BIKES = 5
 
 
-def _strip_code_fence(text: str) -> str:
-    m = _CODE_FENCE.match(text)
-    return m.group(1).strip() if m else text
-
-
-def filter_top_categories(results: list[CategoryResult]) -> list[CategoryResult]:
-    qualifying = [r for r in results if r.score >= MIN_SCORE]
-    if len(qualifying) < 2:
-        qualifying = sorted(results, key=lambda r: r.score, reverse=True)[:2]
-    return qualifying
-
-
-def allocate_bikes(top: list[CategoryResult], total: int = TOTAL_BIKES) -> list[dict]:
-    total_score = sum(r.score for r in top)
-    exact = [r.score / total_score * total for r in top]
-    floors = [int(e) for e in exact]
-    remainder = total - sum(floors)
-    indices = sorted(range(len(exact)), key=lambda i: exact[i] - floors[i], reverse=True)
-    for i in indices[:remainder]:
-        floors[i] += 1
-    # guarantee minimum 1 per category (can push total above `total` in degenerate cases)
-    for i in range(len(floors)):
-        if floors[i] == 0:
-            floors[i] = 1
-    return [
-        {"category": top[i].category, "slug": _SLUG_MAP.get(top[i].category, ""), "count": floors[i]}
-        for i in range(len(top))
-    ]
-
-
-async def find_bikes_for_category(category: str, slug: str, count: int, user_search: str) -> list[BikeResult]:
-    prompt_path = PROMPTS_DIR / f"bike_search_{slug}.md"
-    system_prompt = prompt_path.read_text(encoding="utf-8")
-    user_message = f"User search: {user_search}\nFind exactly {count} bike(s)."
-
-    t_cat = time.perf_counter()
-    for attempt in range(2):
-        response = await _client.messages.create(
-            model=MODEL,
-            max_tokens=1500,
-            temperature=0,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_message}],
+def _to_bike(item) -> BikeResult | None:
+    if not isinstance(item, dict):
+        return None
+    try:
+        return BikeResult(
+            brand=str(item["brand"]).strip(),
+            model=str(item["model"]).strip(),
+            accessories=[str(a) for a in item.get("accessories") or []],
+            match_score=max(0.0, min(10.0, float(item["match_score"]))),
+            explanation=str(item.get("explanation", "")),
         )
-        raw = response.content[0].text.strip()
-        text = _strip_code_fence(raw)
-        try:
-            data = json.loads(text)
-            if not isinstance(data, list):
-                raise ValueError("expected JSON array")
-            bikes = [
-                BikeResult(
-                    brand=str(item["brand"]),
-                    model=str(item["model"]),
-                    accessories=list(item.get("accessories", [])),
-                    match_score=float(item["match_score"]),
-                    explanation=str(item["explanation"]),
-                )
-                for item in data
-            ]
-            logger.info(
-                "bikes found       | category=%-20s count=%d attempts=%d "
-                "out_tokens=%d elapsed=%.2fs",
-                f"{category!r}",
-                len(bikes),
-                attempt + 1,
-                response.usage.output_tokens,
-                time.perf_counter() - t_cat,
-            )
-            return bikes
-        except (json.JSONDecodeError, KeyError, ValueError):
-            logger.warning("parse failed (attempt %d) | category=%r raw=%r", attempt + 1, category, raw)
-
-    logger.error("bike search failed | category=%r elapsed=%.2fs", category, time.perf_counter() - t_cat)
-    return []
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
-async def find_all_bikes(allocation: list[dict], user_search: str) -> list[BikeResult]:
-    tasks = [
-        find_bikes_for_category(item["category"], item["slug"], item["count"], user_search)
-        for item in allocation
-    ]
-    results = await asyncio.gather(*tasks)
-    return [bike for category_bikes in results for bike in category_bikes]
+async def find_bikes(user_search: str) -> list[BikeResult]:
+    """ONE Claude call → up to TOTAL_BIKES bikes. Never raises for bad JSON."""
+    t_start = time.perf_counter()
+    response = await _client.messages.create(
+        model=MODEL,
+        max_tokens=2000,
+        temperature=0,
+        system=SYSTEM_PROMPT,
+        messages=[{
+            "role": "user",
+            "content": f"User search: {user_search}\nFind up to {TOTAL_BIKES} bike(s).",
+        }],
+    )
+    raw = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
+    data = extract_json(raw)
+    if isinstance(data, dict):
+        data = data.get("bikes", [])
+    if not isinstance(data, list):
+        logger.error("bike search parse failed | raw=%r", raw[:500])
+        return []
+
+    bikes = [b for b in (_to_bike(item) for item in data) if b and b.brand and b.model]
+    bikes = bikes[:TOTAL_BIKES]
+    logger.info(
+        "bikes found | count=%d out_tokens=%d elapsed=%.2fs",
+        len(bikes), response.usage.output_tokens, time.perf_counter() - t_start,
+    )
+    return bikes

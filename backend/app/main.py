@@ -4,11 +4,11 @@ import time
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-load_dotenv()  # must run before anthropic_scorer imports AsyncAnthropic
+load_dotenv()  # must run before the finders construct AsyncAnthropic
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from .schemas import (  # noqa: E402
-    SearchRequest, BikeSearchResponse, CategoryResult,
+    SearchRequest, BikeSearchResponse,
     BikeDetailsRequest, BikeDetailsResponse,
     BikeReviewRequest, BikeReviewResponse,
     BikeOfferRequest, BikeOfferResponse,
@@ -18,9 +18,7 @@ from .schemas import (  # noqa: E402
     ParseRequest, ParseResponse,
     CachedSearchResponse,
 )
-from .categories import BIKE_CATEGORIES, CATEGORY_PROMPTS  # noqa: E402
-from .anthropic_scorer import score_category  # noqa: E402
-from .bike_finder import filter_top_categories, allocate_bikes, find_all_bikes  # noqa: E402
+from .bike_finder import find_bikes  # noqa: E402
 from .bike_details_finder import find_bike_details  # noqa: E402
 from .bike_description_finder import find_bike_description  # noqa: E402
 from .bike_photos_finder import find_bike_photos  # noqa: E402
@@ -37,11 +35,10 @@ from .bike_parser import parse_free_text  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
 from .store import (  # noqa: E402
     init_store, save_search, get_search_by_query, find_bikes_by_brand,
-    find_bike_by_brand_model,
 )
 # Details are served from the ORM tables (bike_detail + bike_detail_component),
 # not the retired bike_details_cache blob — see TODO-019.
-from .repository import save_bike_details, get_bike_details  # noqa: E402
+from .repository import save_bike_details, get_bike_details, find_bikes_by_details  # noqa: E402
 from .models import init_db  # noqa: E402
 
 logging.basicConfig(
@@ -83,75 +80,33 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         save_search(cached.search, cached.bikes)
         return cached
 
-    # TODO-009: a brand+model search can often be answered straight from
-    # search_cache, skipping the whole AI pipeline. No filter is gated — none
-    # has backing data in the cache (see backend/README.md).
-    if req.brand and req.model:
-        db_bikes = find_bike_by_brand_model(req.brand, req.model)
-        if db_bikes:
-            enriched = req.enriched_query()
-            logger.info(
-                "search served from DB | brand=%r model=%r bikes=%d",
-                req.brand, req.model, len(db_bikes),
-            )
-            # Decision 5: deliberately no set_cached here — the generic cache
-            # has no TTL, so warming it would pin a 24 h result permanently.
-            return BikeSearchResponse(search=enriched, bikes=db_bikes)
-        # fall through to the AI pipeline
-
     enriched = req.enriched_query()
-    logger.info("search request | enriched_query=%r", enriched)
 
+    # TODO-024: DB first. find_bikes_by_details returns [] straight away when no
+    # DB-checkable field is set (only bike_type / year / free text), so those
+    # requests go straight to the AI call.
+    db_bikes = find_bikes_by_details(req)
+    if db_bikes:
+        logger.info("search served from DB | enriched_query=%r bikes=%d", enriched, len(db_bikes))
+        # Deliberately no set_cached: the generic cache has no TTL, so warming it
+        # from the DB would pin this answer even after the DB changes.
+        return BikeSearchResponse(search=enriched, bikes=db_bikes)
+
+    logger.info("search request (AI) | enriched_query=%r", enriched)
     t_total = time.perf_counter()
-
-    async def _score_one(name: str) -> CategoryResult:
-        t_cat = time.perf_counter()
-        logger.info("scoring category | category=%r", name)
-        result = await score_category(enriched, name, CATEGORY_PROMPTS[name])
-        elapsed = time.perf_counter() - t_cat
-        logger.info(
-            "category scored   | category=%-20s score=%2d  elapsed=%.2fs  explanation=%r",
-            f"{name!r}",
-            result.score,
-            elapsed,
-            result.explanation,
-        )
-        return result
-
-    scored = await asyncio.gather(
-        *(_score_one(name) for name, _ in BIKE_CATEGORIES),
-        return_exceptions=True,
-    )
-
-    category_results: list[CategoryResult] = []
-    for (name, _), result in zip(BIKE_CATEGORIES, scored):
-        if isinstance(result, Exception):
-            logger.error("scoring failed | category=%r error=%s", name, result)
-            raise HTTPException(
-                status_code=502,
-                detail=f"Upstream error for category {name!r}: {result}",
-            ) from result
-        category_results.append(result)
-
-    category_results.sort(key=lambda r: r.score, reverse=True)
-
-    top = filter_top_categories(category_results)
-    allocation = allocate_bikes(top)
-    logger.info(
-        "allocation | top_categories=%s",
-        [(a["category"], a["count"]) for a in allocation],
-    )
-
-    bikes = await find_all_bikes(allocation, enriched)
-    total_elapsed = time.perf_counter() - t_total
+    try:
+        bikes = await find_bikes(enriched)
+    except Exception as exc:  # noqa: BLE001 — upstream API failure, not a parse error
+        logger.error("bike search failed | error=%s", exc)
+        raise HTTPException(status_code=502, detail=f"Upstream error: {exc}") from exc
     logger.info(
         "search complete | bikes=%d total_elapsed=%.2fs",
-        len(bikes),
-        total_elapsed,
+        len(bikes), time.perf_counter() - t_total,
     )
     response = BikeSearchResponse(search=enriched, bikes=bikes)
-    set_cached("/v1/bike/search", _fields, response)
-    save_search(enriched, bikes)
+    if bikes:
+        set_cached("/v1/bike/search", _fields, response)
+        save_search(enriched, bikes)
     return response
 
 

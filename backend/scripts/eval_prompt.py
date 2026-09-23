@@ -7,14 +7,13 @@ contains a numeric rating (JSON `score`, `score: N`, or `N/10`), the extracted
 0-10 value.
 
 Usage (run from backend/):
-    python scripts/eval_prompt.py app/prompts/road.md "fast carbon bike for tarmac racing"
-    python scripts/eval_prompt.py app/prompts/road.md "input one" "input two"
-    python scripts/eval_prompt.py app/prompts/road.md --dataset inputs.txt   # 1 input/line
-    python scripts/eval_prompt.py app/prompts/road.md --model sonnet "input"
-    type inputs.txt | python scripts/eval_prompt.py app/prompts/road.md      # inputs on stdin
+    python scripts/eval_prompt.py app/prompts/bike_search.md "fast carbon bike for tarmac racing"
+    python scripts/eval_prompt.py app/prompts/bike_search.md "input one" "input two"
+    python scripts/eval_prompt.py app/prompts/bike_search.md --dataset inputs.txt   # 1 input/line
+    python scripts/eval_prompt.py app/prompts/bike_search.md --model sonnet "input"
+    type inputs.txt | python scripts/eval_prompt.py app/prompts/bike_search.md      # inputs on stdin
 
-This is the generic sibling of `test_scoring.py`: that suite runs the fixed
-directional category eval; this script runs an ad-hoc prompt against ad-hoc inputs.
+Runs an ad-hoc prompt against ad-hoc inputs.
 """
 
 import argparse
