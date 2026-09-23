@@ -114,8 +114,13 @@ SHOPIFY_PITFALLS = [
     "`2023-dsx-fs`. The TITLE is authoritative; the slug is legacy. Do not 'correct' a "
     "title/handle mismatch into picking a different product.",
     "BUNDLE AND REGIONAL LISTINGS: Lectric lists one trike under ~9 titles padded with "
-    "'+ FREE Cargo Package ($455 Value)' plus `[CA]` duplicates. Always take the plain "
-    "base listing, never a promo bundle.",
+    "'+ FREE Cargo Package ($455 Value)' plus `[CA]` duplicates. Prefer the plain base "
+    "listing. **BUT round 12: for some high-volume Lectric trims NO plain base listing "
+    "exists** — every products.json entry is a bundle or regional variant. When the hinted "
+    "URL 404s (a [CA] block) and there is no unpadded sibling, the value-bundle listing on "
+    "the same domain carries an IDENTICAL core-bike Specifications accordion "
+    "(`js-specs-list`); use it and say so in the description. 'Never use a bundle' was too "
+    "strong — the rule is never take the bundle's PRICE or ACCESSORIES as the bike's.",
     "REGIONAL SPLITS CUT BOTH WAYS. Engwe's ENGINE PRO is US-only (engwe-bikes.com) and "
     "Engine X Combo is EU-only (engwe.com). Neither domain is 'the' catalog — absence "
     "from one storefront proves nothing.",
@@ -156,6 +161,95 @@ SHOPIFY_PITFALLS = [
     "(~2.9 kg), body_html that **describes only tubeset/geometry** or calls the thing a "
     "'frame'/'frameset' outright, and **no groupset named anywhere**. Take two before "
     "deciding. Watch for portmanteaus: Otso's 'Voytek Frankset' is Frameset + Crankset.",
+    "WAYBACK CANNOT RESURRECT A CLIENT-RENDERED PAGE — IT ARCHIVES HTML, NOT THE RENDERED "
+    "DOM (round 12, Salsa 2009 Caballero). Salsa's 'build_kit' tab was JS-rendered, so it "
+    "is EMPTY in every capture from 2011-2015; only the server-rendered 'frame_tech' tab "
+    "survives. This is why Wayback is last in the chain and why it sometimes cannot help "
+    "at all: if a brand was Shogun/JS-only then, the archive has nothing either. Stop "
+    "early rather than trying more snapshots of the same empty tab.",
+    "SPECIALIZED (Salesforce Commerce Cloud + Next.js RSC): images are NOT `<img src>` "
+    "tags — they are `assets.specialized.com/i/specialized/<numeric-id>` refs embedded in "
+    "the RSC payload. Grep that exact host pattern. Region instability is extreme on this "
+    "brand: for two 2004 archives, bare/pl/us-en all 404'd, one resolved only under "
+    "`gb/en` and the other only under `de/de` and `fr/fr`. Iterate the whole prefix list "
+    "per PRODUCT, not per brand.",
+    "A DISCONTINUED MODEL MAY STILL BE LIVE ON THE CURRENT STOREFRONT UNDER ITS LEGACY "
+    "PRODUCT CODE — TRY THIS BEFORE WAYBACK (round 13, Specialized). The 2004 '04 Allez "
+    "Comp Double Intl' is served today at "
+    "`specialized.com/gb/en/04-allez-comp-double-intl/p/795`: a modern React page that "
+    "kept the old code as its slug. It carries marketing highlights only "
+    "(`productSpecs.modelName` populated, detail fields empty), so it is a PARTIAL source "
+    "— say so in the description — but it is a live primary source, and it beats guessing "
+    "Wayback CDX query strings for a 20-year-old JSP page.",
+    "DISCONTINUED BIKES: TRY THE BRAND'S OWN ARCHIVE PATH (round 12). Salsa keeps "
+    "`salsacycles.com/bikes/archive/<model>/frame_tech/` — reachable via Wayback and "
+    "server-rendered. A brand that has an /archive/ route usually has it for every "
+    "retired model.",
+    "KNOWN DEAD END, DO NOT BURN BUDGET: mtbr.com spec pages sit behind a proof-of-work "
+    "JS challenge and have no usable Wayback capture.",
+    "RENAME vs NAMEPLATE-REUSE — OPPOSITE CASES, DO NOT CONFLATE. Rivendell's 'Clem Smith "
+    "Jr.' was renamed (Clementine -> Clem Smith Jr. L-Type -> Clem), so the current "
+    "listing IS the same product and is the right source; document the lineage in "
+    "source_urls. Salsa's 'Dos Niner' is the opposite: one nameplate over two different "
+    "bikes, where the well-known one is not the one you were handed. Test: is the product "
+    "IDENTITY continuous, or just the string? Verify the lineage — never assume either. "
+    "CAVEAT on a rename: the current listing may be a later model year with a different "
+    "build, so state in the description WHICH era's spec the record carries.",
+    "ONE LETTER APART CAN BE TWO BIKES. Specialized 'Hotrock FS 24' (kids hardtail, "
+    "despite the 'FS') and 'Hotrock FSR 24' are different products. Same family as the "
+    "Lectric 750 and Engwe 2.0 cases: never let a near-identical name imply a shared spec.",
+    "A MODEL NAME SHARED WITH A BETTER-KNOWN BIKE IS A TRAP (round 13, Salsa 'Dos Niner'). "
+    "The famous Dos Niner is a steel hardtail; the 2009 listing is a short-travel FULL "
+    "SUSPENSION 29er (Scandium frame, Salsa Relish Air shock, 25 mm travel). Prior "
+    "knowledge of a nameplate is not evidence about the listing in front of you — confirm "
+    "frame material and suspension from the page or an archive before writing either.",
+    "CHECK THE PRODUCT TEMPLATE, NOT JUST product_type (round 13, Orange 'Phase Ebike "
+    "decals 2020'). product_type was 'Bike'; the item is a $25 vinyl decal set rendered "
+    "with an `ecom-dropdown-merch-product` template. A merch/accessory template name is a "
+    "stronger signal than product_type, which has now been wrong in both directions "
+    "(frameset labelled 'Bicycle', merch labelled 'Bike').",
+    "A 200 RESPONSE CAN STILL BE A DEAD LISTING (round 12, sixthreezero). "
+    "`/products/<handle>.json` returned 200 with `images: []`, a $0.00 stub variant and no "
+    "spec — the product is unpublished, not unreachable. That is a genuine skip (not a "
+    "bike for sale), NOT a 'could not fetch'. Distinguish: no data served vs no data "
+    "exists. Only the second is a settled result.",
+    "PHOTOS FOR A DELISTED PRODUCT MAY ONLY EXIST IN BRAND EDITORIAL (round 12, Rivendell "
+    "Cheviot, recovered from a staff-bike blog post). Usable, but FLAG THE PROVENANCE in "
+    "the description: a staff or personal build is not necessarily the stock "
+    "specification, so its photos may show components the product never shipped with.",
+    "DO NOT FOLLOW A REDIRECT OFF THE BRAND'S DOMAIN (round 12: a rivbike.com product "
+    "path redirected to `transportr.io/redirect/...`). Fetch the direct product path "
+    "instead. An off-domain redirect from a product URL is not a source of truth about "
+    "that product.",
+    "A BRAND MAY RUN A SECOND LIVE DOMAIN (round 12, Otso: otsocycles.com AND "
+    "otsobikes.com). Both are Shogun-empty on the product page, but one embeds the gviz "
+    "Google Sheet with the full build spec. Check for an alternate domain the same way "
+    "you check for a regional subdomain.",
+    "IN A SHARED SPEC SHEET, MATCH THE HEADER **TEXT**, NOT ITS href (round 12, Otso). A "
+    "gviz sheet column headed 'Shimano GRX 800 Di2 1x12' was hyperlinked to a "
+    "`waheela-r-...` product while the column's row data was unambiguously the requested "
+    "warakin-ti build. A stray link is not evidence the data is wrong — but it is also not "
+    "evidence it is right, so confirm on the header text and the row content together.",
+    "WIDE BUILD-COMPARISON TABLES ARE OFF-BY-ONE TRAPS (round 12, Revel: 5 build tiers as "
+    "5 columns plus a category-label column). Fetch the `<thead>` row separately and index "
+    "the body from THAT — never assume body column N lines up with the visual column N. "
+    "An off-by-one here silently gives the bike a neighbouring tier's entire parts list.",
+    "DO NOT OVER-GENERALISE A BRAND'S QUIRK. Priority's narrative `bike-feature_card-text` "
+    "layout is real on some products (600HXT, APOLLO, BRILLIANT) but the EIGHT has a clean "
+    "two-column `spec-table_table` (class `spec-table`, id `components`). Check for the "
+    "easy structure first even on a brand known for the hard one.",
+    "INLINE JS SPEC OBJECTS: GREP FOR THE PATTERN, NOT THE NAME (round 11, Rocky "
+    "Mountain). bikes.com renders its Specifications accordion from "
+    "`window.specsListObj = Object.fromEntries(...)` embedded in a <script> tag — no "
+    "table in the DOM at all. Same family as Aventon's `techSpecs.data` and Ari's "
+    "`const data = [`, different literal name every time. So: grep for "
+    "`window.\\w*Obj\\s*=`, `Object.fromEntries`, `specsList`, and any `<script>` holding "
+    "a JSON-ish object near the word 'spec'. 'No table' never means 'no spec'.",
+    "MARIN 404s: TRY THE LEGACY `/ww/bikes/<handle>` PAGE BEFORE WAYBACK (round 11). "
+    "Marin's Shopify product pages 404 regionally (Pine Mountain 2 in round 8, Rift Zone "
+    "E2 in round 11 — 2 for 2), but Marin also keeps non-Shopify legacy spec pages at "
+    "`marinbikes.com/ww/bikes/<handle>` with the complete table. Brand-specific and much "
+    "faster than a snapshot.",
     "THE SPEC MAY LIVE ON A SEPARATE /pages/ SUB-PAGE, NOT THE PRODUCT PAGE (round 9, "
     "Pure Cycles). `/products/original-21154` carries no spec at all — not even marketing "
     "body_html — while `/pages/pure-fix-original-specs` has the full build. Before "
@@ -186,7 +280,13 @@ SHOPIFY_PITFALLS = [
     "a forum post: it is a structured product record, not someone's recollection. A "
     "dealer's plain HTML spec page works the same way (Campfire Cycling for Otso Voytek). "
     "THIS IS NOW THE DEFAULT MOVE for a client-rendered brand — try a dealer before "
-    "WebSearch, since Shogun/JS-only sites recur per BRAND, not per product. It is also "
+    "WebSearch. **CORRECTED IN ROUND 14: rendering can vary PER PRODUCT within one "
+    "domain.** sixthreezero server-rendered a full spec table for the 20\" Simple Step "
+    "Thru while the A/O Amelia on the same site was a pure client-side Gatsby shell with "
+    "a 404ing page-data.json and an empty product schema. So a brand being JS-only is a "
+    "PRIOR, not a fact: check for JSON-LD / a spec table on each product before deciding "
+    "the route, and do not conclude 'this brand renders server-side' from one success. "
+    "It is also "
     "the LAST RESORT when a manufacturer is genuinely unreachable — an authorized reseller "
     "(e-bikeshop.co.uk) carried full spec tables for a Raleigh SKU when raleigh.co.uk "
     "404'd. Note the manufacturer access failure in the description when you do this. "

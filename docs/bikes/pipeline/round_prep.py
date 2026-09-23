@@ -36,6 +36,9 @@ SKIPPED_FILE = STATE / "skipped.json"
 PART_RX = re.compile(
     r"\b(frame|frameset|jersey|sock|glove|cap|tee|t-shirt|hoodie|bottle|sticker|"
     r"gift\s*card|tube|tyre|tire|chain|saddle|grip|pedal|helmet|wheelset|wheel|"
+    # `decal` added round 13: Orange's "Phase Ebike decals 2020" is a $25 vinyl set
+    # that reached the queue because its product_type was mislabelled "Bike".
+    r"decals?|"
     r"fork|shock|kit|spare|part|tool|rack|fender|bag|attachment|mount|strap|bar|"
     r"stem|seatpost|hub|rim|axle|cage|light|pump|lock|apparel|shirt|short|bib|"
     r"jacket|shoe|demos?|samples?|warehouse|refurb|clearance|b-stock|open\s*box)\b",
@@ -111,6 +114,19 @@ MAX_PER_BRAND = 2
 # Shogun page — and the skiplist would then have excluded it from every future
 # round, turning one bad fetch into permanent data loss. These reasons send a skip
 # back to the queue instead of into the skiplist.
+# Dead listings and fetch failures get described with overlapping words ("no spec
+# content found" fits both), so RETRYABLE_SKIP_RX alone misfiled the sixthreezero
+# stub listings in round 12 — they return HTTP 200 with `images: []` and a $0.00
+# unpublished variant, which is a settled fact, not a bad fetch. These markers say
+# "the product does not exist / is not for sale" and OVERRIDE the retryable match.
+# Erring retryable is the safe direction (one wasted slot vs permanent loss), but
+# without this a dead listing is re-researched every round forever.
+SETTLED_SKIP_RX = re.compile(
+    r"unpublished|dead listing|delisted|not in products\.json|no longer (?:sold|listed)|"
+    r"images:\s*\[\]|empty images|\$?0\.00 stub|stub variant|404 page|"
+    r"not a (?:bicycle|bike|product)|trailer|frameset|frame[- ]only|deposit",
+    re.I,
+)
 RETRYABLE_SKIP_RX = re.compile(
     r"shogun|client[- ]side|client[- ]render|javascript|js[- ]only|no server[- ]render|"
     r"could ?n[o']t fetch|unable to fetch|fetch fail|timeout|timed out|429|5\d\d|"
@@ -139,7 +155,9 @@ def _record_skips(q: dict) -> None:
             continue
         reason = " ".join(str(n) for n in (item.get("notes") or []))[:300]
         # Fetch failures are about the attempt, not the product — let it come back.
-        if RETRYABLE_SKIP_RX.search(reason):
+        # A settled marker wins: a dead listing is a fact even if the agent also
+        # wrote "no spec content found", which the retryable pattern matches.
+        if RETRYABLE_SKIP_RX.search(reason) and not SETTLED_SKIP_RX.search(reason):
             print(f"  retryable skip NOT persisted: {item['brand']} | {item['model']}")
             continue
         k = f"{norm(item['brand'])}|{norm(item['model'])}"
