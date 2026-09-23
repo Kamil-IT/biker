@@ -6,7 +6,7 @@ This template provides a minimal setup to get React working in Vite with HMR and
 
 The SPA has three views, switched by `App.tsx` (no router):
 
-- **Search** — `SearchInput` (free text + collapsible filters) → `POST /v1/bike/search`, rendered as `ResultCard`s.
+- **Search** — `SearchInput` (free text + collapsible filters) → `POST /v1/bike/search`, rendered as `ResultCard`s — as many as the backend returns (no fixed count; 3 neutral `LoadingCard` skeletons while loading). An empty `bikes: []` (backend parse failure) shows a "Not found" message in the results section.
 - **Bike details** (`BikeDetailsView`) — overview, pooled offers (Allegro / Ceneo / Decathlon / OLX), expert review, and a component spec tree. Each **component name in the spec tree is a link** that opens the equipment view for that item (the "Key features" chips stay as plain tags).
 - **Equipment details** (`EquipmentDetailsView`) — the gear counterpart: category eyebrow, overview, expert review, and a component spec tree. **No offers/buy links** — equipment is informational only.
 

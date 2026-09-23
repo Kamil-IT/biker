@@ -14,7 +14,8 @@ print(json.dumps(resp.json(), indent=2, ensure_ascii=False))
 print()
 
 assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-print("OK -- response status is 200")
+assert len(resp.json()["bikes"]) >= 1, "Expected at least 1 bike (TODO-025: no cap, min 1)"
+print(f"OK -- response status is 200, {len(resp.json()['bikes'])} bike(s)")
 
 # Smoke test: /v1/bike/details description field
 DETAILS_URL = "http://localhost:8000/v1/bike/details"
@@ -682,7 +683,7 @@ resp_tc21 = httpx.post(URL, json=tc21_body, timeout=180)
 elapsed_tc21 = _time.perf_counter() - t0
 data_tc21 = _show("[TC-21]", tc21_body, resp_tc21)
 assert resp_tc21.status_code == 200, f"Expected 200, got {resp_tc21.status_code}"
-assert 0 < len(data_tc21["bikes"]) <= 5, f"Expected 1-5 AI bikes, got {len(data_tc21['bikes'])}"
+assert len(data_tc21["bikes"]) >= 1, f"Expected >=1 AI bikes, got {len(data_tc21['bikes'])}"
 assert not any(b["explanation"].startswith("Matches:") for b in data_tc21["bikes"]), \
     "A DB-hit explanation leaked into what should be an AI result"
 assert _cache_row_exists("/v1/bike/search", tc21_key), \
@@ -699,14 +700,14 @@ _cache_row_delete("/v1/bike/search", tc22_key)
 resp_tc22 = httpx.post(URL, json=tc22_body, timeout=180)
 data_tc22 = _show("[TC-22]", tc22_body, resp_tc22)
 assert resp_tc22.status_code == 200, f"Expected 200, got {resp_tc22.status_code}"
-assert 0 < len(data_tc22["bikes"]) <= 5, f"Expected 1-5 AI bikes, got {len(data_tc22['bikes'])}"
+assert len(data_tc22["bikes"]) >= 1, f"Expected >=1 AI bikes, got {len(data_tc22['bikes'])}"
 assert _cache_row_exists("/v1/bike/search", tc22_key), \
     "Non-checkable-only search must skip the DB and run the AI call"
 print(f"OK — non-checkable search went to AI ({len(data_tc22['bikes'])} bikes)")
 _cache_row_delete("/v1/bike/search", tc22_key)
 
 
-# ── [TC-24] DB hit on spec fields: no AI, ≤5 bikes, every one matches ──
+# ── [TC-24] DB hit on spec fields: no AI, every match returned (no cap) ──
 print("\n── [TC-24] DB hit on spec fields (carbon frame + 29\" wheels) ──")
 tc24_body = {"frame_material": "Carbon", "wheel_size": '29"'}
 tc24_key = _norm_key(tc24_body)
@@ -716,7 +717,7 @@ resp_tc24 = httpx.post(URL, json=tc24_body, timeout=60)
 elapsed_tc24 = _time.perf_counter() - t0
 data_tc24 = _show("[TC-24]", tc24_body, resp_tc24)
 assert resp_tc24.status_code == 200, f"Expected 200, got {resp_tc24.status_code}"
-assert 0 < len(data_tc24["bikes"]) <= 5, f"Expected 1-5 DB bikes, got {len(data_tc24['bikes'])}"
+assert len(data_tc24["bikes"]) >= 1, f"Expected >=1 DB bikes, got {len(data_tc24['bikes'])}"
 assert elapsed_tc24 < 5.0, f"DB hit took {elapsed_tc24:.2f}s — expected < 5s (AI ran?)"
 assert not _cache_row_exists("/v1/bike/search", tc24_key), \
     "DB-hit path must not write a generic-cache row"
@@ -762,6 +763,20 @@ assert resp_tc25.json() == resp.json(), \
 assert elapsed_tc25 < 5.0, f"Generic cache hit took {elapsed_tc25:.2f}s — expected < 5s"
 print(f"OK — generic cache path unchanged ({elapsed_tc25:.3f}s, "
       f"{len(resp_tc25.json()['bikes'])} bikes)")
+
+
+# ── [TC-26] TODO-025: impossible filters still return the closest bike (min 1) ──
+print("\n── [TC-26] Impossible filter combination → ≥1 closest bike, low score ──")
+tc26_body = {"brand": "Trek", "is_electric": True, "brake_type": "Rim"}
+tc26_key = _norm_key(tc26_body)
+_cache_row_delete("/v1/bike/search", tc26_key)
+resp_tc26 = httpx.post(URL, json=tc26_body, timeout=180)
+data_tc26 = _show("[TC-26]", tc26_body, resp_tc26)
+assert resp_tc26.status_code == 200, f"Expected 200, got {resp_tc26.status_code}"
+assert len(data_tc26["bikes"]) >= 1, "Impossible filters must still return the closest bike"
+print(f"OK — closest match returned: {data_tc26['bikes'][0]['brand']} {data_tc26['bikes'][0]['model']} "
+      f"score={data_tc26['bikes'][0]['match_score']}")
+_cache_row_delete("/v1/bike/search", tc26_key)
 
 
 # ── TODO_009 fixture hygiene: nothing this suite seeded may survive ──

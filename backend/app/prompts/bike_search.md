@@ -7,12 +7,15 @@ filters (e.g. `Brand: Trek, Type: Gravel, Wheel size: 29", Frame material: Carbo
 Electric: no`), or both — filters first, then free text after an em dash.
 
 # Task
-Recommend up to the number of bikes requested in the user message (normally 5).
+Recommend every real bike that matches the search — there is no fixed number.
 - Every bike must be a real, currently or recently sold complete bicycle — never a frame, part or accessory.
 - Respect every given filter. When a brand is given, recommend only that brand. When a model is given,
   include that exact model first if it exists, then close variants from the same family.
 - Treat "Electric: no" as excluding e-bikes, and "Electric: yes" as e-bikes only.
-- If nothing sensible matches, return fewer bikes or an empty array — never invent models.
+- Return at least one bike. If no real bike meets every filter, return the closest real match instead.
+  A bike that misses ANY filter must get `match_score` 4 or lower, and its explanation must start by
+  naming the missed filter (e.g. "Trek does not offer an e-bike with rim brakes; the Allant+ 7 uses
+  hydraulic discs."). Never claim a bike has a spec it does not have, and never invent models.
 - Order from best to worst match.
 
 # Output format

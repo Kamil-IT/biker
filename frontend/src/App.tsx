@@ -14,6 +14,9 @@ type ReviewState  = 'loading' | 'loaded' | 'error'
 type OfferState   = 'loading' | 'loaded' | 'error'
 type UsedBikeState = 'loading' | 'loaded' | 'error'
 
+// Search has no fixed result count (TODO-025), so the skeleton count is neutral.
+const LOADING_CARDS = 3
+
 interface SearchResponse {
   search: string
   bikes: Bike[]
@@ -536,10 +539,19 @@ export default function App() {
                   {/* Card list */}
                   <div className="space-y-4">
                     {appState === 'loading' &&
-                      Array.from({ length: 5 }).map((_, i) => (
+                      Array.from({ length: LOADING_CARDS }).map((_, i) => (
                         <LoadingCard key={i} delay={i * 90} />
                       ))
                     }
+                    {appState === 'results' && bikes.length === 0 && (
+                      <div
+                        role="alert"
+                        className="px-4 py-3 bg-parchment border border-terra/30 rounded-xl font-body text-sm text-ink"
+                      >
+                        <strong className="font-medium text-terra">Not found: </strong>
+                        No bikes matched this search. Try different words or fewer filters.
+                      </div>
+                    )}
                     {appState === 'results' &&
                       bikes.map((bike, i) => (
                         <ResultCard
@@ -547,7 +559,7 @@ export default function App() {
                           bike={bike}
                           rank={i + 1}
                           isTop={i === 0}
-                          animationDelay={i * 65}
+                          animationDelay={Math.min(i, 8) * 65}
                           onSelect={handleBikeSelect}
                         />
                       ))
