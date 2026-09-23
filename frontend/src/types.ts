@@ -114,13 +114,8 @@ export interface SearchPayload {
   year?:                number
   wheel_size?:          string
   is_electric?:         boolean
-  has_suspension?:      boolean
-  is_kids?:             boolean
   bike_type?:           string
-  price_max?:           number
   frame_size?:          string
-  rider_height_cm?:     number
-  rider_weight_kg?:     number
   gender?:              string
   frame_material?:      string
   brake_type?:          string
@@ -138,17 +133,12 @@ export interface SearchFilters {
   wheel_size:          string
   bike_type:           string
   frame_size:          string
-  rider_height_cm:     string
-  rider_weight_kg:     string
-  price_max:           string
   gender:              string
   frame_material:      string
   brake_type:          string
   drivetrain:          string
   battery_capacity_wh: string
   is_electric:         boolean | undefined
-  has_suspension:      boolean | undefined
-  is_kids:             boolean | undefined
   belt_drive:          boolean | undefined
 }
 
@@ -159,17 +149,12 @@ export const EMPTY_FILTERS: SearchFilters = {
   wheel_size:          '',
   bike_type:           '',
   frame_size:          '',
-  rider_height_cm:     '',
-  rider_weight_kg:     '',
-  price_max:           '',
   gender:              '',
   frame_material:      '',
   brake_type:          '',
   drivetrain:          '',
   battery_capacity_wh: '',
   is_electric:         undefined,
-  has_suspension:      undefined,
-  is_kids:             undefined,
   belt_drive:          undefined,
 }
 
@@ -179,8 +164,4 @@ export interface ParseResponse {
   year?:           number
   wheel_size?:     string
   is_electric?:    boolean
-  has_suspension?: boolean
-  is_kids?:        boolean
-  rider_height_cm?: number
-  rider_weight_kg?: number
 }

@@ -73,8 +73,8 @@ Prerequisites & notes for the live tier:
   is covered separately by the deterministic tier and the real-API prod path.
 
 `pytest.ini` registers the `llm` marker and scopes default collection to
-`scripts/test_scoring.py` **and `tests/`**, so a bare `pytest` run covers the prompt-eval
-suite plus every pure unit test (currently `tests/test_price_parse.py`). The rest of
+`scripts/test_scoring.py` and `scripts/test_review_aggregation.py`, so a bare `pytest`
+run covers the prompt-eval suite plus the review-aggregation unit tests. The rest of
 `scripts/` stays excluded — those are standalone smoke scripts that hit a live server at
 import time and must not be auto-run.
 
@@ -162,27 +162,15 @@ Step 2 is the addition. `find_bike_by_brand_model(brand, model)` scans cached se
 
 ### Which filters are honoured on the DB path
 
-**Only `price_max`.** It is gated by joining the generic cache's offer rows:
+**None.** `price_max` used to be gated by joining the offer cache's prices; it was removed from `SearchRequest` together with `rider_height_cm`, `rider_weight_kg`, `has_suspension` and `is_kids` (TODO-023), so the DB path now ignores every filter: `year`, `frame_size`, `wheel_size`, `frame_material`, `brake_type`, `drivetrain`, `gender`, `battery_capacity_wh`.
 
-- `find_offer_prices(brand, model)` reads every cached response from `/v1/bike/offer`, `/v1/bike/ceneo`, `/v1/bike/decathlon` and `/v1/bike/used` for that bike, and parses each offer's `price` string via `app/price_parse.py`.
-- The join key is `_normalise({"company": brand, "model": model})` — imported from `cache.py` so the lookup key is byte-identical to how offer rows were written. `models.norm()` (strip + lowercase) produces the same normalisation, so no extra mapping is needed.
-- `find_offer_prices` is the **one helper still in `app/store.py`** (now ~54 lines; its `init_store()` creates no tables and survives only as the app's startup hook), because it reads the raw `cache` table rather than an ORM table. `bike_offers` exists in the schema but is empty and unpopulated — see [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md).
-- **Cheapest across all sources** gates the filter: `min()` of every parseable price from all four endpoints, new and used alike.
-- **Lenient when no price is parseable.** A bike with no offer rows — or whose prices are all sentinels like `'Price on request'` — passes the filter. Only ~21 % of cached bikes have a matching offer row, so strict filtering would discard the great majority of hits. The tradeoff: an over-budget bike may be returned unverified.
-
-**Not honoured on the DB path:** `year`, `frame_size`, `wheel_size`, `frame_material`, `brake_type`, `drivetrain`, `gender`, `rider_height_cm`, `rider_weight_kg`, `battery_capacity_wh`.
-
-This is a deliberate, documented limitation, not an oversight. `BikeResult` stores only `brand`, `model`, `accessories`, `match_score`, `explanation`; `BikeOffer` adds only `price`, `is_new`, `url`, `photos`, `source`, `city`. **No stored model carries any of those fields**, so there is nothing to filter against. Rather than silently dropping the constraints or faking a match, the DB path ignores them — a request combining `brand` + `model` with, say, `frame_size: "M"` may be served from the DB with that size unverified. Callers that need those constraints enforced should omit `brand` or `model` so the request routes to the AI pipeline.
+This is a deliberate, documented limitation, not an oversight. `BikeResult` stores only `brand`, `model`, `accessories`, `match_score`, `explanation`. **No stored model carries any of those fields**, so there is nothing to filter against. Rather than silently dropping the constraints or faking a match, the DB path ignores them — a request combining `brand` + `model` with, say, `frame_size: "M"` may be served from the DB with that size unverified. Callers that need those constraints enforced should omit `brand` or `model` so the request routes to the AI pipeline.
 
 ### A DB hit deliberately does not warm the generic cache
 
-`set_cached` is never called on the step-2 path. The generic `cache` table has **no `ttl` column** and `get_cached` never checks age — writing a DB-sourced result there would pin a 24 h-TTL cached-search answer permanently, outliving the very TTL that makes it safe to serve. The same no-TTL property is why the joined offer prices never expire either: a stale scraped price can gate `price_max` indefinitely.
+`set_cached` is never called on the step-2 path. The generic `cache` table has **no `ttl` column** and `get_cached` never checks age — writing a DB-sourced result there would pin a 24 h-TTL cached-search answer permanently, outliving the very TTL that makes it safe to serve.
 
-Note the offer cache's brand/model split does not always agree with the search tables' — e.g. `('decathlon', 'rockrider st 100')` vs the offer row's `('rockrider', 'st 100')`. Those simply fail to join, and the lenient rule keeps the bike.
-
-`parse_price()` handles the real formats found in the cache: `zł` / `PLN` / `zl` currency tokens, regular/NBSP/narrow-NBSP thousands separators, and both `,` and `.` decimals (with both present the **last** separator is the decimal point; a lone separator is decimal only when exactly 2 digits follow). It returns `None` — never raises — for anything with no digits.
-
-**Tests:** `tests/test_price_parse.py` covers the parser (collected by a bare `pytest` run — see [Category-Scoring Prompt Eval](#category-scoring-prompt-eval)). The cascade itself is covered by `scripts/test_search.py` TC-20 – TC-25 against a live server: DB hit, AI fallback, stale-row fall-through, `price_max` gating both ways, lenient unknown price, and no regression on the generic-cache path.
+**Tests:** the cascade is covered by `scripts/test_search.py` TC-20 – TC-25 against a live server: DB hit, AI fallback, stale-row fall-through, a legacy `price_max` being ignored on the DB path (TC-23), and no regression on the generic-cache path.
 
 ## Endpoints
 
@@ -201,13 +189,8 @@ Content-Type: application/json
   "year": 2023,
   "wheel_size": "29\"",
   "is_electric": false,
-  "has_suspension": false,
-  "is_kids": false,
   "bike_type": "Gravel",
-  "price_max": 6000,
   "frame_size": "M",
-  "rider_height_cm": 178,
-  "rider_weight_kg": 75,
   "gender": "Universal",
   "frame_material": "Carbon",
   "brake_type": "Hydraulic Disc",
@@ -217,10 +200,10 @@ Content-Type: application/json
 }
 ```
 
-All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M, Max price: 6000 PLN — comfortable bike…"` and passes it through the existing scoring and bike-finding pipeline. All fields participate in the SQLite cache key, so two searches that differ only in a filter return distinct results.
+All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M — comfortable bike…"` and passes it through the existing scoring and bike-finding pipeline. All fields participate in the SQLite cache key, so two searches that differ only in a filter return distinct results. `price_max`, `rider_height_cm`, `rider_weight_kg`, `has_suspension` and `is_kids` were removed (TODO-023); they are silently ignored if sent, so a payload made only of them is rejected with 422.
 
 **Flow:**
-0. SQLite reads only — generic cache, then (when `brand` **and** `model` are both given) the cached-search brand+model lookup with its `price_max` offer join. **A hit at either step returns immediately, making zero outbound HTTP calls.** Steps 1–2 run only on a miss. See [Search Cache](#search-cache)
+0. SQLite reads only — generic cache, then (when `brand` **and** `model` are both given) the cached-search brand+model lookup. **A hit at either step returns immediately, making zero outbound HTTP calls.** Steps 1–2 run only on a miss. See [Search Cache](#search-cache)
 1. `POST https://api.anthropic.com/v1/messages` × 11 — score each bike category (parallel via `asyncio.gather`)
 2. `POST https://api.anthropic.com/v1/messages` × N — find real bikes per top category (parallel)
 
@@ -562,7 +545,7 @@ Content-Type: application/json
 
 ### `POST /v1/bike/parse`
 
-Extract structured bike attributes (brand, model, year, wheel size, flags) from a free-text query. Used by the frontend to auto-populate the structured search fields before the user submits their search.
+Extract structured bike attributes (brand, model, year, wheel size, electric flag) from a free-text query. Used by the frontend to auto-populate the structured search fields before the user submits their search.
 
 ```http
 POST http://localhost:8000/v1/bike/parse
@@ -580,15 +563,11 @@ Content-Type: application/json
   "model": "Marlin 7",
   "year": 2023,
   "wheel_size": "29\"",
-  "has_suspension": true,
-  "is_electric": null,
-  "is_kids": null,
-  "rider_height_cm": null,
-  "rider_weight_kg": null
+  "is_electric": null
 }
 ```
 
-Fields not found in the text are returned as `null`. All fields are optional in the response.
+Fields not found in the text are returned as `null`. All fields are optional in the response. Only these five fields are extracted — rider height/weight, suspension and kids flags were removed (TODO-023), so text mentioning only those yields the 400 below.
 
 **`400 Bad Request` when nothing could be extracted.** If *every* field would be `null`, the
 endpoint returns `{"detail": "Bike not available in our database"}` instead of an all-`null`

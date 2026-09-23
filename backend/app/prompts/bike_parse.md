@@ -8,13 +8,10 @@ Available fields:
 - "year": integer — model/production year (e.g. 2023)
 - "wheel_size": string — exactly one of: "26\"", "27.5\"", "29\"", "700c", "650b"
 - "is_electric": boolean — true only if user explicitly wants an e-bike; false only if explicitly not wanted
-- "has_suspension": boolean — true only if user explicitly wants suspension; false only if explicitly no suspension
-- "is_kids": boolean — true only if user explicitly wants a kids bike; false only if explicitly not
-- "rider_height_cm": integer — the rider's height in centimetres (e.g. "185 cm", "185cm", "Mam 185 cm wzrostu" → 185)
-- "rider_weight_kg": integer — the rider's body weight in kilograms (e.g. "waze 100kg" → 100, "100 kg" → 100, "weighs 100" → 100)
 
 Rules:
 - Only include a field if the text clearly mentions or strongly implies it
+- Never return any field not listed above (no rider height/weight, price, suspension or kids flags)
 - Do NOT set boolean fields to false just because they aren't mentioned — omit them
 - Return {} if nothing can be extracted with confidence
 - Preserve the original casing of brand and model names exactly as written (e.g. "TREK" → "TREK", "tesla" → "tesla")
@@ -29,16 +26,13 @@ Brand-constraint phrasing:
 - Do NOT treat city, location, or place names as a brand. Words following prepositions like "po", "w", "we", "na", "z", "in", "at" that name a place (e.g. "po Wrocławiu", "w Krakowie", "in Berlin") are locations, not brands — omit them.
 
 Example: "Looking for Trek Marlin 7 2023, 29 inch wheels, with front suspension"
-Response: {"brand": "Trek", "model": "Marlin 7", "year": 2023, "wheel_size": "29\"", "has_suspension": true}
+Response: {"brand": "Trek", "model": "Marlin 7", "year": 2023, "wheel_size": "29\""}
 
 Example: "Mam 185 cm wzrostu, szukam roweru na wały"
-Response: {"rider_height_cm": 185}
-
-Example: "Mam 185cm wzrostu i waze 100kg"
-Response: {"rider_height_cm": 185, "rider_weight_kg": 100}
+Response: {}
 
 Example: "Szukam roweru na podróże po wrocławiu na wałach. Mam 185cm wzrostu i waze 100kg. Firma tylko Tesla"
-Response: {"brand": "Tesla", "rider_height_cm": 185, "rider_weight_kg": 100}
+Response: {"brand": "Tesla"}
 
 Example: "Chcę rower, marka Trek"
 Response: {"brand": "Trek"}
