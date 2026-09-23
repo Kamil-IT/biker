@@ -21,6 +21,7 @@ Structured workflows for common task types. Use these skills in `.claude/skills/
 |------|-------|----------|
 | **Implement new endpoint** | `sparc-code` | Adding POST /v1/bike/* or /v1/equipment/* endpoint |
 | **Add tests** | `sparc-tester` | After implementation, before PR; writes smoke tests in backend/scripts/test_search.py |
+| **Manual QA of a change** | `manual-tester` | After a backlog task is implemented; compares task vs diff, builds an ISTQB test plan (`qa-manual-istqb`), runs it in the browser (`webapp-testing`), loops fix → retest until green |
 | **Security audit** | `sparc-security-review` | New endpoint, new finder module, or API integration (validates input, prevents prompt injection, checks error handling) |
 | **Capture pattern** | `memory-persist` | After successful feature completion; saves reusable pattern to Obsidian vault for future tasks |
 
@@ -309,6 +310,13 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 - Returns `{ offers: [{ brand, model, price, is_new, url, photos: [], source: "decathlon.pl" }], info: str }` (1 offer, no photos)
 - On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
 
+**Endpoint** `POST /v1/bike/parse`
+- Request: `{"text": "Looking for Trek Marlin 7 2022, 29 inch wheels"}` — `text` required, non-empty (422 otherwise)
+- Calls `claude-haiku-4-5-20251001` **once**, no tools, with `app/prompts/bike_parse.md`; extracts 9 of the 19 `SearchRequest` fields (`brand`, `model`, `year`, `wheel_size`, `is_electric`, `has_suspension`, `is_kids`, `rider_height_cm`, `rider_weight_kg`)
+- Returns `ParseResponse` — every field `Optional`, unextracted ones `null`
+- **400 `"Bike not available in our database"` when `ParseResponse.is_empty()`** (all fields `null`). The frontend renders this as a warning above the search box and skips the search entirely. The guard runs on the cache-hit path too, so an all-`null` row cached by an older build is still rejected; empty parses are never cached
+- Called only by `frontend/src/App.tsx` `handleSearch`, and only when free text is present with no structured filter set — `/v1/bike/search` never parses
+
 **Endpoint** `POST /v1/equipment/details`
 - Request: `{"company": "POC", "model": "Octal MIPS", "category": "helmets"}` — `company` optional (default `""`), `model` required, `category` optional (`helmets` / `lights` / `locks` / `apparel`; inferred from the item name when omitted, defaulting to `apparel`)
 - Runs three calls in parallel via `asyncio.gather` (mirrors `/v1/bike/details`):
@@ -339,7 +347,7 @@ Helmets, Lights & electronics, Locks & security, Apparel/bags & accessories. **N
 | Layer | File | Responsibility |
 |-------|------|----------------|
 | Entry point | `src/main.tsx` | React root, mounts `<App>` |
-| App shell | `src/App.tsx` | View router (`search` / `details` / `equipment`), search, details, review, allegro offer, ceneo offer, decathlon offer & used-bike state, plus equipment details/review state; all API calls. Clicking a component element name in a bike's spec tree opens the equipment view for that item |
+| App shell | `src/App.tsx` | View router (`search` / `details` / `equipment`), search, details, review, allegro offer, ceneo offer, decathlon offer & used-bike state, plus equipment details/review state; all API calls. A free-text-only submit first calls `/v1/bike/parse`: extracted fields populate the Filters panel and the search waits for a second submit, while a **400** renders a "Not found" warning above the search box and stops there. Clicking a component element name in a bike's spec tree opens the equipment view for that item |
 | Search form | `src/components/SearchInput.tsx` | Controlled input + submit button + collapsible Filters panel (Basic group: brand, model, bike type, year, wheel size, frame size, rider height, max price + electric/suspension/kids toggles; Advanced group: gender, frame material, brake type, drivetrain, belt drive + battery capacity shown only when electric); loading state |
 | Result card | `src/components/ResultCard.tsx` | Clickable per-bike card: match score, brand + model, accessories chips, explanation, score bar |
 | Loading card | `src/components/LoadingCard.tsx` | Shimmer skeleton matching result card dimensions |
@@ -364,6 +372,7 @@ Helmets, Lights & electronics, Locks & security, Apparel/bags & accessories. **N
 - `POST /v1/bike/ceneo` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (ceneo.pl)
 - `POST /v1/bike/decathlon` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (decathlon.pl)
 - `POST /v1/bike/used` `{ "company": "...", "model": "..." }` → `{ offers: BikeOffer[], info: string }` (used bikes from OLX, each with optional `city`)
+- `POST /v1/bike/parse` `{ "text": "..." }` -> `ParseResponse` (9 optional fields); **400** `"Bike not available in our database"` when nothing is extracted -> App.tsx shows a warning above the search box and skips the search
 - `POST /v1/equipment/details` `{ "company"?, "model", "category"? }` → `{ company, model, category, description: BikeDescription, components: BikeCategory[], photos: string[] }` (no offer links)
 - `POST /v1/equipment/review` `{ "company"?, "model" }` → `{ score, explanation, ref: string[] }` (review/forum links only)
 - All endpoints proxied to backend via Vite — no CORS config needed in development

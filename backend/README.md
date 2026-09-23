@@ -590,7 +590,16 @@ Content-Type: application/json
 
 Fields not found in the text are returned as `null`. All fields are optional in the response.
 
-`brand` is also extracted from Polish and English brand-constraint phrasing — "Firma tylko Tesla", "marka Trek", "tylko Specialized", "brand only Canyon" — copying the name verbatim (casing preserved). The name after such a keyword is extracted even when it is not a known bicycle maker. Place names following a preposition ("po Wrocławiu", "w Krakowie") are treated as locations, never as a brand.
+**`400 Bad Request` when nothing could be extracted.** If *every* field would be `null`, the
+endpoint returns `{"detail": "Bike not available in our database"}` instead of an all-`null`
+200 — such a payload is useless to the caller, since it populates no filters. The frontend
+turns this into a warning above the search box and does **not** run the search.
+Both the genuine "no attributes mentioned" case and `parse_free_text`'s exception fallback
+land here, since both yield no fields. An empty parse is **not** cached, and the check also
+runs on the cache-hit path so an all-`null` row written by an older build cannot be served
+as a 200.
+
+`brand` is also extracted from Polish and English brand-constraint phrasing — "Firma tylko Tesla", "marka Trek", "tylko Specialized", "brand only Canyon" — copying the name verbatim (casing preserved). The name after such a keyword is extracted even when it is not a known bicycle maker. Place names following a preposition ("po Wrocławiu", "w Krakowie") are treated as locations, never as a brand. A text whose only candidate was such a place name therefore has nothing left to extract and comes back as a `400`.
 
 **Flow:**
 1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no web search, pure text extraction) with `app/prompts/bike_parse.md` system prompt; returns a JSON object with only the confident field extractions

@@ -376,17 +376,38 @@ async def equipment_review(req: EquipmentReviewRequest) -> EquipmentReviewRespon
     return result
 
 
+PARSE_NO_MATCH_DETAIL = "Bike not available in our database"
+
+
+def _reject_empty_parse(result: ParseResponse, text: str) -> None:
+    """400 when nothing could be extracted from the free text.
+
+    An all-None payload is useless to the caller — the UI would populate no
+    filters and show an unchanged form. Failing loudly lets it warn the user
+    instead. Note this fires for a genuine "no attributes mentioned" text and
+    for `parse_free_text`'s exception fallback alike: both mean no fields.
+    """
+    if result.is_empty():
+        logger.info("parse no match | text=%r", text[:80])
+        raise HTTPException(status_code=400, detail=PARSE_NO_MATCH_DETAIL)
+
+
 @app.post("/v1/bike/parse", response_model=ParseResponse)
 async def bike_parse(req: ParseRequest) -> ParseResponse:
     logger.info("parse request | text=%r", req.text[:80])
     _fields = {"text": req.text}
     cached = get_cached("/v1/bike/parse", _fields, ParseResponse)
     if cached is not None:
+        # Older builds cached all-None results; reject those on the hit path too
+        # so a warm cache.db cannot serve a 200 the fresh path would refuse.
+        _reject_empty_parse(cached, req.text)
         return cached
 
     t_start = time.perf_counter()
     result = await parse_free_text(req.text)
     elapsed = time.perf_counter() - t_start
     logger.info("parse complete | elapsed=%.2fs result=%s", elapsed, result.model_dump(exclude_none=True))
+    _reject_empty_parse(result, req.text)
+    # Only the happy path is cached — an empty parse is now an error response.
     set_cached("/v1/bike/parse", _fields, result)
     return result

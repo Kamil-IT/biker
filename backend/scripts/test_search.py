@@ -203,6 +203,7 @@ print("OK -- empty payload correctly rejected with 422")
 
 # -- Parse endpoint: extract structured fields from free text --
 PARSE_URL = "http://localhost:8000/v1/bike/parse"
+NO_MATCH_DETAIL = "Bike not available in our database"
 print("\n-- Parse: extract fields from free text --")
 parse_payload = {"text": "Looking for Trek Marlin 7 2022, 29 inch wheels, with suspension, non-electric"}
 resp_parse = httpx.post(PARSE_URL, json=parse_payload, timeout=30)
@@ -248,13 +249,28 @@ for text, expected_brand in brand_cases:
         f"Expected brand {expected_brand!r} for {text!r}, got: {data_bc.get('brand')!r}"
     print(f"OK -- {text!r} -> brand={data_bc.get('brand')!r}")
 
-# Location names must NOT be extracted as a brand
+# Location names must NOT be extracted as a brand. With nothing else in the
+# text that leaves an all-None parse, which the endpoint now rejects with 400.
 for text in ["Mam rower w Wrocławiu", "Szukam roweru w Krakowie na walach"]:
     resp_city = httpx.post(PARSE_URL, json={"text": text}, timeout=30)
-    assert resp_city.status_code == 200, f"Expected 200, got {resp_city.status_code}"
-    assert resp_city.json().get("brand") is None, \
-        f"Expected no brand for location text {text!r}, got: {resp_city.json().get('brand')!r}"
-    print(f"OK -- {text!r} -> no brand extracted")
+    assert resp_city.status_code == 400, f"Expected 400 for location-only text {text!r}, got {resp_city.status_code}: {resp_city.text}"
+    assert resp_city.json().get("detail") == NO_MATCH_DETAIL, f"Unexpected detail for {text!r}: {resp_city.json().get('detail')!r}"
+    print(f"OK -- {text!r} -> 400, no brand extracted")
+
+# -- Parse endpoint: nothing extractable -> 400 (ISSUE: no-match warning) --
+print("")
+print("-- Parse: no extractable fields -> 400 --")
+for text in ["dzisiaj jest ładna pogoda", "hello there"]:
+    resp_nm = httpx.post(PARSE_URL, json={"text": text}, timeout=30)
+    assert resp_nm.status_code == 400, f"Expected 400 for {text!r}, got {resp_nm.status_code}: {resp_nm.text}"
+    assert resp_nm.json().get("detail") == NO_MATCH_DETAIL, f"Unexpected detail for {text!r}: {resp_nm.json().get('detail')!r}"
+    print(f"OK -- {text!r} -> 400 {resp_nm.json().get('detail')!r}")
+
+# A rejected parse must not be cached - the repeat must still be a 400, not a
+# 200 served from the generic cache.
+resp_nm2 = httpx.post(PARSE_URL, json={"text": "hello there"}, timeout=30)
+assert resp_nm2.status_code == 400, f"Expected repeat 400 (empty parse must not be cached), got {resp_nm2.status_code}"
+print("OK -- rejected parse is not cached")
 
 # ── Ceneo offer endpoint ──
 print("\n── Ceneo: find offers on ceneo.pl ──")

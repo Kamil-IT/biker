@@ -374,4 +374,14 @@ class ParseResponse(BaseModel):
             return None
         return int(v)
 
+    def is_empty(self) -> bool:
+        """True when the extractor found nothing at all.
+
+        Every field is Optional and defaults to None, so an all-None response
+        means the free text carried no recognisable bike attribute. The route
+        turns this into a 400 rather than handing the UI a payload that would
+        silently populate no filters.
+        """
+        return all(v is None for v in self.model_dump().values())
+
 
