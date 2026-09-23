@@ -42,11 +42,10 @@ export default function SearchInput({
   const hasAny = !!(
     value.trim() ||
     f.brand.trim() || f.model.trim() || f.year.trim() || f.wheel_size ||
-    f.bike_type || f.frame_size || f.rider_height_cm.trim() || f.rider_weight_kg.trim() || f.price_max.trim() ||
+    f.bike_type || f.frame_size ||
     f.gender || f.frame_material || f.brake_type || f.drivetrain ||
     f.battery_capacity_wh.trim() ||
-    f.is_electric !== undefined || f.has_suspension !== undefined ||
-    f.is_kids !== undefined || f.belt_drive !== undefined
+    f.is_electric !== undefined || f.belt_drive !== undefined
   )
 
   const buildPayload = (): SearchPayload => {
@@ -58,16 +57,11 @@ export default function SearchInput({
     if (f.bike_type)                 p.bike_type           = f.bike_type
     if (f.wheel_size)                p.wheel_size          = f.wheel_size
     if (f.frame_size)                p.frame_size          = f.frame_size
-    if (f.rider_height_cm.trim())    p.rider_height_cm     = parseInt(f.rider_height_cm, 10)
-    if (f.rider_weight_kg.trim())    p.rider_weight_kg     = parseInt(f.rider_weight_kg, 10)
-    if (f.price_max.trim())          p.price_max           = parseInt(f.price_max, 10)
     if (f.gender)                    p.gender              = f.gender
     if (f.frame_material)            p.frame_material      = f.frame_material
     if (f.brake_type)                p.brake_type          = f.brake_type
     if (f.drivetrain)                p.drivetrain          = f.drivetrain
     if (f.is_electric !== undefined)    p.is_electric      = f.is_electric
-    if (f.has_suspension !== undefined) p.has_suspension   = f.has_suspension
-    if (f.is_kids !== undefined)        p.is_kids          = f.is_kids
     if (f.belt_drive !== undefined)     p.belt_drive       = f.belt_drive
     if (f.is_electric === true && f.battery_capacity_wh.trim())
       p.battery_capacity_wh = parseInt(f.battery_capacity_wh, 10)
@@ -224,50 +218,6 @@ export default function SearchInput({
                 {FRAME_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
-
-            <div>
-              <label htmlFor="bike-rider-height" className={labelClass}>Rider height (cm)</label>
-              <input
-                id="bike-rider-height"
-                type="number"
-                value={f.rider_height_cm}
-                onChange={e => onFilterChange('rider_height_cm', e.target.value)}
-                placeholder="80–210"
-                min={80}
-                max={210}
-                disabled={isLoading}
-                className={fieldClass}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="bike-rider-weight" className={labelClass}>Rider weight (kg)</label>
-              <input
-                id="bike-rider-weight"
-                type="number"
-                value={f.rider_weight_kg}
-                onChange={e => onFilterChange('rider_weight_kg', e.target.value)}
-                placeholder="30–200"
-                min={30}
-                max={200}
-                disabled={isLoading}
-                className={fieldClass}
-              />
-            </div>
-
-            <div>
-              <label htmlFor="bike-price-max" className={labelClass}>Max price (PLN)</label>
-              <input
-                id="bike-price-max"
-                type="number"
-                value={f.price_max}
-                onChange={e => onFilterChange('price_max', e.target.value)}
-                placeholder="e.g. 5000"
-                min={0}
-                disabled={isLoading}
-                className={fieldClass}
-              />
-            </div>
           </div>
 
           {/* Basic toggles */}
@@ -281,26 +231,6 @@ export default function SearchInput({
                 className="w-4 h-4 accent-terra rounded"
               />
               <span className="font-body text-sm text-ink">Electric bike (e-bike) only</span>
-            </label>
-            <label className="flex items-center gap-2.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={f.has_suspension === true}
-                onChange={e => onFilterChange('has_suspension', e.target.checked ? true : undefined)}
-                disabled={isLoading}
-                className="w-4 h-4 accent-terra rounded"
-              />
-              <span className="font-body text-sm text-ink">Has suspension (front or full)</span>
-            </label>
-            <label className="flex items-center gap-2.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={f.is_kids === true}
-                onChange={e => onFilterChange('is_kids', e.target.checked ? true : undefined)}
-                disabled={isLoading}
-                className="w-4 h-4 accent-terra rounded"
-              />
-              <span className="font-body text-sm text-ink">Kids bike</span>
             </label>
           </div>
 

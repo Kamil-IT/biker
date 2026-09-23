@@ -37,7 +37,7 @@ from .bike_parser import parse_free_text  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
 from .store import (  # noqa: E402
     init_store, save_search, get_search_by_query, find_bikes_by_brand,
-    find_bike_by_brand_model, find_offer_prices,
+    find_bike_by_brand_model,
 )
 # Details are served from the ORM tables (bike_detail + bike_detail_component),
 # not the retired bike_details_cache blob — see TODO-019.
@@ -69,11 +69,8 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
     _fields = {k: str(v) for k, v in {
         "search": req.search, "brand": req.brand, "model": req.model,
         "year": req.year, "wheel_size": req.wheel_size,
-        "is_electric": req.is_electric, "has_suspension": req.has_suspension,
-        "is_kids": req.is_kids,
-        "bike_type": req.bike_type, "price_max": req.price_max,
-        "frame_size": req.frame_size, "rider_height_cm": req.rider_height_cm,
-        "rider_weight_kg": req.rider_weight_kg,
+        "is_electric": req.is_electric,
+        "bike_type": req.bike_type, "frame_size": req.frame_size,
         "gender": req.gender, "frame_material": req.frame_material,
         "brake_type": req.brake_type, "drivetrain": req.drivetrain,
         "belt_drive": req.belt_drive, "battery_capacity_wh": req.battery_capacity_wh,
@@ -87,18 +84,10 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         return cached
 
     # TODO-009: a brand+model search can often be answered straight from
-    # search_cache, skipping the whole AI pipeline. Only price_max is gated —
-    # no other filter has backing data in the cache (see backend/README.md).
+    # search_cache, skipping the whole AI pipeline. No filter is gated — none
+    # has backing data in the cache (see backend/README.md).
     if req.brand and req.model:
         db_bikes = find_bike_by_brand_model(req.brand, req.model)
-        if db_bikes and req.price_max is not None:
-            kept = []
-            for b in db_bikes:
-                prices = find_offer_prices(b.brand, b.model)
-                # Decision 3: unknown price passes.
-                if not prices or min(prices) <= req.price_max:
-                    kept.append(b)
-            db_bikes = kept
         if db_bikes:
             enriched = req.enriched_query()
             logger.info(

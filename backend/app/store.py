@@ -21,8 +21,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from .cache import get_conn, _normalise
-from .price_parse import parse_price
+from .cache import get_conn
 from .schemas import BikeResult
 
 logger = logging.getLogger(__name__)
@@ -219,39 +218,6 @@ def find_bike_by_brand_model(brand: str, model: str) -> list[BikeResult]:
         return matches
     except Exception as exc:  # noqa: BLE001 — cache reads must never break the request
         logger.warning("find_bike_by_brand_model failed (non-fatal) | %s", exc)
-        return []
-
-
-# The four offer endpoints whose cached responses carry a price for a bike.
-_OFFER_ENDPOINTS = ("/v1/bike/offer", "/v1/bike/ceneo", "/v1/bike/decathlon", "/v1/bike/used")
-
-
-def find_offer_prices(brand: str, model: str) -> list[float]:
-    """Every parseable offer price for this bike across all offer endpoints.
-
-    Reads the generic `endpoint_req_to_body_cache` table directly — offer rows are
-    keyed on the same normalised {company, model} shape `_norm()` produces, so no
-    extra mapping is needed. Unparseable prices are dropped, not reported as 0."""
-    try:
-        conn = get_conn()
-        rows = conn.execute(
-            "SELECT response FROM endpoint_req_to_body_cache "
-            "WHERE endpoint IN (?, ?, ?, ?) AND request = ?",
-            (*_OFFER_ENDPOINTS, _normalise({"company": brand, "model": model})),
-        ).fetchall()
-        prices: list[float] = []
-        for (response,) in rows:
-            for offer in json.loads(response).get("offers", []):
-                price = parse_price(offer.get("price") or "")
-                if price is not None:
-                    prices.append(price)
-        logger.info(
-            "find_offer_prices | brand=%r model=%r rows=%d prices=%d",
-            brand, model, len(rows), len(prices),
-        )
-        return prices
-    except Exception as exc:  # noqa: BLE001 — cache reads must never break the request
-        logger.warning("find_offer_prices failed (non-fatal) | %s", exc)
         return []
 
 

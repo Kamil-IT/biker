@@ -21,8 +21,8 @@ Cases
                                cached offer response is non-empty (empty is never
                                cached) and every stored price shows on the page.
 
-  E2  DB-first short-circuit -> re-search with the top bike's brand+model+a huge
-      price_max. That MISSES the generic cache (new key) yet must NOT add a new
+  E2  DB-first short-circuit -> re-search with the top bike's brand+model+an
+      unused year. That MISSES the generic cache (new key) yet must NOT add a new
       '/v1/bike/search' row -> proves it returned from search_cache, skipping AI.
 
   E8  Cascade delete        -> delete the test bike row; all children gone and
@@ -124,7 +124,7 @@ def nfields(company: str, model: str) -> str:
     )
 
 
-def build_enriched(brand=None, model=None, bike_type=None, price_max=None) -> str:
+def build_enriched(brand=None, model=None, bike_type=None) -> str:
     """Replicate SearchRequest.enriched_query() for the fields we set (in order)."""
     parts = []
     if brand:
@@ -133,8 +133,6 @@ def build_enriched(brand=None, model=None, bike_type=None, price_max=None) -> st
         parts.append(f"Model: {model}")
     if bike_type:
         parts.append(f"Type: {bike_type}")
-    if price_max is not None:
-        parts.append(f"Max price: {price_max} PLN")
     return ", ".join(parts)
 
 
@@ -154,7 +152,7 @@ def open_filters(page) -> None:
 
 
 def do_search(page, base_url, *, brand=None, model=None, bike_type=None,
-              price_max=None, timeout_ms) -> int:
+              year=None, timeout_ms) -> int:
     """Fill the search form and submit. Returns the number of result cards."""
     page.goto(base_url, wait_until="domcontentloaded")
     open_filters(page)
@@ -164,8 +162,8 @@ def do_search(page, base_url, *, brand=None, model=None, bike_type=None,
         page.fill("#bike-model", model)
     if bike_type:
         page.select_option("#bike-type", bike_type)
-    if price_max is not None:
-        page.fill("#bike-price-max", str(price_max))
+    if year is not None:
+        page.fill("#bike-year", str(year))
     page.click(SEL_SUBMIT)
     # Wait for either results or the inline error alert.
     page.wait_for_selector(f"{SEL_CARD}, section[aria-label='Bike recommendations'] div[role='alert']",
@@ -349,7 +347,7 @@ def case_db_first(page, base_url, rep: Report, top_bike, args) -> None:
     brand, model = top_bike
     print(f"\n── E2  DB-first short-circuit for {brand} {model!r} ──")
     before = offer_row_count("/v1/bike/search")
-    n = do_search(page, base_url, brand=brand, model=model, price_max=9_999_999,
+    n = do_search(page, base_url, brand=brand, model=model, year=2099,
                   timeout_ms=args.search_timeout)
     after = offer_row_count("/v1/bike/search")
     rep.hard("E2.no_ai_write", after == before,
