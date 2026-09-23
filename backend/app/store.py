@@ -207,20 +207,6 @@ def find_bikes_by_brand(brand: str) -> list[BikeResult]:
         return []
 
 
-def find_bike_by_brand_model(brand: str, model: str) -> list[BikeResult]:
-    """Lookup-by-attribute: pull every cached bike matching brand AND model,
-    across all fresh cached searches. Purely a cache read — no web/Claude call."""
-    try:
-        matches = _find_rated_bikes(brand, model)
-        logger.info(
-            "find_bike_by_brand_model | brand=%r model=%r matches=%d", brand, model, len(matches)
-        )
-        return matches
-    except Exception as exc:  # noqa: BLE001 — cache reads must never break the request
-        logger.warning("find_bike_by_brand_model failed (non-fatal) | %s", exc)
-        return []
-
-
 # ── bike details ─────────────────────────────────────────────────────────
 # `save_bike_details` / `get_bike_details` used to live here, backed by a
 # `bike_details_cache` blob table. That table has been migrated into

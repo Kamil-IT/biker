@@ -165,10 +165,11 @@ save_search(query, old_data)
 ## API surface (current)
 
 - Search cache — `app.store`: `save_search`, `get_search_by_query`,
-  `find_bikes_by_brand`, `find_bike_by_brand_model` (backed by `search_cache` +
-  `search_bike_rating_cache`).
+  `find_bikes_by_brand` (backed by `search_cache` + `search_bike_rating_cache`).
 - Details cache — `app.repository`: `save_bike_details`, `get_bike_details`
   (backed by `bike_detail` + `bike_detail_component` + `bike_detail_photos`).
+- DB-first search (TODO-024) — `app.repository.find_bikes_by_details`: matches
+  `/v1/bike/search` checkable fields against `bike` + `bike_detail_component`.
 
 (The `bike_results` + `accessories` tables and `repository`'s own copies of the
 search helpers were removed once the store versions became authoritative.)

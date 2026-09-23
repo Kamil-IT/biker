@@ -15,7 +15,7 @@ uvicorn app.main:app --reload --port 8000
 > SQLAlchemy's `create_all()`, which creates missing tables but never `ALTER`s an existing one — so an
 > older `bike_results` table keeps its old columns and gains neither `search_id` nor `position`.
 > `repository.save_search` then raises `OperationalError` on every write. Nothing is cached, the
-> DB-first search branch never hits, and **every search runs the full AI pipeline**. `repository`
+> DB-first search branch never hits, and **every search falls through to the AI call**. `repository`
 > detects this specific failure and logs it at **ERROR** naming the remedy, so it no longer blends
 > into routine non-fatal cache warnings — but that is a detector, not a fix. See
 > [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md) for how to verify.
@@ -37,46 +37,18 @@ python scripts/migrate_bike_details.py
 pytest scripts/test_details_parity.py -v   # blob vs ORM read parity
 ```
 
-## Category-Scoring Prompt Eval
-
-`scripts/test_scoring.py` (pytest) evaluates the per-category scoring prompts in
-`app/prompts/<category>.md`. It has two tiers:
+## Unit tests
 
 ```bash
 cd backend
-
-# 1) Deterministic tier — no model, no API key, runs on every commit.
-#    Verifies the scorer's JSON parsing + graceful-degradation contract,
-#    plus every pure unit test under tests/ (both collected by default).
 pytest -m "not llm"
-
-# 2) Live eval tier — full-dataset directional eval (run nightly/pre-release).
-#    Scores 11 canonical queries against all 11 category prompts and asserts the
-#    right category ranks highest. Add -s to print the top-1/top-2/MRR report.
-pytest scripts/test_scoring.py -m llm -s
 ```
 
-**The live tier needs no `ANTHROPIC_API_KEY`.** Instead of calling the API, it shells
-out to the **`claude` CLI**, which authenticates via your subscription login. Each
-(query, category) pair is scored with `claude -p "<query>" --system-prompt
-"<app/prompts/category.md>" --tools "" --model claude-haiku-4-5-20251001
---output-format json` — i.e. the category prompt is the *sole* system prompt and the
-prod model (Haiku 4.5) is forced, so it mirrors `anthropic_scorer.py`.
-
-Prerequisites & notes for the live tier:
-- `claude` CLI installed and logged in. If it is not on `PATH`, the live tests **skip**
-  (they never hard-fail CI).
-- A full run is **121 CLI calls** (11 queries × 11 categories) and takes several minutes;
-  it draws on your Claude subscription usage. Run it nightly/pre-release, not per commit.
-- The CLI is an agent harness, so replies may be prose rather than raw JSON; the eval
-  extracts the numeric score (JSON → `score: N` → `N/10`). Strict JSON-format compliance
-  is covered separately by the deterministic tier and the real-API prod path.
-
-`pytest.ini` registers the `llm` marker and scopes default collection to
-`scripts/test_scoring.py` and `scripts/test_review_aggregation.py`, so a bare `pytest`
-run covers the prompt-eval suite plus the review-aggregation unit tests. The rest of
-`scripts/` stays excluded — those are standalone smoke scripts that hit a live server at
-import time and must not be auto-run.
+`pytest.ini` scopes default collection to `scripts/test_review_aggregation.py`, so a
+bare `pytest` run covers the review-aggregation unit tests. The rest of `scripts/`
+stays excluded — those are standalone smoke scripts that hit a live server at import
+time and must not be auto-run. (The category-scoring eval `scripts/test_scoring.py`
+was removed with the category pipeline in TODO-024.)
 
 ### Evaluate any prompt (ad-hoc)
 
@@ -86,13 +58,12 @@ reply and its extracted score (if any):
 
 ```bash
 cd backend
-.venv\Scripts\python.exe scripts/eval_prompt.py app/prompts/road.md "fast carbon road racer" "29er trail bike"
-.venv\Scripts\python.exe scripts/eval_prompt.py app/prompts/gravel.md --dataset inputs.txt --model sonnet
+.venv\Scripts\python.exe scripts/eval_prompt.py app/prompts/bike_search.md "fast carbon road racer" "29er trail bike"
+.venv\Scripts\python.exe scripts/eval_prompt.py app/prompts/bike_search.md --dataset inputs.txt --model sonnet
 ```
 
 The `/eval-prompt <prompt-file> "<input>" ...` slash command (`.claude/commands/`)
-wraps this for quick reuse. Use it for ad-hoc prompt iteration; use the pytest
-`-m llm` suite for the fixed directional category eval.
+wraps this for quick reuse. Use it for ad-hoc prompt iteration.
 
 ## Follow-up cache tables
 
@@ -107,7 +78,7 @@ Both reference the shared `bikes` identity row, so a bike found by search and a 
 
 - Both are indexed on their key columns and upsert on conflict (a re-run refreshes the entry).
 - Freshness: searches check `searches.created_at + ttl_seconds`; details check `bike_details.updated_at + ttl_seconds`. A stale row is treated as a miss (never served).
-- Search results carry an explicit **`position`** — the 5 bikes are allocated by score weight, so their order is meaningful, and a row set (unlike the old JSON blob) does not preserve it for free. Reads order by `position`.
+- Search results carry an explicit **`position`** — the bikes are returned best match first, so their order is meaningful, and a row set (unlike the old JSON blob) does not preserve it for free. Reads order by `position`.
 - Searches are also queryable **by attribute** — `find_bikes_by_brand(brand)` returns de-duplicated bikes of that brand across fresh cached searches, powering `GET /v1/bike/search-cache?brand=`.
 - Writes are best-effort: a cache-table failure is logged but never breaks the underlying request.
 - This layer is **additive** — the generic per-endpoint cache is unchanged.
@@ -150,33 +121,47 @@ Pytest regression for the ORM read path (`pytest scripts/test_details_parity.py 
 
 ## Search Cache
 
-`POST /v1/bike/search` resolves through a **three-step cascade**, stopping at the first step that produces bikes:
+`POST /v1/bike/search` resolves through a **three-step cascade** (TODO-024), stopping at the first step that produces bikes:
 
 | # | Step | Cost | Condition |
 |---|------|------|-----------|
 | 1 | Generic response cache (`app/cache.py`) | 0 outbound calls | Exact normalised match on the full request (every filter field) |
-| 2 | **Brand+model DB lookup** (`app/repository.py`) | 0 outbound calls | `brand` **and** `model` both provided, and a fresh cached search holds that bike |
-| 3 | AI pipeline | 11 + N calls | Everything else — a miss at 1 and 2 |
+| 2 | **DB details search** (`repository.find_bikes_by_details`) | 0 outbound calls | ≥1 DB-checkable field is set **and** ≥1 bike matches every one of them |
+| 3 | **One** Claude call (`app/bike_finder.py`, `app/prompts/bike_search.md`) | 1 call | Everything else |
 
-Step 2 is the addition. `find_bike_by_brand_model(brand, model)` scans cached searches, skips rows past their 24 h TTL, and returns every de-duplicated bike whose normalised brand **and** model match. A hit **short-circuits** — the AI pipeline never runs. The response shape is identical (`BikeSearchResponse`); only `len(bikes)` differs, since it returns just the bikes that actually match rather than padding to 5. A miss, a stale row, or an all-filtered-out result falls through to step 3 unchanged.
+### How the DB step matches
 
-### Which filters are honoured on the DB path
+A bike matches when **every** checkable field given matches. A bike missing the relevant spec row does not match that field, and a bike with no `bike_detail` row can only match on `brand`/`model`. Brand and model are compared **exactly** after Python `.strip().lower()` (never SQL `lower()`, which is ASCII-only).
 
-**None.** `price_max` used to be gated by joining the offer cache's prices; it was removed from `SearchRequest` together with `rider_height_cm`, `rider_weight_kg`, `has_suspension` and `is_kids` (TODO-023), so the DB path now ignores every filter: `year`, `frame_size`, `wheel_size`, `frame_material`, `brake_type`, `drivetrain`, `gender`, `battery_capacity_wh`.
+| `SearchRequest` field | Source in DB | Rule |
+|---|---|---|
+| `brand`, `model` | `bike.brand` / `bike.model` | case-insensitive exact |
+| `frame_material` | `Frame / Frame`, `spec_key='Material'` | synonyms — Aluminum ↔ aluminium/alloy/6061…, Steel ↔ chromoly/cro-mo/hi-ten…, Carbon |
+| `wheel_size` | any `spec_key='Wheel Size'`, or `Wheels/*` `Size` | number token (`29` in `29 x 2.4`); `700c` ↔ `28`, `650b` ↔ `27.5` |
+| `frame_size` | `Frame / Frame`, `spec_key='Sizes'` / `'Size'` | size token in the list (`SM`/`MD`/`LG` aliased) |
+| `gender` | `spec_key='Gender'` | Male/Female also match unisex; Universal = unisex |
+| `is_electric` | `Electric / Powertrain` category present / absent | |
+| `battery_capacity_wh` | `Electric / Powertrain / Battery`, `spec_key='Capacity'` | parsed Wh within ±10 % |
+| `brake_type` | `Brakes/*` element names, descriptions, spec values | Hydraulic → `hydraulic`; Mechanical → `mechanical`/cable disc; V-brake / Rim → rim keywords and **no** `disc` mention |
+| `drivetrain` | `Drivetrain/*` element names, descriptions, spec values | `Nx` token (`1x12`, not `52x36T`), else chainring count (`50/34T` = 2x; single ring and no front derailleur = 1x) |
+| `belt_drive` | `Drivetrain/*` `element_name` contains `belt` | |
+| `bike_type`, `year`, `search` | — | **not checkable**, ignored by the DB step |
 
-This is a deliberate, documented limitation, not an oversight. `BikeResult` stores only `brand`, `model`, `accessories`, `match_score`, `explanation`. **No stored model carries any of those fields**, so there is nothing to filter against. Rather than silently dropping the constraints or faking a match, the DB path ignores them — a request combining `brand` + `model` with, say, `frame_size: "M"` may be served from the DB with that size unverified. Callers that need those constraints enforced should omit `brand` or `model` so the request routes to the AI pipeline.
+A request with **only** non-checkable fields skips the DB and goes straight to the AI call. At most **5** DB bikes are returned (`MAX_DB_RESULTS`), highest `match_score` first — never topped up with AI results.
+
+`match_score` / `explanation` / `accessories` of a DB hit come from the bike's most recent `search_bike_rating_cache` row when one exists; otherwise `match_score = 10`, `accessories = []` and the explanation lists the matched fields, e.g. `"Matches: carbon frame, 29\" wheels, hydraulic disc brakes."`.
 
 ### A DB hit deliberately does not warm the generic cache
 
-`set_cached` is never called on the step-2 path. The generic `cache` table has **no `ttl` column** and `get_cached` never checks age — writing a DB-sourced result there would pin a 24 h-TTL cached-search answer permanently, outliving the very TTL that makes it safe to serve.
+`set_cached` is never called on the step-2 path. The generic `cache` table has **no `ttl` column** and `get_cached` never checks age — writing a DB-sourced result there would pin that answer permanently, even after the DB changes.
 
-**Tests:** the cascade is covered by `scripts/test_search.py` TC-20 – TC-25 against a live server: DB hit, AI fallback, stale-row fall-through, a legacy `price_max` being ignored on the DB path (TC-23), and no regression on the generic-cache path.
+**Tests:** `scripts/test_search.py` TC-20 – TC-25 against a live server: brand+model DB hit (TC-20), DB miss → one AI call (TC-21), non-checkable-only → AI (TC-22), legacy `price_max` ignored (TC-23), spec-field DB hit with no AI and no cache row (TC-24), and no regression on the generic-cache path (TC-25).
 
 ## Endpoints
 
 ### `POST /v1/bike/search`
 
-Find 5 matching bikes. All fields are optional but at least one must be provided. The structured fields are combined into an enriched query string and fed to Claude alongside the free-text description.
+Find up to 5 matching bikes — from the DB when its details match, otherwise from one Claude call. All fields are optional but at least one must be provided.
 
 ```http
 POST http://localhost:8000/v1/bike/search
@@ -200,14 +185,13 @@ Content-Type: application/json
 }
 ```
 
-All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M — comfortable bike…"` and passes it through the existing scoring and bike-finding pipeline. All fields participate in the SQLite cache key, so two searches that differ only in a filter return distinct results. `price_max`, `rider_height_cm`, `rider_weight_kg`, `has_suspension` and `is_kids` were removed (TODO-023); they are silently ignored if sent, so a payload made only of them is rejected with 422.
+All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M — comfortable bike…"` and, on a DB miss, sends it to a single Claude call. All fields participate in the SQLite cache key, so two searches that differ only in a filter return distinct results. `price_max`, `rider_height_cm`, `rider_weight_kg`, `has_suspension` and `is_kids` were removed (TODO-023); they are silently ignored if sent, so a payload made only of them is rejected with 422.
 
 **Flow:**
-0. SQLite reads only — generic cache, then (when `brand` **and** `model` are both given) the cached-search brand+model lookup. **A hit at either step returns immediately, making zero outbound HTTP calls.** Steps 1–2 run only on a miss. See [Search Cache](#search-cache)
-1. `POST https://api.anthropic.com/v1/messages` × 11 — score each bike category (parallel via `asyncio.gather`)
-2. `POST https://api.anthropic.com/v1/messages` × N — find real bikes per top category (parallel)
+0. SQLite reads only — generic cache, then the DB details search over `bike` + `bike_detail_component` (skipped when no checkable field is set). **A hit at either step returns immediately, making zero outbound HTTP calls.** See [Search Cache](#search-cache)
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns up to 5 bikes as a JSON array, parsed with `app/json_extract.extract_json()`. Runs only on a DB miss
 
-On the happy path the result is also written to the queryable `searches` + `bike_results` tables via `repository.save_search`, each bike keeping its score-weighted rank in `position` (see [Follow-up cache tables](#follow-up-cache-tables)). A DB-served result is **not** written back to the generic cache — see [Search Cache](#search-cache) for why.
+A response with no parseable JSON returns `bikes: []` (never a 502) and is not cached; an upstream API error is a 502. When the AI returns bikes, the response is written to the generic cache and to `search_cache` + `search_bike_rating_cache` via `store.save_search`. A DB-served result is **not** written back to either — see [Search Cache](#search-cache).
 
 ---
 

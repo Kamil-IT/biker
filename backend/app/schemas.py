@@ -143,22 +143,6 @@ class BikeDetailsResponse(BaseModel):
     photos: list[str] = []
 
 
-class CategoryResult(BaseModel):
-    category: str
-    score: int
-    explanation: str
-
-    @field_validator("score")
-    @classmethod
-    def clamp_score(cls, v: int) -> int:
-        return max(0, min(10, v))
-
-
-class SearchResponse(BaseModel):
-    search: str
-    results: list[CategoryResult]
-
-
 class BikeResult(BaseModel):
     brand: str
     model: str

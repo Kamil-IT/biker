@@ -619,42 +619,6 @@ def _drop_search_row(query: str) -> None:
         conn.close()
 
 
-def _purge_bike_from_search_cache(brand: str, model: str) -> int:
-    """Delete every search_cache row containing this bike.
-
-    The AI path ends with save_search(), so a fallback result is written into
-    search_cache — and the new DB-first branch then serves it for the next 24 h.
-    That includes bikes the model invented: ask for a brand+model that does not
-    exist and the AI will sometimes echo it back, after which the request is a
-    DB hit forever after. The fallback tests must clear that or they only test
-    the fallback once, then silently start testing the DB path instead.
-    """
-    conn = _db()
-    try:
-        # A search "contains" this bike when it has a search_bike_rating_cache
-        # row joining to the matching bike. Delete those whole searches (the
-        # rating rows cascade with them).
-        search_ids = {
-            r[0] for r in conn.execute(
-                "SELECT DISTINCT r.search_cache_id "
-                "FROM search_bike_rating_cache r JOIN bike b ON b.id = r.bike_id "
-                "WHERE LOWER(b.brand) = ? AND LOWER(b.model) = ?",
-                (brand.strip().lower(), model.strip().lower()),
-            ).fetchall()
-        }
-        removed = 0
-        for search_id in search_ids:
-            conn.execute(
-                "DELETE FROM search_bike_rating_cache WHERE search_cache_id = ?", (search_id,)
-            )
-            conn.execute("DELETE FROM search_cache WHERE id = ?", (search_id,))
-            removed += 1
-        conn.commit()
-        return removed
-    finally:
-        conn.close()
-
-
 def _show(label: str, req_body: dict, response) -> dict:
     print(f"{label} request:  {json.dumps(req_body, ensure_ascii=False)}")
     print(f"{label} response: HTTP {response.status_code}")
@@ -671,9 +635,8 @@ def _matches(bike: dict, brand: str, model: str) -> bool:
 # never collide with a real enriched query, and every one is deleted on the way
 # out of its test.
 FIX_MARLIN_QUERY = "todo-009 fixture: trek marlin 5"
-FIX_STALE_QUERY = "todo-009 fixture: stale row"
-# ── [TC-20] DB hit: brand+model served straight from search_cache ──
-print("\n── [TC-20] DB hit: Trek Marlin 5 served from search_cache (no AI) ──")
+# ── [TC-20] DB hit: brand+model served straight from the bike table ──
+print("\n── [TC-20] DB hit: Trek Marlin 5 served from the DB (no AI) ──")
 tc20_body = {"brand": "Trek", "model": "Marlin 5"}
 tc20_key = _norm_key(tc20_body)
 _seed_search_row(FIX_MARLIN_QUERY, [_bike("Trek", "Marlin 5", "Seeded by TC-20.")])
@@ -699,71 +662,70 @@ finally:
     _drop_search_row(FIX_MARLIN_QUERY)
 
 
-# ── [TC-21] AI fallback: unknown brand+model falls through to the pipeline ──
-print("\n── [TC-21] AI fallback: unknown brand+model ──")
-tc21_body = {"brand": "Zzyzx", "model": "Nonesuch QQ999"}
+# ══════════════════════════════════════════════════════════════════════════
+# TODO_024 — DB details search, then ONE AI call
+#
+# The DB step matches checkable fields against bike + bike_detail_component.
+# "Which path ran" is told apart by the side effect: only the AI path calls
+# set_cached, so a DB hit leaves no generic-cache row behind.
+# ══════════════════════════════════════════════════════════════════════════
+
+# ── [TC-21] DB-miss: checkable fields with no DB match → one AI call ──
+# Trek carbon bikes have no bike_detail rows in cache.db, and save_search only
+# writes `bike` identities (never details), so this stays a DB miss run after run.
+print("\n── [TC-21] DB miss → single AI call (brand + frame material) ──")
+tc21_body = {"brand": "Trek", "frame_material": "Carbon"}
 tc21_key = _norm_key(tc21_body)
-# Both caches must be cold or this stops being a fallback test — see
-# _purge_bike_from_search_cache for why the search_cache side matters.
 _cache_row_delete("/v1/bike/search", tc21_key)
-_purged = _purge_bike_from_search_cache("Zzyzx", "Nonesuch QQ999")
-if _purged:
-    print(f"     purged {_purged} search_cache row(s) left by an earlier fallback run")
-resp_tc21 = httpx.post(URL, json=tc21_body, timeout=300)
+t0 = _time.perf_counter()
+resp_tc21 = httpx.post(URL, json=tc21_body, timeout=180)
+elapsed_tc21 = _time.perf_counter() - t0
 data_tc21 = _show("[TC-21]", tc21_body, resp_tc21)
 assert resp_tc21.status_code == 200, f"Expected 200, got {resp_tc21.status_code}"
-assert isinstance(data_tc21["bikes"], list) and len(data_tc21["bikes"]) > 0, \
-    "AI fallback must still return bikes"
-# Deliberately no assertion about *which* bikes come back. The model sometimes
-# echoes the requested brand+model as one of its five results even though no
-# such bike exists, so bike identity cannot tell the DB path from the AI path.
-# The side effect can: only the AI path calls set_cached.
-
+assert 0 < len(data_tc21["bikes"]) <= 5, f"Expected 1-5 AI bikes, got {len(data_tc21['bikes'])}"
+assert not any(b["explanation"].startswith("Matches:") for b in data_tc21["bikes"]), \
+    "A DB-hit explanation leaked into what should be an AI result"
 assert _cache_row_exists("/v1/bike/search", tc21_key), \
-    "AI-fallback path should have written a generic-cache row"
-print(f"OK — AI fallback returned {len(data_tc21['bikes'])} bikes and warmed the cache")
-# Leave nothing behind: the AI may have invented this bike and save_search will
-# have persisted it, which would turn the next run's fallback into a DB hit.
-_purge_bike_from_search_cache("Zzyzx", "Nonesuch QQ999")
+    "AI path should have written a generic-cache row"
+print(f"OK — AI fallback returned {len(data_tc21['bikes'])} bikes in {elapsed_tc21:.1f}s and warmed the cache")
 _cache_row_delete("/v1/bike/search", tc21_key)
 
 
-# ── [TC-22] Stale search_cache row is not served — request falls through to AI ──
-print("\n── [TC-22] Stale search_cache row falls through to AI ──")
-STALE_BRAND, STALE_MODEL = "StaleBrand", "OldModel X"
-tc22_body = {"brand": STALE_BRAND, "model": STALE_MODEL}
+# ── [TC-22] Only non-checkable fields → straight to AI ──
+print("\n── [TC-22] Only non-checkable fields (bike_type + year) → AI ──")
+tc22_body = {"bike_type": "Gravel", "year": 2024}
 tc22_key = _norm_key(tc22_body)
-_seed_search_row(
-    FIX_STALE_QUERY,
-    [_bike(STALE_BRAND, STALE_MODEL, "Seeded by TC-22, deliberately expired.")],
-    age_seconds=48 * 60 * 60,
-)
-print("     seeded a search_cache row aged 48 h against a 24 h TTL")
-try:
-    _cache_row_delete("/v1/bike/search", tc22_key)  # force a real fallback each run
-    _purge_bike_from_search_cache(STALE_BRAND, STALE_MODEL)  # drop echoes from earlier runs
-    _seed_search_row(  # re-seed: the purge above also removes this test's fixture
-        FIX_STALE_QUERY,
-        [_bike(STALE_BRAND, STALE_MODEL, "Seeded by TC-22, deliberately expired.")],
-        age_seconds=48 * 60 * 60,
-    )
-    resp_tc22 = httpx.post(URL, json=tc22_body, timeout=300)
-    data_tc22 = _show("[TC-22]", tc22_body, resp_tc22)
-    assert resp_tc22.status_code == 200, f"Expected 200, got {resp_tc22.status_code}"
-    # Identify the stale row by its fixture marker, not by brand+model: the AI
-    # sometimes echoes the requested brand+model back as one of its results, so
-    # brand+model alone cannot prove the cached row leaked. The accessories
-    # marker only exists on the row this test seeded.
-    assert not any(b["accessories"] == ["TODO-009 fixture"] for b in data_tc22["bikes"]), \
-        "A stale search_cache row must not be served — the seeded row leaked into the response"
-    assert len(data_tc22["bikes"]) > 0, "Fallback must still return bikes"
-    assert _cache_row_exists("/v1/bike/search", tc22_key), \
-        "Expected the AI pipeline to run and warm the generic cache"
-    print(f"OK — stale row ignored, AI fallback returned {len(data_tc22['bikes'])} bikes")
-finally:
-    _purge_bike_from_search_cache(STALE_BRAND, STALE_MODEL)
-    _drop_search_row(FIX_STALE_QUERY)
-    _cache_row_delete("/v1/bike/search", tc22_key)
+_cache_row_delete("/v1/bike/search", tc22_key)
+resp_tc22 = httpx.post(URL, json=tc22_body, timeout=180)
+data_tc22 = _show("[TC-22]", tc22_body, resp_tc22)
+assert resp_tc22.status_code == 200, f"Expected 200, got {resp_tc22.status_code}"
+assert 0 < len(data_tc22["bikes"]) <= 5, f"Expected 1-5 AI bikes, got {len(data_tc22['bikes'])}"
+assert _cache_row_exists("/v1/bike/search", tc22_key), \
+    "Non-checkable-only search must skip the DB and run the AI call"
+print(f"OK — non-checkable search went to AI ({len(data_tc22['bikes'])} bikes)")
+_cache_row_delete("/v1/bike/search", tc22_key)
+
+
+# ── [TC-24] DB hit on spec fields: no AI, ≤5 bikes, every one matches ──
+print("\n── [TC-24] DB hit on spec fields (carbon frame + 29\" wheels) ──")
+tc24_body = {"frame_material": "Carbon", "wheel_size": '29"'}
+tc24_key = _norm_key(tc24_body)
+_cache_row_delete("/v1/bike/search", tc24_key)
+t0 = _time.perf_counter()
+resp_tc24 = httpx.post(URL, json=tc24_body, timeout=60)
+elapsed_tc24 = _time.perf_counter() - t0
+data_tc24 = _show("[TC-24]", tc24_body, resp_tc24)
+assert resp_tc24.status_code == 200, f"Expected 200, got {resp_tc24.status_code}"
+assert 0 < len(data_tc24["bikes"]) <= 5, f"Expected 1-5 DB bikes, got {len(data_tc24['bikes'])}"
+assert elapsed_tc24 < 5.0, f"DB hit took {elapsed_tc24:.2f}s — expected < 5s (AI ran?)"
+assert not _cache_row_exists("/v1/bike/search", tc24_key), \
+    "DB-hit path must not write a generic-cache row"
+from app.schemas import SearchRequest as _SearchRequest  # noqa: E402
+from app.repository import find_bikes_by_details as _find_db  # noqa: E402
+_db_expected = [(b.brand, b.model) for b in _find_db(_SearchRequest(**tc24_body))]
+assert [(b["brand"], b["model"]) for b in data_tc24["bikes"]] == _db_expected, \
+    "Endpoint result differs from repository.find_bikes_by_details"
+print(f"OK — DB hit in {elapsed_tc24:.3f}s, {len(data_tc24['bikes'])} bike(s), no AI, no cache row")
 
 
 # ── [TC-23] price_max is gone — it no longer gates the DB hit ──
