@@ -108,5 +108,65 @@
     "brand": "Knolly Bikes",
     "model": "Delirium 27.5\"",
     "reason": "archived discontinued listing - handle oldermodels-delirium-27-5, $0.00 single Default Title variant, page fetched successfully but has no spec/build table anywhere (no groupset, fork, or component named), pure marketing narrative only"
+  },
+  "knolly bikes|delirium t": {
+    "brand": "Knolly Bikes",
+    "model": "Delirium T",
+    "reason": "archive listing: retired/dead Shopify product page (image filename delirium_t-retired-side.jpg), $0.00 single Default Title variant, OutOfStock in both the live page and the Sept 2025 Wayback snapshot, zero spec table on either version. Not a current build name -- Knolly's live Delirium line is only"
+  },
+  "rivendell bicycle works|charlie gallop": {
+    "brand": "Rivendell Bicycle Works",
+    "model": "Charlie Gallop",
+    "reason": "frameset only - product title is Frame - Charlie Gallop 2025 Frame, $1750, SKUs prefixed f-gallop-, no groupset/components listed anywhere"
+  },
+  "sixthreezero|12 electric bike": {
+    "brand": "sixthreezero",
+    "model": "12\" Electric Bike",
+    "reason": "Dead/unpublished listing: product page 404s, handle absent from products.json (not in the live catalog), .json shows $0.00 price, single default variant, empty body_html, and zero images. Not a real purchasable bike to spec."
+  },
+  "sparta b v|spartamet": {
+    "brand": "Sparta B.V.",
+    "model": "Spartamet",
+    "reason": "Not a single spec-able bicycle model: Spartamet is a 1985-1999 Sparta/Sachs two-stroke petrol-engine moped-assist system fitted to bicycles, not one bike with a defined component build. No manufacturer product page exists (Sparta discontinued it decades ago); the given URL is a third-party spare-par"
+  },
+  "orange bikes|phase ebike decals 2020": {
+    "brand": "Orange Bikes",
+    "model": "Phase Ebike decals 2020",
+    "reason": "not a bicycle - this is a vinyl decal/sticker accessory ($25, 3 color options, ecom-dropdown-merch-product template), product_type is mislabeled Bike"
+  },
+  "salsa cycles|2009 dos niner silver": {
+    "brand": "Salsa Cycles",
+    "model": "2009 Dos Niner Silver",
+    "reason": "frameset - Frame Specs tab lists only frame+integrated Relish air shock (Small frame weighs 4.0 lbs), explicitly For use with 80mm travel 29 fork (sold separately), no groupset/drivetrain/brakes/wheels named anywhere on page, only two accordion tabs exist (Frame Specs, Geometry), no component/build "
+  },
+  "sixthreezero|20 cargo bike w kids seat double battery": {
+    "brand": "sixthreezero",
+    "model": "20\" Cargo Bike w/ Kids Seat (Double Battery)",
+    "reason": "Dead/unpublished listing: product page 404s, handle absent from products.json (not in the live catalog), .json shows $0.00 price, single default variant, empty body_html, and zero images. Same signature as the earlier sixthreezero 12\" Electric Bike skip."
+  },
+  "squid bikes|gravtron marble size s": {
+    "brand": "Squid Bikes",
+    "model": "Gravtron - Marble - Size S",
+    "reason": "Frameset, not a complete bike. Product tagged Frame, price $1400 single Default Title variant, weight 20lbs consistent with frame-only. Page has an explicit Frameset Includes section listing only seat collar, Whisky MCX carbon fork, White Industries headset, and thru axles -- no groupset, wheelset, "
+  },
+  "salsa cycles|2009 el gogo": {
+    "brand": "Salsa Cycles",
+    "model": "2009 El Gogo",
+    "reason": "frameset - Frame Specs tab lists only frame (Scandium, custom-drawn aero tubeset) + Alpha Q Aero carbon fork, 53cm frame weighs 3.25 lbs / fork 0.96 lbs listed separately, no groupset/drivetrain/brakes/wheels named anywhere, only two accordion tabs exist (Frame Specs, Geometry), $0.00 archived listi"
+  },
+  "squid bikes|gravtron torn tape": {
+    "brand": "Squid Bikes",
+    "model": "Gravtron Torn Tape",
+    "reason": "frameset - page explicitly says Frameset Includes: (seat collar, fork, headset, thru axles), $1300, no groupset/drivetrain/wheels/brakes named anywhere"
+  },
+  "squid bikes|gravtron v1 gravel": {
+    "brand": "Squid Bikes",
+    "model": "Gravtron V1 - Gravel",
+    "reason": "frameset - all variants explicitly labelled FRAME ONLY (No headset or Fork) or FRAMESET (Frame Fork Headset), no complete-bike variant exists, no groupset/drivetrain/wheels/brakes named"
+  },
+  "surly bikes|1x1": {
+    "brand": "Surly Bikes",
+    "model": "1x1",
+    "reason": "Frameset, not a complete bike. Surly Boneyard archive listing (template boneyard-bikes, tag Archived Bikes), $0.00 price, single Default Title variant, all three product images alt-texted as Surly 1x1 FRAME (green/pink/black). body_html contains only geometry tables for 2015/2014/2011 model years --"
   }
 }

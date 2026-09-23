@@ -977,6 +977,218 @@ The rule is to iterate the whole prefix list, not to reuse last round's winner �
 after I twice encoded a specific answer ("unreachable, use a reseller", then
 "works via en-int") and was corrected both times.
 
+### Round 12 — 40 bikes · **35 saved, 5 skipped, 0 validator rejections**
+
+DB 510 → **545** bikes, 449 → **484** details.
+
+#### The zero-photo streak ended, correctly
+
+Seven rounds ran with every bike getting at least one photo. Round 12: three
+zero-photo outcomes, all honest — two **sixthreezero** listings that return HTTP
+200 with `images: []` and a $0.00 stub variant (unpublished, not unreachable),
+and **Sparta Spartamet**, a 1986 Dutch moped-assist bike with no verified vehicle
+photo across the brand club site, a parts reseller and brommer.nl. Recording this
+rather than smoothing it: the streak was a real result, and so is its end.
+
+#### "No data served" is not "no data exists" — and the skip classifier conflated them
+
+The round-10 retryable-skip fix had a second-order flaw. A **dead listing** and a
+**fetch failure** get described with overlapping words — "no spec content found"
+fits both — so the sixthreezero stub was withheld from the skiplist as retryable
+and would have been re-researched **every round forever**.
+
+Added `SETTLED_SKIP_RX`, which overrides the retryable match on markers that
+state the product does not exist: `unpublished`, `not in products.json`,
+`images: []`, `$0.00 stub`, `404 page`, `not a bicycle`, `trailer`, `frameset`,
+`deposit`. Verified on six real skip reasons — dead listings, framesets, trailers
+and non-bikes settle; a Shogun-blocked real bike and a genuine timeout still come
+back.
+
+Erring toward *retryable* remains the safe direction (one wasted slot versus
+permanent loss), but "safe direction" is not the same as "correct", and an
+unbounded retry loop is its own kind of leak.
+
+#### The hardest record of the session, done right
+
+Salsa **2009 Caballero** — a 17-year-old discontinued frame. p1 populated Frame
+from Salsa's own archived `frame_tech` page (Wayback 2015): Scandium tubeset,
+135 mm rear spacing, 26x2.3" clearance, Flip-Lock 30.6 mm collar. It then left
+Drivetrain, Brakes, Wheels, Cockpit and Saddle **completely empty**, despite
+knowing the bike shipped as complete XTR and XT/LX builds, because no component
+list could be sourced: Salsa's own `build_kit` tab is client-rendered and
+therefore empty in *every* Wayback capture 2011-2015, the current Shopify entry
+is a $0.00 "Archived Bike" with only geometry, and mtbr.com's build pages sit
+behind a proof-of-work challenge. It documented all of that in the description
+instead of inferring a groupset.
+
+Two things this validates. First, **the round-8 validator fix**: a Frame-only
+record with ≥6 spec rows now saves without padding, so the honest answer was also
+the passable one — under the old rule this record could only have been saved by
+inventing components. Second, **Wayback archives HTML, not the rendered DOM** —
+if a brand was JS-only then, the archive has nothing either. That is now written
+down, because it explains when to stop rather than trying more snapshots.
+
+#### Rules corrected by evidence, not extended
+
+- **"Never use a bundle listing" was too strong.** For some high-volume Lectric
+  trims no plain base listing exists at all; the bundle's core-bike accordion is
+  identical. The real rule: never take the bundle's PRICE or ACCESSORIES as the
+  bike's.
+- **Priority's narrative-card layout is not universal** — the EIGHT has a clean
+  `spec-table_table`. Three examples had been generalised into a brand law. Check
+  for the easy structure first, even on a brand known for the hard one.
+
+#### New source hazards
+
+- **Otso runs a second live domain** (`otsocycles.com` / `otsobikes.com`); one
+  embeds the gviz sheet the other does not.
+- **In a shared spec sheet, match the header TEXT, not its href** — an Otso column
+  headed "Shimano GRX 800 Di2 1x12" was hyperlinked to a *waheela-r* product while
+  its row data was correctly the warakin-ti build.
+- **Wide build-comparison tables are off-by-one traps** (Revel: 5 tiers + a label
+  column). Index from `<thead>`; an off-by-one silently assigns a neighbouring
+  tier's entire parts list — well-formed, plausible, and wrong.
+- **Do not follow a redirect off the brand's domain**: a `rivbike.com` product
+  path redirected to `transportr.io/redirect/...`. p2 declined and used the direct
+  path.
+- **Delisted-product photos may only exist in brand editorial** (Rivendell Cheviot,
+  from a staff-bike blog post). Usable, but flag the provenance — a staff build is
+  not necessarily the stock specification.
+
+### Round 13 — 40 bikes · **36 saved, 4 skipped, 0 validator rejections**
+
+DB 545 → **581** bikes, 484 → **520** details.
+
+#### A famous nameplate is not evidence about the listing in front of you
+
+Salsa's **Dos Niner** is a well-known steel hardtail. The 2009 listing is a
+short-travel **full-suspension** 29er — Scandium frame, Relish Air shock, 25 mm
+travel. p2 caught it mid-record. This is the most dangerous shape of error the
+pipeline can produce: the model name would have been right, every field
+well-formed, and no validator could ever flag it. **Prior knowledge of a
+nameplate is not a source.**
+
+#### `product_type` has now been wrong in both directions
+
+Round 10 found a frameset labelled `Bicycle`. Round 13 found Orange's "Phase
+Ebike decals 2020" — a **$25 vinyl decal set** — labelled `Bike`. The signal that
+did work was the **product template**: `ecom-dropdown-merch-product` is
+unambiguous where `product_type` is not. `decal` also added to `PART_RX` so it
+cannot reach the queue again.
+
+#### The stale-queue trap has a second face
+
+Rounds 11-12 it made a *drained* queue look like a finished round. Round 13 it
+made a *fresh* queue look drained: d3 and d4 polled inside the ~30 s coordinator
+rebuild window, saw the old drained state, and stood down before doing any work.
+Same root cause, opposite symptom. **A single `/next` reading is never
+conclusive during a round change — re-poll.**
+
+#### Fixes from prior rounds confirmed working
+
+- The dead sixthreezero stub was resubmitted with `photos: []` rather than
+  skipped, exactly per the round-12 rule — end to end, as designed.
+- SRAM AXS on the Stinner went under Drivetrain with `Electric / Powertrain`
+  empty: d2's round-8 Di2 rule, applied by a different agent without prompting.
+- Salsa 2009 Dos Niner and Rocky Mountain Altitude Carbon 90 Rally / Rally
+  Edition were both correctly treated as distinct siblings rather than patched.
+
+### Round 14 — 40 bikes · **36 saved, 4 skipped, 0 validator rejections**
+
+DB 581 → **617** bikes, 520 → **556** details. Zero photo-less bikes again.
+
+#### Rename vs nameplate-reuse — the pair that completes each other
+
+p2 hit Rivendell's "Clem Smith Jr.", found no such product on rivbike.com, and
+established it was a documented **rename** (Clementine → Clem Smith Jr. L-Type →
+Clem). It used the current listing and recorded the lineage — then explicitly
+asked whether that conflicted with the round-13 Dos Niner rule, inviting
+disagreement.
+
+It does not, and the pair is more useful than either alone:
+
+| | identity | correct action |
+|---|---|---|
+| Rivendell Clem | **continuous** — renamed | use the current listing, document the lineage |
+| Salsa Dos Niner | **not continuous** — one name, two bikes | ignore the famous one, record what is in front of you |
+
+Test: **is the product identity continuous, or only the string?** Conflating them
+fails both ways — treating a rename as a different bike loses a real product;
+treating a nameplate-reuse as a rename writes the wrong bike under the right name.
+
+Caveat added on top: a rename does **not** guarantee the spec carried forward. The
+current `clem-completes-2025` listing may be a later model year, so the record
+must state which era's spec and photos it holds.
+
+#### A rule I generalised too far, falsified in one round
+
+Round 9 concluded **"client-rendered sites recur per BRAND, not per product"** and
+I broadcast it as the default routing move. Round 14 broke it: sixthreezero
+server-rendered a full spec table for the 20" Simple Step Thru while the **A/O
+Amelia on the same domain** was a pure client-side Gatsby shell — 404ing
+`page-data.json`, empty product schema. Same brand, opposite rendering.
+
+Corrected to: a brand being JS-only is a **prior, not a fact**. Check for JSON-LD
+or a spec table per product before choosing the route, and never conclude "this
+brand renders server-side" from a single success. Specialized independently
+confirms the per-product framing — two 2004 archives on one storefront resolved
+under *different* region prefixes (`gb/en` for one, `de/de` and `fr/fr` for the
+other).
+
+That is the third rule this session derived from a handful of cases and then
+falsified by the next one (`product_type` beats the title; Priority's narrative
+cards; per-brand rendering). The pattern is consistent enough to be worth stating:
+**a rule inferred from N observations of one brand is a hypothesis about that
+brand, not a law about the web.**
+
+#### A partial record beats both a skip and a fabrication
+
+d3 on the **sixthreezero A/O Amelia**: exhausted live fetch → Wayback (also empty)
+→ A/O's own storefront (HTTP 402, inactive) → WebSearch (only Amazon/Judge.me
+listings for the same SKU). It then submitted a **partial** record — component
+brand names left `""`, but corroborated top-level facts recorded (500 W, 500 Wh,
+7-speed, disc brakes, 26" wheels, 20-40 mi range) with the sourcing gaps stated
+explicitly. Neither a skip (the bike is real) nor invention. This is the shape the
+validator's frameset fix was meant to permit, generalising beyond framesets.
+
+#### One letter apart can be two bikes
+
+Specialized "Hotrock **FS** 24" (a kids *hardtail*, despite the FS) and "Hotrock
+**FSR** 24" are different products. Same family as the Lectric 750 and Engwe 2.0
+cases — three distinct shapes of the same lesson now: an extra number, a version
+suffix, and a single letter.
+
+#### Housekeeping
+
+Agents' scratch accumulates fast: this round cleared **9 zero-byte shell-redirect
+artefacts** and moved **162 raw fetch dumps (29.3 MB)** into the gitignored
+`docs/bikes/scratch/`. Worth doing before any commit — they are re-fetchable
+working data, not work product.
+
+### What selection silently drops — measured, round 12
+
+A filter that removes candidates without saying so reads as "we covered
+everything". Measured against the 3,491-row dataset:
+
+| dropped | reason |
+|---:|---|
+| **3,095** | **eligible — reaches the queue** |
+| 164 | listing facets (size/colourway/`Ex-Display`/`(VIP only)`) |
+| 111 | part or non-bike names |
+| 42 | wikidata/wikipedia hosts (deliberate throughput choice) |
+| 33 | frameset/deposit/bundle URLs |
+| 32 | mojibake in brand or model |
+| 14 | bundle/combo model names |
+
+**The bundle rule has a real cost.** Round 12 found that for some high-volume
+Lectric trims *no plain base listing exists* — every `products.json` entry is a
+bundle or regional variant. Those bikes are therefore excluded permanently by
+name/URL filtering, not merely deferred: **~17 Lectric and ~5 sixthreezero rows**.
+The pitfall now says the bundle listing is usable as a spec source when no base
+sibling exists (its core-bike accordion is identical); selection has **not** been
+relaxed to match, so this remains a known, bounded coverage gap rather than a
+silent one.
+
 ## Known gaps to fix in a later round
 
 1. **No truthfulness gate.** The validator checks shape, not whether the spec is

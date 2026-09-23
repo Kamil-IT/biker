@@ -251,5 +251,74 @@
       "bike_detail_component": 1879,
       "bike_detail_photos": 305
     }
+  },
+  {
+    "round": 13,
+    "finished": "2026-07-31T15:10:38.328391+00:00",
+    "db": {
+      "bike": 545,
+      "bike_detail": 484,
+      "bike_detail_component": 27430,
+      "bike_detail_photos": 3504
+    },
+    "outcome": {
+      "saved": 35,
+      "skipped": 5,
+      "photos_total": 420,
+      "photos_zero": 3,
+      "photos_ge4": 25
+    },
+    "delta": {
+      "bike": 35,
+      "bike_detail": 35,
+      "bike_detail_component": 1933,
+      "bike_detail_photos": 383
+    }
+  },
+  {
+    "round": 14,
+    "finished": "2026-07-31T15:45:21.739053+00:00",
+    "db": {
+      "bike": 581,
+      "bike_detail": 520,
+      "bike_detail_component": 29351,
+      "bike_detail_photos": 3909
+    },
+    "outcome": {
+      "saved": 36,
+      "skipped": 4,
+      "photos_total": 420,
+      "photos_zero": 2,
+      "photos_ge4": 25
+    },
+    "delta": {
+      "bike": 36,
+      "bike_detail": 36,
+      "bike_detail_component": 1921,
+      "bike_detail_photos": 405
+    }
+  },
+  {
+    "round": 15,
+    "finished": "2026-07-31T18:20:52.254397+00:00",
+    "db": {
+      "bike": 617,
+      "bike_detail": 556,
+      "bike_detail_component": 31373,
+      "bike_detail_photos": 4392
+    },
+    "outcome": {
+      "saved": 36,
+      "skipped": 4,
+      "photos_total": 507,
+      "photos_zero": 0,
+      "photos_ge4": 26
+    },
+    "delta": {
+      "bike": 36,
+      "bike_detail": 36,
+      "bike_detail_component": 2022,
+      "bike_detail_photos": 483
+    }
   }
 ]
