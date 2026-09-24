@@ -28,6 +28,7 @@ Merged is the bar. A task with finished code and an open PR is not done and does
 | 025 | Remove search result limit (min 1 bike) | [#85](https://github.com/Kamil-IT/biker/pull/85) |
 | 026 | Backend missing-data request counter | [#86](https://github.com/Kamil-IT/biker/pull/86) |
 | 027 | Frontend "Request data" button | [#86](https://github.com/Kamil-IT/biker/pull/86) |
+| 028 | Move the database from SQLite to PostgreSQL (`DATABASE_URL` + copy script) | [#90](https://github.com/Kamil-IT/biker/pull/90) |
 
 > ⚠️ **ID collision.** "Remove aggregate rating bar" was numbered **008**, which is already held by `backlog/blocked/TODO_008_ALLEGRO_API_OFFER.md`. Two different tasks now share that ID. The Allegro task is the older claimant and is referenced by PR #42's title, body and branch name, so renumbering *this* task is the cheaper fix — 019 is the next free ID. Left as-is pending a decision, since renaming someone else's task ID is not a call to make silently.
 
