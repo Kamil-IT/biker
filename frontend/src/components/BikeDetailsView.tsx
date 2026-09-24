@@ -98,10 +98,10 @@ export default function BikeDetailsView({
           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/40 focus-visible:rounded
           transition-colors duration-150
         "
-        aria-label="Back to search results"
+        aria-label="Wróć do wyników wyszukiwania"
       >
         <ArrowLeft size={12} weight="bold" aria-hidden="true" />
-        Back to results
+        Wróć do wyników
       </button>
 
       {/* Bike header */}
@@ -117,11 +117,11 @@ export default function BikeDetailsView({
           </div>
           <div className="shrink-0 text-right mt-1">
             <p className="font-mono text-[10px] text-muted uppercase tracking-widest mb-0.5">
-              Match
+              Dopasowanie
             </p>
             <div
               className="font-display font-bold text-charcoal leading-none tabular-nums text-[36px]"
-              aria-label={`Match score ${match_score} out of 10`}
+              aria-label={`Dopasowanie ${match_score} na 10`}
             >
               {scoreDisplay}
             </div>
@@ -135,12 +135,12 @@ export default function BikeDetailsView({
         ) : detailsGrace ? (
           <div className="mt-4 w-full aspect-[16/9] shimmer rounded-xl" aria-hidden="true" />
         ) : (
-          <RequestDataButton title="Photos" company={brand} model={model} missingType={MissingType.Photos} />
+          <RequestDataButton title="Zdjęcia" company={brand} model={model} missingType={MissingType.Photos} />
         )}
 
         {/* Accessories */}
         {accessories.filter(Boolean).length > 0 && (
-          <ul className="flex flex-wrap gap-1.5" aria-label="Key features">
+          <ul className="flex flex-wrap gap-1.5" aria-label="Najważniejsze cechy">
             {accessories.filter(Boolean).map((acc, i) => (
               <li key={`${acc}-${i}`}>
                 <span className="font-mono text-[10px] text-ink px-2 py-0.5 bg-sand rounded-full border border-border inline-block leading-5">
@@ -157,7 +157,7 @@ export default function BikeDetailsView({
         ) : detailsGrace ? (
           <DescriptionCard description={null} state="loading" />
         ) : (
-          <RequestDataButton title="Overview" company={brand} model={model} missingType={MissingType.Description} />
+          <RequestDataButton title="Opis" company={brand} model={model} missingType={MissingType.Description} />
         )}
 
         {/* Offers — all sources pooled, split by is_new (Used on top, New below) */}
@@ -180,7 +180,7 @@ export default function BikeDetailsView({
         ) : reviewGrace ? (
           <ReviewSection review={null} state="loading" />
         ) : (
-          <RequestDataButton title="Expert review" company={brand} model={model} missingType={MissingType.Review} />
+          <RequestDataButton title="Recenzja ekspertów" company={brand} model={model} missingType={MissingType.Review} />
         )}
       </div>
 
@@ -194,7 +194,7 @@ export default function BikeDetailsView({
         {state === 'error' && (
           <div role="alert" className="px-4 py-4 bg-parchment border border-terra/30 rounded-xl">
             <p className="font-body text-sm text-ink">
-              <strong className="font-medium text-terra">Could not load specifications. </strong>
+              <strong className="font-medium text-terra">Nie udało się wczytać specyfikacji. </strong>
               {error}
             </p>
             <button
@@ -206,7 +206,7 @@ export default function BikeDetailsView({
                 transition-colors duration-150
               "
             >
-              Try again
+              Spróbuj ponownie
             </button>
           </div>
         )}
@@ -214,7 +214,7 @@ export default function BikeDetailsView({
         {/* No components yet (still loading after 5 s, empty, or error) */}
         {!detailsGrace && !hasComponents && (
           <RequestDataButton
-            title="Specifications"
+            title="Specyfikacja"
             spacing="mt-0"
             company={brand}
             model={model}
@@ -299,12 +299,12 @@ function MergedOffersSection({
     <div className="mt-5 bg-card rounded-2xl border border-border overflow-hidden">
       <div className="px-5 py-4 md:px-6 md:py-5 border-b border-border">
         <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
-          Offers
+          Oferty
         </span>
       </div>
       <div className="p-4 md:p-5 space-y-4">
         <OfferCategoryCard
-          title="Used"
+          title="Używane"
           list={usedList}
           loading={grace}
           company={company}
@@ -312,7 +312,7 @@ function MergedOffersSection({
           missingType={MissingType.OffersUsed}
         />
         <OfferCategoryCard
-          title="New"
+          title="Nowe"
           list={newList}
           loading={grace}
           company={company}
@@ -392,7 +392,7 @@ function OfferImageGallery({ photos }: { photos: string[] }) {
         onClick={prev}
         disabled={!canPrev}
         className="font-mono text-[13px] text-terra disabled:opacity-20 hover:text-terra-dark transition-colors leading-none px-0.5"
-        aria-label="Previous image"
+        aria-label="Poprzednie zdjęcie"
       >
         ‹
       </button>
@@ -412,7 +412,7 @@ function OfferImageGallery({ photos }: { photos: string[] }) {
         onClick={next}
         disabled={!canNext}
         className="font-mono text-[13px] text-terra disabled:opacity-20 hover:text-terra-dark transition-colors leading-none px-0.5"
-        aria-label="Next image"
+        aria-label="Następne zdjęcie"
       >
         ›
       </button>
@@ -444,7 +444,7 @@ function OfferRow({ offer }: { offer: BikeOffer }) {
             ? 'text-green-700 border-green-300 bg-green-50'
             : 'text-muted border-border bg-sand'
         }`}>
-          {offer.is_new ? 'New' : 'Used'}
+          {offer.is_new ? 'Nowy' : 'Używany'}
         </span>
         <span className="font-display font-bold text-terra tabular-nums text-[15px]">
           {offer.price}

@@ -37,7 +37,7 @@ export default function RequestDataButton({
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(body),
       })
-      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
       setStatus('requested')
     } catch {
       // Let the user try again.
@@ -50,7 +50,7 @@ export default function RequestDataButton({
   const content = (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
       <p className="font-body italic text-ink text-[13px] leading-relaxed">
-        We don't have this data yet
+        Nie mamy jeszcze tych danych
       </p>
       <button
         type="button"
@@ -74,7 +74,7 @@ export default function RequestDataButton({
             aria-hidden="true"
           />
         )}
-        {requested ? 'Requested ✓' : 'Request data'}
+        {requested ? 'Zgłoszono ✓' : 'Poproś o dane'}
       </button>
     </div>
   )

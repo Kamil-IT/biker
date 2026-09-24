@@ -5,10 +5,10 @@ import { PhotoGallery, DescriptionCard, ReviewSection, LoadingSkeleton, Category
 type LoadState = 'loading' | 'loaded' | 'error'
 
 const CATEGORY_LABELS: Record<string, string> = {
-  helmets: 'Helmet',
-  lights: 'Lights & electronics',
-  locks: 'Locks & security',
-  apparel: 'Apparel, bags & accessories',
+  helmets: 'Kask',
+  lights: 'Oświetlenie i elektronika',
+  locks: 'Zapięcia i zabezpieczenia',
+  apparel: 'Odzież, torby i akcesoria',
 }
 
 function categoryLabel(slug: string): string {
@@ -57,10 +57,10 @@ export default function EquipmentDetailsView({
           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/40 focus-visible:rounded
           transition-colors duration-150
         "
-        aria-label="Back to bike details"
+        aria-label="Wróć do szczegółów roweru"
       >
         <ArrowLeft size={12} weight="bold" aria-hidden="true" />
-        Back
+        Wróć
       </button>
 
       {/* Equipment header */}
@@ -102,7 +102,7 @@ export default function EquipmentDetailsView({
         {state === 'error' && (
           <div role="alert" className="px-4 py-4 bg-parchment border border-terra/30 rounded-xl">
             <p className="font-body text-sm text-ink">
-              <strong className="font-medium text-terra">Could not load specifications. </strong>
+              <strong className="font-medium text-terra">Nie udało się wczytać specyfikacji. </strong>
               {error}
             </p>
             <button
@@ -114,7 +114,7 @@ export default function EquipmentDetailsView({
                 transition-colors duration-150
               "
             >
-              Try again
+              Spróbuj ponownie
             </button>
           </div>
         )}
@@ -134,7 +134,7 @@ export default function EquipmentDetailsView({
         {/* Loaded but empty */}
         {state === 'loaded' && (!categories || categories.length === 0) && (
           <p className="font-body text-sm text-muted italic">
-            No detailed specifications were found for this item.
+            Nie znaleziono szczegółowej specyfikacji tego produktu.
           </p>
         )}
       </div>

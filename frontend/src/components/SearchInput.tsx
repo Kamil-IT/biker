@@ -21,12 +21,39 @@ const fieldClass =
 const labelClass = 'block font-mono text-[10px] text-muted uppercase tracking-wider mb-1'
 
 const WHEEL_SIZES = ['12"', '14"', '16"', '20"', '24"', '26"', '27.5"', '28"', '29"', '700c', '650b']
-const BIKE_TYPES = ['Road', 'MTB', 'Gravel', 'Hybrid/Commuter', 'Touring', 'BMX', 'Cruiser', 'Folding']
 const FRAME_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
-const GENDERS = ['Male', 'Female', 'Universal']
-const FRAME_MATERIALS = ['Aluminum', 'Carbon', 'Steel']
-const BRAKE_TYPES = ['Hydraulic Disc', 'Mechanical Disc', 'V-brake', 'Rim']
 const DRIVETRAINS = ['1x', '2x', '3x']
+
+// `value` is what the backend receives and matches against its English data —
+// only `label` is translated.
+interface Option { value: string; label: string }
+
+const BIKE_TYPES: Option[] = [
+  { value: 'Road',            label: 'Szosowy' },
+  { value: 'MTB',             label: 'Górski (MTB)' },
+  { value: 'Gravel',          label: 'Gravel' },
+  { value: 'Hybrid/Commuter', label: 'Miejski / crossowy' },
+  { value: 'Touring',         label: 'Trekkingowy' },
+  { value: 'BMX',             label: 'BMX' },
+  { value: 'Cruiser',         label: 'Cruiser' },
+  { value: 'Folding',         label: 'Składany' },
+]
+const GENDERS: Option[] = [
+  { value: 'Male',      label: 'Męski' },
+  { value: 'Female',    label: 'Damski' },
+  { value: 'Universal', label: 'Uniwersalny' },
+]
+const FRAME_MATERIALS: Option[] = [
+  { value: 'Aluminum', label: 'Aluminium' },
+  { value: 'Carbon',   label: 'Karbon' },
+  { value: 'Steel',    label: 'Stal' },
+]
+const BRAKE_TYPES: Option[] = [
+  { value: 'Hydraulic Disc',  label: 'Tarczowe hydrauliczne' },
+  { value: 'Mechanical Disc', label: 'Tarczowe mechaniczne' },
+  { value: 'V-brake',         label: 'V-brake' },
+  { value: 'Rim',             label: 'Obręczowe' },
+]
 
 export default function SearchInput({
   value, onChange,
@@ -83,7 +110,7 @@ export default function SearchInput({
       {/* Main search input */}
       <div className="relative">
         <label htmlFor="bike-search" className="sr-only">
-          Describe your ideal bike
+          Opisz swój idealny rower
         </label>
         <MagnifyingGlass
           className="absolute left-4 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
@@ -96,7 +123,7 @@ export default function SearchInput({
           value={value}
           onChange={e => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="e.g. comfortable bike for daily 10 km city commute, mostly paved roads…"
+          placeholder="np. wygodny rower na codzienne 10 km dojazdów po mieście, głównie asfalt…"
           disabled={isLoading}
           autoComplete="off"
           autoFocus
@@ -121,7 +148,7 @@ export default function SearchInput({
         className="mt-2 flex items-center gap-1.5 font-mono text-[11px] text-muted uppercase tracking-wider hover:text-terra transition-colors duration-150"
       >
         <SlidersHorizontal size={13} aria-hidden="true" />
-        {showFilters ? 'Hide filters' : 'Filters'}
+        {showFilters ? 'Ukryj filtry' : 'Filtry'}
         <CaretDown
           size={12}
           aria-hidden="true"
@@ -135,13 +162,13 @@ export default function SearchInput({
           {/* ── Basic group ─────────────────────────── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label htmlFor="bike-brand" className={labelClass}>Brand</label>
+              <label htmlFor="bike-brand" className={labelClass}>Marka</label>
               <input
                 id="bike-brand"
                 type="text"
                 value={f.brand}
                 onChange={e => onFilterChange('brand', e.target.value)}
-                placeholder="e.g. Trek, Specialized"
+                placeholder="np. Trek, Specialized"
                 disabled={isLoading}
                 autoComplete="off"
                 className={fieldClass}
@@ -155,7 +182,7 @@ export default function SearchInput({
                 type="text"
                 value={f.model}
                 onChange={e => onFilterChange('model', e.target.value)}
-                placeholder="e.g. Marlin 7, Diverge"
+                placeholder="np. Marlin 7, Diverge"
                 disabled={isLoading}
                 autoComplete="off"
                 className={fieldClass}
@@ -163,7 +190,7 @@ export default function SearchInput({
             </div>
 
             <div>
-              <label htmlFor="bike-type" className={labelClass}>Bike type</label>
+              <label htmlFor="bike-type" className={labelClass}>Typ roweru</label>
               <select
                 id="bike-type"
                 value={f.bike_type}
@@ -171,19 +198,19 @@ export default function SearchInput({
                 disabled={isLoading}
                 className={`${fieldClass} appearance-none`}
               >
-                <option value="">Any</option>
-                {BIKE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                <option value="">Dowolny</option>
+                {BIKE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
             </div>
 
             <div>
-              <label htmlFor="bike-year" className={labelClass}>Year</label>
+              <label htmlFor="bike-year" className={labelClass}>Rok</label>
               <input
                 id="bike-year"
                 type="number"
                 value={f.year}
                 onChange={e => onFilterChange('year', e.target.value)}
-                placeholder="e.g. 2022"
+                placeholder="np. 2022"
                 min={1990}
                 max={2030}
                 disabled={isLoading}
@@ -192,7 +219,7 @@ export default function SearchInput({
             </div>
 
             <div>
-              <label htmlFor="bike-wheel" className={labelClass}>Wheel size</label>
+              <label htmlFor="bike-wheel" className={labelClass}>Rozmiar kół</label>
               <select
                 id="bike-wheel"
                 value={f.wheel_size}
@@ -200,13 +227,13 @@ export default function SearchInput({
                 disabled={isLoading}
                 className={`${fieldClass} appearance-none`}
               >
-                <option value="">Any</option>
+                <option value="">Dowolny</option>
                 {WHEEL_SIZES.map(w => <option key={w} value={w}>{w}</option>)}
               </select>
             </div>
 
             <div>
-              <label htmlFor="bike-frame-size" className={labelClass}>Frame size</label>
+              <label htmlFor="bike-frame-size" className={labelClass}>Rozmiar ramy</label>
               <select
                 id="bike-frame-size"
                 value={f.frame_size}
@@ -214,7 +241,7 @@ export default function SearchInput({
                 disabled={isLoading}
                 className={`${fieldClass} appearance-none`}
               >
-                <option value="">Any</option>
+                <option value="">Dowolny</option>
                 {FRAME_SIZES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
@@ -230,7 +257,7 @@ export default function SearchInput({
                 disabled={isLoading}
                 className="w-4 h-4 accent-terra rounded"
               />
-              <span className="font-body text-sm text-ink">Electric bike (e-bike) only</span>
+              <span className="font-body text-sm text-ink">Tylko rowery elektryczne (e-bike)</span>
             </label>
           </div>
 
@@ -246,7 +273,7 @@ export default function SearchInput({
               aria-hidden="true"
               style={{ transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 150ms' }}
             />
-            {showAdvanced ? 'Fewer advanced options' : 'Advanced options'}
+            {showAdvanced ? 'Mniej opcji zaawansowanych' : 'Opcje zaawansowane'}
           </button>
 
           {/* ── Advanced group ────────────────────────── */}
@@ -254,7 +281,7 @@ export default function SearchInput({
             <div className="mt-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label htmlFor="bike-gender" className={labelClass}>Gender</label>
+                  <label htmlFor="bike-gender" className={labelClass}>Płeć</label>
                   <select
                     id="bike-gender"
                     value={f.gender}
@@ -262,13 +289,13 @@ export default function SearchInput({
                     disabled={isLoading}
                     className={`${fieldClass} appearance-none`}
                   >
-                    <option value="">Any</option>
-                    {GENDERS.map(g => <option key={g} value={g}>{g}</option>)}
+                    <option value="">Dowolna</option>
+                    {GENDERS.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
                   </select>
                 </div>
 
                 <div>
-                  <label htmlFor="bike-frame-material" className={labelClass}>Frame material</label>
+                  <label htmlFor="bike-frame-material" className={labelClass}>Materiał ramy</label>
                   <select
                     id="bike-frame-material"
                     value={f.frame_material}
@@ -276,13 +303,13 @@ export default function SearchInput({
                     disabled={isLoading}
                     className={`${fieldClass} appearance-none`}
                   >
-                    <option value="">Any</option>
-                    {FRAME_MATERIALS.map(m => <option key={m} value={m}>{m}</option>)}
+                    <option value="">Dowolny</option>
+                    {FRAME_MATERIALS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                   </select>
                 </div>
 
                 <div>
-                  <label htmlFor="bike-brake-type" className={labelClass}>Brake type</label>
+                  <label htmlFor="bike-brake-type" className={labelClass}>Typ hamulców</label>
                   <select
                     id="bike-brake-type"
                     value={f.brake_type}
@@ -290,13 +317,13 @@ export default function SearchInput({
                     disabled={isLoading}
                     className={`${fieldClass} appearance-none`}
                   >
-                    <option value="">Any</option>
-                    {BRAKE_TYPES.map(b => <option key={b} value={b}>{b}</option>)}
+                    <option value="">Dowolny</option>
+                    {BRAKE_TYPES.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
                   </select>
                 </div>
 
                 <div>
-                  <label htmlFor="bike-drivetrain" className={labelClass}>Drivetrain</label>
+                  <label htmlFor="bike-drivetrain" className={labelClass}>Napęd</label>
                   <select
                     id="bike-drivetrain"
                     value={f.drivetrain}
@@ -304,20 +331,20 @@ export default function SearchInput({
                     disabled={isLoading}
                     className={`${fieldClass} appearance-none`}
                   >
-                    <option value="">Any</option>
+                    <option value="">Dowolny</option>
                     {DRIVETRAINS.map(d => <option key={d} value={d}>{d}</option>)}
                   </select>
                 </div>
 
                 {f.is_electric === true && (
                   <div>
-                    <label htmlFor="bike-battery" className={labelClass}>Battery capacity (Wh)</label>
+                    <label htmlFor="bike-battery" className={labelClass}>Pojemność baterii (Wh)</label>
                     <input
                       id="bike-battery"
                       type="number"
                       value={f.battery_capacity_wh}
                       onChange={e => onFilterChange('battery_capacity_wh', e.target.value)}
-                      placeholder="e.g. 500"
+                      placeholder="np. 500"
                       min={0}
                       disabled={isLoading}
                       className={fieldClass}
@@ -335,7 +362,7 @@ export default function SearchInput({
                     disabled={isLoading}
                     className="w-4 h-4 accent-terra rounded"
                   />
-                  <span className="font-body text-sm text-ink">Belt drive (no chain)</span>
+                  <span className="font-body text-sm text-ink">Napęd pasowy (bez łańcucha)</span>
                 </label>
               </div>
             </div>
@@ -347,7 +374,7 @@ export default function SearchInput({
       <button
         type="submit"
         disabled={!hasAny || isLoading || isParsing}
-        aria-label={isLoading ? 'Searching for bike recommendations' : isParsing ? 'Extracting fields from your text' : 'Find bike recommendations'}
+        aria-label={isLoading ? 'Szukamy rekomendacji rowerów' : isParsing ? 'Odczytujemy pola z Twojego tekstu' : 'Znajdź rekomendacje rowerów'}
         className="
           mt-3 w-full flex items-center justify-center gap-2.5
           py-4 px-8
@@ -367,7 +394,7 @@ export default function SearchInput({
               className="spin w-4 h-4 rounded-full border-2 border-parchment/30 border-t-parchment"
               aria-hidden="true"
             />
-            Analysing…
+            Analizuję…
           </>
         ) : isParsing ? (
           <>
@@ -375,11 +402,11 @@ export default function SearchInput({
               className="spin w-4 h-4 rounded-full border-2 border-parchment/30 border-t-parchment"
               aria-hidden="true"
             />
-            Extracting fields…
+            Odczytuję pola…
           </>
         ) : (
           <>
-            Find my bike
+            Znajdź mój rower
             <ArrowRight size={17} weight="bold" aria-hidden="true" />
           </>
         )}

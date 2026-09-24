@@ -22,8 +22,9 @@ interface SearchResponse {
   bikes: Bike[]
 }
 
-// Shown when /v1/bike/parse answers 400 without a usable detail string.
-const NO_MATCH_FALLBACK = 'Bike not available in our database'
+// Shown when /v1/bike/parse answers 400. The backend's detail string is English,
+// so the UI shows its own Polish message instead.
+const NO_MATCH_MSG = 'Nie mamy tego roweru w naszej bazie'
 
 export default function App() {
   // Search state
@@ -98,8 +99,7 @@ export default function App() {
         // 400 = the backend recognised no bike attribute in the text. Warn and
         // stop here rather than running a search that has nothing to go on.
         if (res.status === 400) {
-          const data = await res.json().catch(() => ({}))
-          setNoMatchMsg((data as { detail?: string }).detail ?? NO_MATCH_FALLBACK)
+          setNoMatchMsg(NO_MATCH_MSG)
           setIsParsing(false)
           return
         }
@@ -144,7 +144,7 @@ export default function App() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        throw new Error((data as { detail?: string }).detail ?? `Server error ${res.status}`)
+        throw new Error((data as { detail?: string }).detail ?? `Błąd serwera ${res.status}`)
       }
 
       const data: SearchResponse = await res.json()
@@ -156,7 +156,7 @@ export default function App() {
         resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }, 80)
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
+      setErrorMsg(err instanceof Error ? err.message : 'Coś poszło nie tak. Spróbuj ponownie.')
       setAppState('error')
     }
   }
@@ -177,7 +177,7 @@ export default function App() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        throw new Error((data as { detail?: string }).detail ?? `Server error ${res.status}`)
+        throw new Error((data as { detail?: string }).detail ?? `Błąd serwera ${res.status}`)
       }
 
       const data: BikeDetailsResponse = await res.json()
@@ -186,7 +186,7 @@ export default function App() {
       setBikePhotos(data.photos ?? [])
       setDetailsState('loaded')
     } catch (err) {
-      setDetailsError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
+      setDetailsError(err instanceof Error ? err.message : 'Coś poszło nie tak. Spróbuj ponownie.')
       setDetailsState('error')
     }
   }
@@ -200,7 +200,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ company: bike.brand, model: bike.model }),
       })
-      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
       const data: BikeReviewResponse = await res.json()
       setReview(data)
       setReviewState('loaded')
@@ -218,7 +218,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ company: bike.brand, model: bike.model }),
       })
-      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
       const data: BikeOfferResponse = await res.json()
       setOffers(data)
       setOfferState('loaded')
@@ -236,7 +236,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ company: bike.brand, model: bike.model }),
       })
-      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
       const data: UsedBikeResponse = await res.json()
       setUsedBikes(data)
       setUsedBikeState('loaded')
@@ -254,7 +254,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ company: bike.brand, model: bike.model }),
       })
-      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
       const data: BikeOfferResponse = await res.json()
       setCeneoOffers(data)
       setCeneoState('loaded')
@@ -272,7 +272,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ company: bike.brand, model: bike.model }),
       })
-      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
       const data: BikeOfferResponse = await res.json()
       setDecathlonOffers(data)
       setDecathlonState('loaded')
@@ -296,7 +296,7 @@ export default function App() {
       })
       if (!res.ok) {
         const data = await res.json().catch(() => ({}))
-        throw new Error((data as { detail?: string }).detail ?? `Server error ${res.status}`)
+        throw new Error((data as { detail?: string }).detail ?? `Błąd serwera ${res.status}`)
       }
       const data: EquipmentDetailsResponse = await res.json()
       setEquipCategories(data.components)
@@ -305,7 +305,7 @@ export default function App() {
       setEquipCategory(data.category ?? null)
       setEquipState('loaded')
     } catch (err) {
-      setEquipError(err instanceof Error ? err.message : 'Something went wrong. Please try again.')
+      setEquipError(err instanceof Error ? err.message : 'Coś poszło nie tak. Spróbuj ponownie.')
       setEquipState('error')
     }
   }
@@ -319,7 +319,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ company, model }),
       })
-      if (!res.ok) throw new Error(`Server error ${res.status}`)
+      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
       const data: EquipmentReviewResponse = await res.json()
       setEquipReview(data)
       setEquipReviewState('loaded')
@@ -414,7 +414,7 @@ export default function App() {
               focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/50 rounded
               transition-colors duration-150
             "
-            aria-label="Biker — return to home"
+            aria-label="Biker — wróć na stronę główną"
           >
             BIKER
           </button>
@@ -422,7 +422,7 @@ export default function App() {
             className="font-mono text-[11px] text-muted uppercase tracking-widest hidden sm:block select-none"
             aria-hidden="true"
           >
-            AI Bike Finder
+            Wyszukiwarka rowerów AI
           </span>
         </div>
       </header>
@@ -442,11 +442,11 @@ export default function App() {
                   id="hero-heading"
                   className="font-display font-bold leading-[0.92] tracking-tight text-charcoal text-[52px] sm:text-[68px] md:text-[80px] mb-4"
                 >
-                  Find your<br />
-                  <span className="text-terra">perfect ride.</span>
+                  Znajdź swój<br />
+                  <span className="text-terra">idealny rower.</span>
                 </h1>
                 <p className="font-body text-ink text-base md:text-[17px] leading-relaxed max-w-sm">
-                  Describe what you're looking for and we'll find the best bikes for you.
+                  Opisz, czego szukasz, a znajdziemy dla Ciebie najlepsze rowery.
                 </p>
               </div>
 
@@ -455,7 +455,7 @@ export default function App() {
                   role="alert"
                   className="mb-4 px-4 py-3 bg-parchment border border-terra/30 rounded-xl font-body text-sm text-ink"
                 >
-                  <strong className="font-medium text-terra">Not found: </strong>
+                  <strong className="font-medium text-terra">Nie znaleziono: </strong>
                   {noMatchMsg}
                 </div>
               )}
@@ -479,7 +479,7 @@ export default function App() {
                   role="alert"
                   className="mt-4 px-4 py-3 bg-parchment border border-terra/30 rounded-xl font-body text-sm text-ink"
                 >
-                  <strong className="font-medium text-terra">Error: </strong>
+                  <strong className="font-medium text-terra">Błąd: </strong>
                   {errorMsg}
                 </div>
               )}
@@ -490,7 +490,7 @@ export default function App() {
               <section
                 ref={resultsRef}
                 className="max-w-2xl mx-auto px-4 sm:px-6 pb-20"
-                aria-label="Bike recommendations"
+                aria-label="Rekomendowane rowery"
                 aria-live="polite"
                 aria-busy={appState === 'loading'}
               >
@@ -505,13 +505,13 @@ export default function App() {
                           aria-hidden="true"
                         />
                         <span className="font-mono text-[11px] text-muted uppercase tracking-wider">
-                          Searching for your perfect bike…
+                          Szukamy Twojego idealnego roweru…
                         </span>
                       </div>
                     ) : (
                       <div>
                         <span className="font-mono text-[11px] text-muted uppercase tracking-wider block mb-0.5">
-                          Results for
+                          Wyniki dla
                         </span>
                         <p className="font-body text-charcoal text-sm font-medium leading-snug">
                           "{submittedQuery}"
@@ -522,7 +522,7 @@ export default function App() {
                     {appState === 'results' && (
                       <button
                         onClick={handleReset}
-                        aria-label="Start a new search"
+                        aria-label="Rozpocznij nowe wyszukiwanie"
                         className="
                           px-2 py-2 -mr-1 shrink-0
                           font-mono text-[11px] text-terra uppercase tracking-wider
@@ -531,7 +531,7 @@ export default function App() {
                           transition-colors duration-150
                         "
                       >
-                        New search
+                        Nowe wyszukiwanie
                       </button>
                     )}
                   </div>
@@ -548,8 +548,8 @@ export default function App() {
                         role="alert"
                         className="px-4 py-3 bg-parchment border border-terra/30 rounded-xl font-body text-sm text-ink"
                       >
-                        <strong className="font-medium text-terra">Not found: </strong>
-                        No bikes matched this search. Try different words or fewer filters.
+                        <strong className="font-medium text-terra">Nie znaleziono: </strong>
+                        Żaden rower nie pasuje do tego wyszukiwania. Spróbuj innych słów lub mniejszej liczby filtrów.
                       </div>
                     )}
                     {appState === 'results' &&
@@ -622,7 +622,7 @@ export default function App() {
             Biker © {new Date().getFullYear()}
           </span>
           <span className="font-mono text-[11px] text-muted uppercase tracking-wider hidden sm:block">
-            Powered by Claude
+            Napędzane przez Claude
           </span>
         </div>
       </footer>
