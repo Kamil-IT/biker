@@ -236,6 +236,35 @@ GET http://localhost:8000/v1/bike/details-cache?company=Canyon&model=Grizl%20CF%
 
 ---
 
+### `POST /v1/bike/missing`
+
+Record that a user asked for a section of a bike's details view that has no data (the "Request data" button, TODO-026/027). One row per `(bike, missing_type)` in `bike_missing_request`; the first request creates it with `counter = 1`, every later one adds 1 (a single atomic SQLite upsert). The table shows which data for which bikes users want most. **No** AI call and **no** generic cache.
+
+```http
+POST http://localhost:8000/v1/bike/missing
+Content-Type: application/json
+
+{
+  "company": "Trek",
+  "model": "Marlin 5",
+  "missing_type": "photos"
+}
+```
+
+**Response:** `{ "bike_id": 1, "missing_type": "photos", "counter": 2 }`
+
+- `missing_type` is a free string chosen by the frontend (`photos`, `description`, `components`, `review`, `offers_new`, `offers_used`). The backend strips it and rejects empty/whitespace-only or longer than 64 characters with **422**. `company`/`model` must be non-empty (422).
+- The bike is looked up in the existing `bike` table by `company` + `model`, normalised in Python (`strip().lower()`, like `find_bikes_by_details`), and is **never created**: `save_search` always writes it before the details view can open.
+- Bike not found (only after a swallowed `save_search` failure) → logged at **ERROR**, returns **200** `{ "bike_id": null, "missing_type": "photos", "counter": 0 }`, nothing written. A failed write is logged at ERROR and returns the same shape.
+- No spam protection: every call adds 1; the frontend stops repeat clicks.
+- The table is created at startup by `init_db()` (`create_all` adds missing tables to an existing `cache.db`), so no migration step is needed.
+
+**Flow:** none — no outbound HTTP calls; one SQLite read of `bike` plus one upsert into `bike_missing_request`.
+
+**Tests:** `scripts/test_search.py` TC-27 – TC-29 against a live server: counter 1 → 2 plus a separate row for a second `missing_type` on a seeded fixture bike, with no generic-cache row (TC-27); unknown bike → 200, `bike_id: null`, `counter: 0`, no bike created (TC-28); invalid `missing_type` → 422 (TC-29).
+
+---
+
 ### `POST /v1/bike/details`
 
 Return the full component list for a specific bike model.

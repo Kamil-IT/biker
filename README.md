@@ -7,7 +7,7 @@ AI-powered bike finder. Describe what you're looking for in plain English and ge
 1. You enter a free-text description (e.g. *"comfortable bike for daily 10 km city commute"*)
 2. The backend first searches its own bike database: every structured filter it can check (brand, model, frame material, wheel size, frame size, gender, electric, battery, brakes, drivetrain, belt drive) is matched against stored bike specs. All matching bikes are returned (no cap) with no AI call
 3. Only when the database has no match, a single Claude Haiku call recommends every real bike that fits (at least 1 — the closest match when nothing meets every filter)
-4. Click a result to open the details page — the backend fetches specs, description, manufacturer photos, review score, and current Allegro offers in parallel via Claude web search + Playwright
+4. Click a result to open the details page — the backend fetches specs, description, manufacturer photos, review score, and current Allegro offers in parallel via Claude web search + Playwright. Any section (photos, overview, specs, review, Used / New offers) still without data after 5 s — or with an empty/failed response — shows a **Request data** button instead of its spinner; clicking it records the request via `POST /v1/bike/missing`. Data that arrives later replaces the button
 5. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel). Equipment is informational only — no shopping/offer links
 
 ## Running the project
@@ -75,7 +75,7 @@ biker/
 │   ├── app/
 │   │   ├── main.py                    # FastAPI app, routes
 │   │   ├── schemas.py                 # Pydantic models
-│   │   ├── repository.py              # ORM data access: bike details + DB-first search (find_bikes_by_details)
+│   │   ├── repository.py              # ORM data access: bike details + DB-first search (find_bikes_by_details) + missing-data request counter
 │   │   ├── bike_finder.py             # Single Claude call → all matching bikes, min 1 (DB-miss fallback)
 │   │   ├── bike_details_finder.py     # Fetch full component specs via web search
 │   │   ├── bike_description_finder.py # Generate plain-text overview via web search
@@ -99,7 +99,7 @@ biker/
 │   │       ├── equipment_photos.md        # Equipment manufacturer page URL prompt
 │   │       └── equipment_review.md        # Equipment review prompt (no offer links)
 │   └── scripts/
-│       ├── test_search.py             # Smoke test for /v1/bike/search
+│       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing)
 │       ├── test_details.py            # Smoke test for /v1/bike/details
 │       ├── test_review.py             # Smoke test for /v1/bike/review
 │       ├── test_offer.py              # Smoke test for /v1/bike/offer
@@ -114,6 +114,7 @@ biker/
             ├── ResultCard.tsx         # Per-bike result card
             ├── LoadingCard.tsx        # Shimmer skeleton for search results
             ├── BikeDetailsView.tsx    # Bike details page: Overview, Offers, Review, Specs
+            ├── RequestDataButton.tsx  # "Request data" button for empty bike-details sections (POST /v1/bike/missing)
             ├── EquipmentDetailsView.tsx   # Equipment details page: Overview, Review, Specs (no offers)
             └── BikeDetailsShared.tsx  # Shared building blocks for both detail views
 ```

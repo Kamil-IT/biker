@@ -158,6 +158,29 @@ export const EMPTY_FILTERS: SearchFilters = {
   belt_drive:          undefined,
 }
 
+// Bike-details sections a user can ask us to fill in (POST /v1/bike/missing, TODO-026/027).
+export const MissingType = {
+  Photos:      'photos',
+  Description: 'description',
+  Components:  'components',
+  Review:      'review',
+  OffersNew:   'offers_new',
+  OffersUsed:  'offers_used',
+} as const
+export type MissingType = typeof MissingType[keyof typeof MissingType]
+
+export interface MissingDataRequest {
+  company:      string
+  model:        string
+  missing_type: MissingType
+}
+
+export interface MissingDataResponse {
+  bike_id:      number | null
+  missing_type: MissingType
+  counter:      number
+}
+
 export interface ParseResponse {
   brand?:          string
   model?:          string

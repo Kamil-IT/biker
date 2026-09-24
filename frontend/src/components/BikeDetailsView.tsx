@@ -1,7 +1,30 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react'
 import type { Bike, BikeCategory, BikeDescription, BikeReviewResponse, BikeOffer, BikeOfferResponse, UsedBikeResponse } from '../types'
+import { MissingType } from '../types'
 import { PhotoGallery, DescriptionCard, ReviewSection, LoadingSkeleton, CategorySection } from './BikeDetailsShared'
+import RequestDataButton from './RequestDataButton'
+
+// How long a section shows its loading state before the "Request data" button
+// takes its place (TODO-027). The request itself keeps running.
+const REQUEST_BUTTON_DELAY_MS = 5000
+
+// True while `loading` has been on for less than `ms`. Restarts whenever
+// `loading` turns on again (e.g. a details retry).
+function useLoadingGrace(loading: boolean, ms = REQUEST_BUTTON_DELAY_MS): boolean {
+  const [elapsed, setElapsed] = useState(false)
+  const [prevLoading, setPrevLoading] = useState(loading)
+  if (loading !== prevLoading) {
+    setPrevLoading(loading)
+    if (loading) setElapsed(false)
+  }
+  useEffect(() => {
+    if (!loading) return
+    const t = setTimeout(() => setElapsed(true), ms)
+    return () => clearTimeout(t)
+  }, [loading, ms])
+  return loading && !elapsed
+}
 
 type ReviewState = 'loading' | 'loaded' | 'error'
 
@@ -51,6 +74,17 @@ export default function BikeDetailsView({
   const { brand, model, accessories, match_score } = bike
   const scoreDisplay = match_score === 10 ? '10' : match_score.toFixed(1)
 
+  // Each section: loading state for the first 5 s, then its data if any arrived,
+  // otherwise a "Request data" button (also after an empty or failed response).
+  const detailsGrace = useLoadingGrace(state === 'loading')
+  const reviewGrace = useLoadingGrace(reviewState === 'loading')
+  const hasPhotos = photos.length > 0
+  const hasDescription = !!description && (
+    !!description.text?.trim() || description.segments.some(seg => seg.text.trim())
+  )
+  const hasComponents = !!categories && categories.length > 0
+  const hasReview = !!review && (review.ref.some(Boolean) || review.sources_used > 0)
+
   return (
     <div className="max-w-2xl mx-auto px-4 sm:px-6 pt-8 pb-20">
 
@@ -96,10 +130,13 @@ export default function BikeDetailsView({
         </div>
 
         {/* Photo gallery */}
-        {state === 'loading' && photos.length === 0 && (
+        {hasPhotos ? (
+          <PhotoGallery photos={photos} />
+        ) : detailsGrace ? (
           <div className="mt-4 w-full aspect-[16/9] shimmer rounded-xl" aria-hidden="true" />
+        ) : (
+          <RequestDataButton title="Photos" company={brand} model={model} missingType={MissingType.Photos} />
         )}
-        {state !== 'loading' && <PhotoGallery photos={photos} />}
 
         {/* Accessories */}
         {accessories.filter(Boolean).length > 0 && (
@@ -115,10 +152,18 @@ export default function BikeDetailsView({
         )}
 
         {/* Description */}
-        <DescriptionCard description={description} state={state} />
+        {hasDescription ? (
+          <DescriptionCard description={description} state="loaded" />
+        ) : detailsGrace ? (
+          <DescriptionCard description={null} state="loading" />
+        ) : (
+          <RequestDataButton title="Overview" company={brand} model={model} missingType={MissingType.Description} />
+        )}
 
         {/* Offers — all sources pooled, split by is_new (Used on top, New below) */}
         <MergedOffersSection
+          company={brand}
+          model={model}
           offers={offers}
           offerState={offerState}
           ceneoOffers={ceneoOffers}
@@ -130,14 +175,20 @@ export default function BikeDetailsView({
         />
 
         {/* Review */}
-        <ReviewSection review={review} state={reviewState} />
+        {hasReview ? (
+          <ReviewSection review={review} state="loaded" />
+        ) : reviewGrace ? (
+          <ReviewSection review={null} state="loading" />
+        ) : (
+          <RequestDataButton title="Expert review" company={brand} model={model} missingType={MissingType.Review} />
+        )}
       </div>
 
       {/* Divider */}
       <div className="border-t border-border pt-8">
 
         {/* Loading */}
-        {state === 'loading' && <LoadingSkeleton />}
+        {detailsGrace && !hasComponents && <LoadingSkeleton />}
 
         {/* Error */}
         {state === 'error' && (
@@ -160,13 +211,24 @@ export default function BikeDetailsView({
           </div>
         )}
 
+        {/* No components yet (still loading after 5 s, empty, or error) */}
+        {!detailsGrace && !hasComponents && (
+          <RequestDataButton
+            title="Specifications"
+            spacing="mt-0"
+            company={brand}
+            model={model}
+            missingType={MissingType.Components}
+          />
+        )}
+
         {/* Loaded */}
-        {state === 'loaded' && categories && (
+        {hasComponents && (
           <div
             className="space-y-8"
             style={{ opacity: 0, animation: 'slideUp 350ms ease-out forwards' }}
           >
-            {categories.map(cat => (
+            {categories!.map(cat => (
               <CategorySection key={cat.category} category={cat} onElementSelect={onEquipmentSelect} />
             ))}
           </div>
@@ -187,6 +249,8 @@ function priceValue(p: string): number {
 }
 
 interface MergedOffersSectionProps {
+  company: string
+  model: string
   offers: BikeOfferResponse | null
   offerState: OfferState
   ceneoOffers: BikeOfferResponse | null
@@ -198,6 +262,8 @@ interface MergedOffersSectionProps {
 }
 
 function MergedOffersSection({
+  company,
+  model,
   offers,
   offerState,
   ceneoOffers,
@@ -220,14 +286,14 @@ function MergedOffersSection({
   const newList = allOffers.filter(o => o.is_new === true).sort(byPrice)
 
   // A late source can still add rows to either category, so both cards show their
-  // skeleton until every source has settled.
+  // skeleton for the first 5 s while any source is loading; after that each card
+  // shows whatever rows it has, or its own "Request data" button (TODO-027).
   const anyLoading =
     offerState === 'loading' ||
     ceneoState === 'loading' ||
     decathlonState === 'loading' ||
     usedBikeState === 'loading'
-
-  if (!anyLoading && usedList.length === 0 && newList.length === 0) return null
+  const grace = useLoadingGrace(anyLoading)
 
   return (
     <div className="mt-5 bg-card rounded-2xl border border-border overflow-hidden">
@@ -237,17 +303,39 @@ function MergedOffersSection({
         </span>
       </div>
       <div className="p-4 md:p-5 space-y-4">
-        <OfferCategoryCard title="Used" list={usedList} loading={anyLoading} />
-        <OfferCategoryCard title="New" list={newList} loading={anyLoading} />
+        <OfferCategoryCard
+          title="Used"
+          list={usedList}
+          loading={grace}
+          company={company}
+          model={model}
+          missingType={MissingType.OffersUsed}
+        />
+        <OfferCategoryCard
+          title="New"
+          list={newList}
+          loading={grace}
+          company={company}
+          model={model}
+          missingType={MissingType.OffersNew}
+        />
       </div>
     </div>
   )
 }
 
-function OfferCategoryCard({ title, list, loading }: { title: string; list: BikeOffer[]; loading: boolean }) {
-  // Hide an empty category once everything has loaded; while loading, show the skeleton.
-  if (!loading && list.length === 0) return null
+interface OfferCategoryCardProps {
+  title: string
+  list: BikeOffer[]
+  loading: boolean
+  company: string
+  model: string
+  missingType: MissingType
+}
 
+function OfferCategoryCard({ title, list, loading, company, model, missingType }: OfferCategoryCardProps) {
+  // Skeleton during the loading grace period; afterwards the rows, or a
+  // "Request data" button while the category is still empty.
   return (
     <div className="bg-card rounded-xl border border-border overflow-hidden">
       <div className="px-5 py-3 md:px-6 border-b border-border">
@@ -268,12 +356,14 @@ function OfferCategoryCard({ title, list, loading }: { title: string; list: Bike
             </div>
           ))}
         </div>
-      ) : (
+      ) : list.length > 0 ? (
         <div className="divide-y divide-border">
           {list.map((offer, i) => (
             <OfferRow key={i} offer={offer} />
           ))}
         </div>
+      ) : (
+        <RequestDataButton variant="inline" company={company} model={model} missingType={missingType} />
       )}
     </div>
   )

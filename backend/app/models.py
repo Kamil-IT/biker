@@ -242,3 +242,29 @@ class SearchBikeRating(Base):
     # Relationships
     search = relationship("SearchCache", back_populates="ratings")
     bike = relationship("Bike")
+
+
+# --- Missing-data requests (TODO-026) ------------------------------------
+# A user clicked "Request data" on an empty section of a bike's details view.
+# One row per (bike, section); every later click on the same pair bumps
+# `counter`, so the table ranks which data users want filled in first.
+
+
+class BikeMissingRequest(Base):
+    """How many times users asked for one missing section of one bike.
+
+    `missing_type` is a free string owned by the frontend (photos, description,
+    components, review, offers_new, offers_used); the backend only bounds it.
+    """
+
+    __tablename__ = "bike_missing_request"
+
+    id = Column(Integer, primary_key=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
+    missing_type = Column(String(64), nullable=False)
+    counter = Column(Integer, nullable=False, default=1)
+
+    # Relationships
+    bike = relationship("Bike")
+
+    __table_args__ = (UniqueConstraint("bike_id", "missing_type", name="uq_missing_bike_type"),)

@@ -97,6 +97,38 @@ class BikeDetailsRequest(BaseModel):
         return v.strip()
 
 
+MISSING_TYPE_MAX_LEN = 64
+
+
+class MissingDataRequest(BaseModel):
+    company: str
+    model: str
+    missing_type: str  # free string — the enum lives in the frontend (TODO-027)
+
+    @field_validator("company", "model")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()
+
+    @field_validator("missing_type")
+    @classmethod
+    def bounded_type(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("missing_type must not be empty")
+        if len(v) > MISSING_TYPE_MAX_LEN:
+            raise ValueError(f"missing_type must be at most {MISSING_TYPE_MAX_LEN} characters")
+        return v
+
+
+class MissingDataResponse(BaseModel):
+    bike_id: Optional[int]  # None when the bike is not in the `bike` table
+    missing_type: str
+    counter: int  # 0 when nothing was recorded
+
+
 class SpecItem(BaseModel):
     key: str
     value: str
