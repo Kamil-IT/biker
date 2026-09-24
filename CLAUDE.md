@@ -357,6 +357,8 @@ Helmets, Lights & electronics, Locks & security, Apparel/bags & accessories. **N
 | Styles | `src/index.css` | Tailwind v4 `@theme` tokens, Google Fonts import, keyframe animations |
 | Vite config | `vite.config.ts` | Tailwind v4 plugin, `/v1` proxy to backend |
 
+**UI language: Polish.** All user-visible frontend strings are Polish, hard-coded (no i18n library); `index.html` has `lang="pl"`. Filter `<select>` options in `SearchInput.tsx` are `{ value, label }` — `value` stays English (the backend matches it), only `label` is Polish. A `/v1/bike/parse` 400 shows a fixed Polish message rather than the backend's English `detail`. See `frontend/README.md` for the English→Polish label map of the "Request data" UI.
+
 **Design system — Direction 5 "Café Rider":**
 - Background `#EDE7DC` · Cards `#F5F1EA` · Accent `#C45C38` (terracotta)
 - Display font: Barlow Condensed Bold · Body: Lora · Data labels: JetBrains Mono

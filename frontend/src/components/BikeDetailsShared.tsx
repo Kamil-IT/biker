@@ -33,7 +33,7 @@ export function PhotoGallery({ photos }: { photos: string[] }) {
                   ? 'border-terra ring-1 ring-terra opacity-100'
                   : 'border-border opacity-60 hover:opacity-100'
               }`}
-              aria-label={`Photo ${i + 1}`}
+              aria-label={`Zdjęcie ${i + 1}`}
             >
               <img
                 src={src}
@@ -84,7 +84,7 @@ export function DescriptionCard({ description, state }: { description: BikeDescr
   return (
     <div className="mt-5 bg-card rounded-2xl border-l-2 border border-terra/40 px-5 py-4 md:px-6 md:py-5">
       <span className="font-mono text-[10px] text-muted uppercase tracking-widest block mb-2">
-        Overview
+        Opis
       </span>
 
       <p className="font-body text-ink text-[13px] leading-relaxed">
@@ -96,7 +96,7 @@ export function DescriptionCard({ description, state }: { description: BikeDescr
       {allCitations.length > 0 && (
         <>
           <span className="font-mono text-[10px] text-muted uppercase tracking-widest block mt-4 mb-1">
-            Sources
+            Źródła
           </span>
           <CitationChips citations={allCitations} />
         </>
@@ -150,12 +150,12 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
     <div className="mt-5 bg-card rounded-2xl border border-border px-5 py-4 md:px-6 md:py-5">
       <div className="flex items-center justify-between mb-3">
         <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
-          Expert review
+          Recenzja ekspertów
         </span>
         <div className="flex items-baseline gap-1">
           <span
             className="font-display font-bold text-charcoal tabular-nums leading-none text-[22px]"
-            aria-label={`Review score ${review.score} out of 10`}
+            aria-label={`Ocena recenzji ${review.score} na 10`}
           >
             {review.score}
           </span>
@@ -169,7 +169,7 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
       {refs.length > 0 && (
         <>
           <span className="font-mono text-[10px] text-muted uppercase tracking-widest block mt-4 mb-2">
-            Sources
+            Źródła
           </span>
           <div className="bg-sand rounded-xl border border-border divide-y divide-border overflow-hidden">
             {refs.map((url, i) => (
@@ -200,7 +200,7 @@ function SourceRow({ url, filledStars }: { url: string; filledStars: number }) {
     >
       <span
         className="shrink-0 font-mono text-[11px] text-terra tracking-tight"
-        aria-label={`${filledStars} out of 5 stars`}
+        aria-label={`${filledStars} na 5 gwiazdek`}
       >
         {'★'.repeat(filledStars)}
         <span className="text-terra/30">{'★'.repeat(5 - filledStars)}</span>
@@ -209,7 +209,7 @@ function SourceRow({ url, filledStars }: { url: string; filledStars: number }) {
         {host}
       </span>
       <span className="shrink-0 font-mono text-[11px] text-terra group-hover:text-terra-dark whitespace-nowrap transition-colors duration-150">
-        Read review <span aria-hidden="true">→</span>
+        Czytaj recenzję <span aria-hidden="true">→</span>
       </span>
     </a>
   )
@@ -219,7 +219,7 @@ function SourceRow({ url, filledStars }: { url: string; filledStars: number }) {
 
 export function LoadingSkeleton() {
   return (
-    <div className="space-y-8" aria-label="Loading specifications" role="status">
+    <div className="space-y-8" aria-label="Wczytywanie specyfikacji" role="status">
       {[0, 1, 2].map(i => (
         <div key={i}>
           {/* Category header */}
@@ -262,7 +262,7 @@ export function LoadingSkeleton() {
           </div>
         </div>
       ))}
-      <p className="sr-only" aria-live="polite">Fetching live specifications…</p>
+      <p className="sr-only" aria-live="polite">Pobieramy aktualną specyfikację…</p>
     </div>
   )
 }
@@ -337,7 +337,7 @@ function ElementItem({
           type="button"
           onClick={() => onElementSelect!(name)}
           className="group inline-flex items-baseline gap-1 text-left max-w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/40 focus-visible:rounded"
-          aria-label={`View equipment details for ${name}`}
+          aria-label={`Zobacz szczegóły wyposażenia: ${name}`}
         >
           <span className="
             font-display font-bold text-[15px] md:text-[16px] leading-tight

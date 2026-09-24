@@ -11,14 +11,14 @@ interface ResultCardProps {
 }
 
 const scoreLabel = (score: number): string => {
-  if (score >= 10) return 'Perfect match'
-  if (score >= 9)  return 'Excellent match'
-  if (score >= 8)  return 'Great match'
-  if (score >= 7)  return 'Good match'
-  if (score >= 5)  return 'Possible match'
-  if (score >= 3)  return 'Partial match'
-  if (score >= 1)  return 'Poor match'
-  return 'No match'
+  if (score >= 10) return 'Idealne dopasowanie'
+  if (score >= 9)  return 'Znakomite dopasowanie'
+  if (score >= 8)  return 'Bardzo dobre dopasowanie'
+  if (score >= 7)  return 'Dobre dopasowanie'
+  if (score >= 5)  return 'Możliwe dopasowanie'
+  if (score >= 3)  return 'Częściowe dopasowanie'
+  if (score >= 1)  return 'Słabe dopasowanie'
+  return 'Brak dopasowania'
 }
 
 const formatScore = (score: number): string => {
@@ -50,7 +50,7 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
         opacity: 0,
         animation: `slideUp 420ms cubic-bezier(0.22,1,0.36,1) ${animationDelay}ms forwards`,
       }}
-      aria-label={`View specifications for ${brand} ${model}, match score ${match_score} out of 10`}
+      aria-label={`Zobacz specyfikację ${brand} ${model}, dopasowanie ${match_score} na 10`}
     >
       {/* Left accent bar (top result only) */}
       {isTop && (
@@ -66,7 +66,7 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
             aria-hidden="true"
           />
           <span className="font-mono text-xs uppercase tracking-widest text-terra select-none">
-            Best match
+            Najlepsze dopasowanie
           </span>
         </div>
       )}
@@ -117,7 +117,7 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
             {!isTop && (
               <span
                 className="font-mono text-xs text-muted shrink-0 mt-1 select-none"
-                aria-label={`Rank ${rank}`}
+                aria-label={`Pozycja ${rank}`}
               >
                 #{rank}
               </span>
@@ -128,7 +128,7 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
           {accessories.filter(Boolean).length > 0 && (
             <ul
               className="flex flex-wrap gap-1.5 mt-3 mb-3"
-              aria-label="Key features"
+              aria-label="Najważniejsze cechy"
             >
               {accessories.filter(Boolean).map((acc, i) => (
                 <li key={`${acc}-${i}`}>
@@ -170,7 +170,7 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
           aria-valuenow={match_score}
           aria-valuemin={0}
           aria-valuemax={10}
-          aria-label={`Match score: ${match_score} out of 10`}
+          aria-label={`Dopasowanie: ${match_score} na 10`}
         >
           <div
             className={`h-full rounded-full ${isTop ? 'bg-terra' : 'bg-ink'}`}
@@ -189,7 +189,7 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
         aria-hidden="true"
       >
         <span className="font-mono text-[10px] uppercase tracking-wider text-muted group-hover:text-terra transition-colors duration-200">
-          View specs →
+          Zobacz specyfikację →
         </span>
       </div>
     </button>
