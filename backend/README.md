@@ -2,6 +2,53 @@
 
 ## Setup & Run
 
+Start the local PostgreSQL first (Docker):
+
+```bash
+# first time — creates the container and a persistent volume
+docker run -d --name biker-pg -e POSTGRES_USER=biker -e POSTGRES_PASSWORD=biker -e POSTGRES_DB=biker -p 5432:5432 -v biker-pgdata:/var/lib/postgresql/data postgres:17
+# every later time
+docker start biker-pg
+docker exec biker-pg pg_isready -U biker -d biker        # → "accepting connections"
+docker exec -it biker-pg psql -U biker -d biker -c "\dt" # list tables (no local psql needed)
+```
+
+The backend uses it when `DATABASE_URL=postgresql+psycopg://biker:biker@localhost:5432/biker` is set (TODO-028),
+e.g. in `backend/.env`; without `DATABASE_URL` it falls back to `cache.db`. Reset the database completely with
+`docker rm -f biker-pg && docker volume rm biker-pgdata`.
+
+### Database selection (`DATABASE_URL`)
+
+Every table — the generic response cache included — goes through the one SQLAlchemy engine in `app/models.py`
+(`get_engine()`); there is no raw `sqlite3` connection. `DATABASE_URL` picks the database:
+
+| `DATABASE_URL` | Database |
+|---|---|
+| unset | SQLite file `backend/cache.db` (FK enforcement + WAL switched on per connection) |
+| `postgresql+psycopg://…` | PostgreSQL (`pool_pre_ping`, session `timezone=UTC`) |
+
+The schema is created at startup by `init_db()` (`create_all()`) on either database. Upserts
+(`set_cached`, `record_missing_request`) use `models.dialect_insert()`, which picks the SQLite or PostgreSQL
+`INSERT … ON CONFLICT` construct for the active engine.
+
+### Copy `cache.db` into PostgreSQL
+
+```bash
+python scripts/copy_sqlite_to_postgres.py              # target = $DATABASE_URL
+python scripts/copy_sqlite_to_postgres.py --truncate   # replace a non-empty target
+python scripts/copy_sqlite_to_postgres.py --verify-only
+```
+
+Creates the schema, copies every table in FK order in **one transaction**, resets the id sequences, then prints
+per table the SQLite rows, orphans skipped, PostgreSQL rows and a content-checksum verdict (exit 0 only when all
+match). It refuses a non-empty target without `--truncate` and opens `cache.db` read-only. Rows whose parent
+no longer exists (SQLite ran without FK enforcement for a while) are skipped and listed — PostgreSQL would reject
+them and nothing could reach them anyway. Timestamps written with a `+00:00` suffix land as naive UTC, which is how
+every other row is stored and how the app reads them.
+
+To run a worktree next to `main`, point its frontend at its backend:
+`BIKER_API_URL=http://localhost:8001 npm run dev -- --port 5174` (the Vite proxy defaults to `:8000`).
+
 ```bash
 cd backend
 python -m venv .venv && .venv\Scripts\activate

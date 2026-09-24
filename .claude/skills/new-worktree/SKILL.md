@@ -124,6 +124,9 @@ To start working:
 
   cd C:\Users\kamil_wolny\Projects\biker-wt\<SLUG>
 
+Start the database (one biker-pg container on port 5432, shared by every worktree):
+  docker start biker-pg
+
 Start the backend (port 8000 — same as main, run one at a time or pick a free port):
   cd backend
   .venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000

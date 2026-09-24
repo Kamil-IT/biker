@@ -7,3 +7,4 @@ patchright
 beautifulsoup4
 pytest
 sqlalchemy
+psycopg[binary]

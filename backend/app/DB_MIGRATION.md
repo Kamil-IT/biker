@@ -14,7 +14,10 @@ This migration moves from JSON serialization in SQLite to a proper relational da
 - Normalized `bike` table — single source of truth for bike identity
 - Related tables: `bike_detail`, `bike_offer`, `photos`, and the search cache
   (`search_cache` + `search_bike_rating_cache`)
-- Foreign key constraints (enforced — `app/cache.py` sets `PRAGMA foreign_keys=ON`)
+- Foreign key constraints (enforced — on SQLite `app/models.py` sets `PRAGMA foreign_keys=ON` on every engine
+  connection; PostgreSQL always enforces them)
+- Database chosen by `DATABASE_URL` (unset → SQLite `cache.db`, or PostgreSQL); copy an existing `cache.db` into
+  PostgreSQL with `scripts/copy_sqlite_to_postgres.py` (TODO-028, see `backend/README.md`)
 - TTL via module constants compared against `time_stored` / `updated_at`
 - Proper relationships via SQLAlchemy ORM
 

@@ -54,9 +54,9 @@ logger = logging.getLogger("biker.search")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_db()  # first: creates every table, incl. the generic cache table
     init_cache()
     init_store()
-    init_db()
     yield
     close_cache()
 

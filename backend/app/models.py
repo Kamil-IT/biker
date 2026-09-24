@@ -10,29 +10,87 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Table,
     Text,
     UniqueConstraint,
     create_engine,
 )
+from sqlalchemy import event
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from pathlib import Path
+import os
 
 Base = declarative_base()
-_engine = None
+_engine: Optional[Engine] = None
 _SessionLocal = None
 
+# Fallback when DATABASE_URL is unset: the local SQLite file (TODO-028).
+DEFAULT_DB_PATH = Path(__file__).parent.parent / "cache.db"
+_db_url: Optional[str] = None  # set by configure_db(); else DATABASE_URL / DEFAULT_DB_PATH
 
-def get_engine():
+
+def database_url() -> str:
+    """The SQLAlchemy URL in use: configure_db() > $DATABASE_URL > sqlite:///cache.db."""
+    return _db_url or os.getenv("DATABASE_URL") or f"sqlite:///{DEFAULT_DB_PATH}"
+
+
+def configure_db(url_or_path) -> None:
+    """Point the ORM at another database — a SQLAlchemy URL or a SQLite file path.
+
+    Drops the current engine so the next get_engine()/get_session() rebuilds it.
+    """
+    global _db_url, _engine, _SessionLocal
+    value = str(url_or_path)
+    _db_url = value if "://" in value else f"sqlite:///{Path(value)}"
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
+    _SessionLocal = None
+
+
+def _sqlite_pragmas(dbapi_conn, _record) -> None:
+    # SQLite ships with FK enforcement OFF per connection, so ON DELETE CASCADE
+    # never fires unless we ask. PostgreSQL always enforces FKs.
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA foreign_keys=ON")
+    cur.close()
+
+
+def get_engine() -> Engine:
     global _engine
     if _engine is None:
-        db_path = Path(__file__).parent.parent / "cache.db"
-        _engine = create_engine(
-            f"sqlite:///{db_path}",
-            connect_args={"check_same_thread": False},
-            echo=False,
-        )
+        url = make_url(database_url())
+        if url.get_backend_name() == "sqlite":
+            _engine = create_engine(url, connect_args={"check_same_thread": False}, echo=False)
+            event.listen(_engine, "connect", _sqlite_pragmas)
+        else:
+            # timezone=UTC: the DateTime columns are naive and the app treats
+            # naive as UTC, so aware values must never be shifted by the server zone.
+            _engine = create_engine(
+                url, pool_pre_ping=True, echo=False,
+                connect_args={"options": "-c timezone=UTC"},
+            )
     return _engine
+
+
+def dispose_engine() -> None:
+    global _engine, _SessionLocal
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
+    _SessionLocal = None
+
+
+def dialect_insert(table):
+    """INSERT construct supporting on_conflict_do_update/do_nothing for the active DB."""
+    if get_engine().dialect.name == "postgresql":
+        return pg_insert(table)
+    return sqlite_insert(table)
 
 
 def get_session():
@@ -268,3 +326,20 @@ class BikeMissingRequest(Base):
     bike = relationship("Bike")
 
     __table_args__ = (UniqueConstraint("bike_id", "missing_type", name="uq_missing_bike_type"),)
+
+
+# --- Generic endpoint response cache ---------------------------------------
+# The per-endpoint response cache read/written by app/cache.py. A Core table,
+# not an ORM class: it has no primary key (rows are identified by the
+# (endpoint, request) pair). Declared here so create_all() builds it on a fresh
+# PostgreSQL database alongside everything else (TODO-028).
+
+endpoint_req_to_body_cache = Table(
+    "endpoint_req_to_body_cache",
+    Base.metadata,
+    Column("endpoint", Text, nullable=False),
+    Column("request", Text, nullable=False),
+    Column("response", Text, nullable=False),
+    Column("time_stored", Text, nullable=False),  # ISO-8601 UTC
+    UniqueConstraint("endpoint", "request"),
+)

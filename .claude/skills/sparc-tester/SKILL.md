@@ -60,6 +60,7 @@ def test_bike_xyz_empty():
 ```
 
 **Frontend:** Manual smoke test using browser
+- Start database: `docker start biker-pg`
 - Start backend: `cd backend && uvicorn app.main:app --reload --port 8000`
 - Start frontend: `cd frontend && npm run dev` (port 5173)
 - Open http://localhost:5173

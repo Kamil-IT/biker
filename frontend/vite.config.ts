@@ -7,7 +7,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/v1': {
-        target: 'http://localhost:8000',
+        // Override per worktree, e.g. BIKER_API_URL=http://localhost:8001 npm run dev -- --port 5174
+        target: process.env.BIKER_API_URL ?? 'http://localhost:8000',
         changeOrigin: true,
       },
     },
