@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { BikeCategory, BikeSubcategory, ComponentElement, BikeDescription, DescriptionCitation } from '../types'
 import { CitationChips } from './CitationChips'
+import { translateLabel } from '../specLabels'
 
 export type LoadState = 'loading' | 'loaded' | 'error'
 
@@ -287,7 +288,7 @@ export function CategorySection({
           id={`cat-${category.category}`}
           className="font-display font-bold text-charcoal text-[17px] uppercase tracking-widest leading-none"
         >
-          {category.category}
+          {translateLabel(category.category)}
         </h2>
       </div>
 
@@ -310,7 +311,7 @@ function SubcategorySection({
   return (
     <div className="px-5 py-4 md:px-6 md:py-5">
       <h3 className="font-mono text-[10px] text-muted uppercase tracking-widest mb-3">
-        {sub.subcategory}
+        {translateLabel(sub.subcategory)}
       </h3>
       <div className="space-y-5">
         {sub.elements.map((el, i) => (
@@ -370,7 +371,7 @@ function ElementItem({
           {specs.map(({ key, value }, i) => (
             <div key={`${key}-${i}`} className="flex items-baseline gap-3">
               <dt className="font-mono text-[11px] text-muted min-w-[120px] shrink-0">
-                {key}
+                {translateLabel(key)}
               </dt>
               <dd className="font-mono text-[11px] text-charcoal">
                 {value}

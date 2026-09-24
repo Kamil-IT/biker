@@ -1,9 +1,4 @@
 {
-  "enabledPlugins": {
-    "bencium-innovative-ux-designer@bencium-marketplace": true,
-    "example-skills@anthropic-agent-skills": true,
-    "claude-api@anthropic-agent-skills": true
-  },
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1",
     "CLAUDE_FLOW_V3_ENABLED": "true",
@@ -16,5 +11,19 @@
       "Bash(node .claude/*)",
       "mcp__claude-flow__:*"
     ]
+  },
+  "enabledPlugins": {
+    "bencium-innovative-ux-designer@bencium-marketplace": true,
+    "example-skills@anthropic-agent-skills": true,
+    "claude-api@anthropic-agent-skills": true,
+    "test-automation-skills-agents@fugazi-test-automation": true
+  },
+  "extraKnownMarketplaces": {
+    "fugazi-test-automation": {
+      "source": {
+        "source": "github",
+        "repo": "fugazi/test-automation-skills-agents"
+      }
+    }
   }
 }

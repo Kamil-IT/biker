@@ -1,0 +1,1 @@
+- [Reflector spec parsing warning](reflector_spec_parsing_warning.md) — recurring non-fatal `spec[n] not a dict` warning on /v1/bike/details, treat as warn not crash
