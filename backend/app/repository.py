@@ -255,12 +255,15 @@ _GENDER_PATTERNS = {
     "female": r"\bwomen|\bfemale|\bladies|\bunisex|\buniversal",
     "universal": r"\bunisex|\buniversal",
 }
+# Element descriptions are generated in Polish, so the patterns also carry the
+# Polish stems ("hydrauliczne" already contains "hydraulic").
 _BRAKE_PATTERNS = {
     "hydraulic disc": r"hydraulic",
-    "mechanical disc": r"mechanical|cable[^|]*disc",
+    "mechanical disc": r"mechanical|cable[^|]*disc|mechaniczn|linkow[^|]*tarcz",
     "v-brake": r"v-?\s?brake|linear[- ]pull",
-    "rim": r"\brim\b|v-?\s?brake|linear[- ]pull|cantilever|dual[- ]pivot|side-?pull",
+    "rim": r"\brim\b|v-?\s?brake|linear[- ]pull|cantilever|dual[- ]pivot|side-?pull|obręczow|szczękow",
 }
+_DISC_PATTERN = r"disc|tarcz"
 _SIZE_ALIASES = {"SM": "S", "MD": "M", "LG": "L", "2XL": "XXL"}
 
 
@@ -345,8 +348,9 @@ def _match_brake(specs: _BikeSpecs, want: str) -> bool:
     if not blob or re.search(pattern, blob) is None:
         return False
     # Rim brakes and discs are exclusive; "rim" can turn up in a disc bike's
-    # description ("rotor mount on the rim side"), so a disc mention vetoes it.
-    return not (_lc(want) in ("rim", "v-brake") and "disc" in blob)
+    # description ("rotor mount on the rim side"), so a disc mention (English
+    # "disc" or Polish "tarcza"/"tarczowe") vetoes it.
+    return not (_lc(want) in ("rim", "v-brake") and re.search(_DISC_PATTERN, blob))
 
 
 def _match_drivetrain(specs: _BikeSpecs, want: str) -> bool:
@@ -389,24 +393,35 @@ _MATCHERS = {
     "belt_drive": _match_belt,
 }
 
+# Polish display names for the English filter values the frontend sends
+# (mirrors the option labels in frontend SearchInput.tsx); unknown values pass through.
+_PL_MATERIAL = {"aluminum": "aluminiowa", "aluminium": "aluminiowa", "carbon": "karbonowa", "steel": "stalowa"}
+_PL_GENDER = {"male": "męski", "female": "damski", "universal": "uniwersalny"}
+_PL_BRAKE = {
+    "hydraulic disc": "tarczowe hydrauliczne",
+    "mechanical disc": "tarczowe mechaniczne",
+    "v-brake": "V-brake",
+    "rim": "obręczowe",
+}
+
 _MATCH_LABELS = {
-    "brand": lambda v: f"brand {v}",
+    "brand": lambda v: f"marka {v}",
     "model": lambda v: f"model {v}",
-    "frame_material": lambda v: f"{_lc(v)} frame",
-    "wheel_size": lambda v: f"{v} wheels",
-    "frame_size": lambda v: f"size {v}",
-    "gender": lambda v: f"{_lc(v)} fit",
-    "is_electric": lambda v: "electric" if v else "non-electric",
-    "battery_capacity_wh": lambda v: f"~{v} Wh battery",
-    "brake_type": lambda v: _lc(v) if _lc(v).endswith("brake") else f"{_lc(v)} brakes",
-    "drivetrain": lambda v: f"{v} drivetrain",
-    "belt_drive": lambda v: "belt drive" if v else "no belt drive",
+    "frame_material": lambda v: f"rama {_PL_MATERIAL.get(_lc(v), v)}",
+    "wheel_size": lambda v: f"koła {v}",
+    "frame_size": lambda v: f"rozmiar {v}",
+    "gender": lambda v: f"geometria {_PL_GENDER.get(_lc(v), v)}",
+    "is_electric": lambda v: "elektryczny" if v else "bez napędu elektrycznego",
+    "battery_capacity_wh": lambda v: f"bateria ~{v} Wh",
+    "brake_type": lambda v: f"hamulce {_PL_BRAKE.get(_lc(v), v)}",
+    "drivetrain": lambda v: f"napęd {v}",
+    "belt_drive": lambda v: "napęd paskowy" if v else "bez napędu paskowego",
 }
 
 
 def _describe_match(fields: dict) -> str:
-    """'Matches: carbon frame, 29" wheels, hydraulic disc brakes.' for a DB hit."""
-    return "Matches: " + ", ".join(_MATCH_LABELS[f](v) for f, v in fields.items()) + "."
+    """'Pasuje: rama karbonowa, koła 29", hamulce tarczowe hydrauliczne.' for a DB hit."""
+    return "Pasuje: " + ", ".join(_MATCH_LABELS[f](v) for f, v in fields.items()) + "."
 
 
 def _latest_ratings(session, bike_ids: list[int]) -> dict[int, tuple[float, str, list[str]]]:

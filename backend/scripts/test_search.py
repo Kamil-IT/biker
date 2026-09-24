@@ -731,7 +731,7 @@ elapsed_tc21 = _time.perf_counter() - t0
 data_tc21 = _show("[TC-21]", tc21_body, resp_tc21)
 assert resp_tc21.status_code == 200, f"Expected 200, got {resp_tc21.status_code}"
 assert len(data_tc21["bikes"]) >= 1, f"Expected >=1 AI bikes, got {len(data_tc21['bikes'])}"
-assert not any(b["explanation"].startswith("Matches:") for b in data_tc21["bikes"]), \
+assert not any(b["explanation"].startswith("Pasuje:") for b in data_tc21["bikes"]), \
     "A DB-hit explanation leaked into what should be an AI result"
 assert _cache_row_exists("/v1/bike/search", tc21_key), \
     "AI path should have written a generic-cache row"

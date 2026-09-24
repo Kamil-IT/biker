@@ -47,10 +47,10 @@ assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.te
 
 data = resp.json()
 
-# The graceful fallback ({"score":0,"explanation":"Review unavailable.",...})
+# The graceful fallback ({"score":0,"explanation":"Recenzja niedostępna.",...})
 # satisfies every type/range check, so assert we did NOT get it — otherwise a
 # totally non-functional endpoint still passes this smoke test.
-assert data["explanation"] != "Review unavailable.", "got the fallback, not a real review"
+assert data["explanation"] != "Recenzja niedostępna.", "got the fallback, not a real review"
 
 assert isinstance(data["score"], int), "score must be int"
 assert 1 <= data["score"] <= 10, "score must be 1–10 for a real review"
