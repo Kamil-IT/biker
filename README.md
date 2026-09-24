@@ -78,7 +78,7 @@ biker/
 │   │   ├── repository.py              # ORM data access: bike details + DB-first search (find_bikes_by_details) + missing-data request counter
 │   │   ├── bike_finder.py             # Single Claude call → all matching bikes, min 1 (DB-miss fallback)
 │   │   ├── bike_details_finder.py     # Fetch full component specs via web search
-│   │   ├── bike_description_finder.py # Generate plain-text overview via web search
+│   │   ├── bike_description_finder.py # Generate Polish plain-text overview via web search
 │   │   ├── bike_review_finder.py      # Aggregate web reviews into score + explanation
 │   │   ├── bike_offer_finder.py       # Find current Allegro offers via web search
 │   │   ├── bike_photos_finder.py      # Find manufacturer product photos: Claude URL search + Playwright scrape

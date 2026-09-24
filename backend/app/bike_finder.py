@@ -13,7 +13,6 @@ logger = logging.getLogger("biker.finder")
 MODEL = "claude-haiku-4-5-20251001"
 _client = AsyncAnthropic()
 PROMPTS_DIR = Path(__file__).parent / "prompts"
-SYSTEM_PROMPT = (PROMPTS_DIR / "bike_search.md").read_text(encoding="utf-8")
 
 # No result cap (TODO-025): room for a long list without cutting the JSON mid-array.
 MAX_TOKENS = 8000
@@ -36,12 +35,15 @@ def _to_bike(item) -> BikeResult | None:
 
 async def find_bikes(user_search: str) -> list[BikeResult]:
     """ONE Claude call → every matching bike (min 1, closest match). [] only on bad JSON."""
+    # Read per call, like the other finders: `uvicorn --reload` only watches
+    # .py files, so a module-level read kept serving a stale prompt after edits.
+    system_prompt = (PROMPTS_DIR / "bike_search.md").read_text(encoding="utf-8")
     t_start = time.perf_counter()
     response = await _client.messages.create(
         model=MODEL,
         max_tokens=MAX_TOKENS,
         temperature=0,
-        system=SYSTEM_PROMPT,
+        system=system_prompt,
         messages=[{
             "role": "user",
             "content": f"User search: {user_search}",

@@ -142,14 +142,14 @@ A bike matches when **every** checkable field given matches. A bike missing the 
 | `gender` | `spec_key='Gender'` | Male/Female also match unisex; Universal = unisex |
 | `is_electric` | `Electric / Powertrain` category present / absent | |
 | `battery_capacity_wh` | `Electric / Powertrain / Battery`, `spec_key='Capacity'` | parsed Wh within ±10 % |
-| `brake_type` | `Brakes/*` element names, descriptions, spec values | Hydraulic → `hydraulic`; Mechanical → `mechanical`/cable disc; V-brake / Rim → rim keywords and **no** `disc` mention |
+| `brake_type` | `Brakes/*` element names, descriptions, spec values | Hydraulic → `hydraulic` (also matches Polish `hydrauliczne`); Mechanical → `mechanical`/cable disc/Polish `mechaniczn`; V-brake / Rim → rim keywords (incl. Polish `obręczow`/`szczękow`) and **no** `disc`/`tarcz` mention — element descriptions are generated in Polish |
 | `drivetrain` | `Drivetrain/*` element names, descriptions, spec values | `Nx` token (`1x12`, not `52x36T`), else chainring count (`50/34T` = 2x; single ring and no front derailleur = 1x) |
 | `belt_drive` | `Drivetrain/*` `element_name` contains `belt` | |
 | `bike_type`, `year`, `search` | — | **not checkable**, ignored by the DB step |
 
 A request with **only** non-checkable fields skips the DB and goes straight to the AI call. **Every** matching DB bike is returned (no cap, TODO-025), highest `match_score` first — never topped up with AI results.
 
-`match_score` / `explanation` / `accessories` of a DB hit come from the bike's most recent `search_bike_rating_cache` row when one exists; otherwise `match_score = 10`, `accessories = []` and the explanation lists the matched fields, e.g. `"Matches: carbon frame, 29\" wheels, hydraulic disc brakes."`.
+`match_score` / `explanation` / `accessories` of a DB hit come from the bike's most recent `search_bike_rating_cache` row when one exists; otherwise `match_score = 10`, `accessories = []` and the explanation lists the matched fields, e.g. `"Pasuje: rama karbonowa, koła 29\", hamulce tarczowe hydrauliczne."` (Polish, like the AI-generated explanations).
 
 ### A DB hit deliberately does not warm the generic cache
 
@@ -189,7 +189,7 @@ All fields except `search` default to `null` (no constraint). The backend assemb
 
 **Flow:**
 0. SQLite reads only — generic cache, then the DB details search over `bike` + `bike_detail_component` (skipped when no checkable field is set). **A hit at either step returns immediately, making zero outbound HTTP calls.** See [Search Cache](#search-cache)
-1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns every matching bike as a JSON array (min 1: when nothing meets every filter, the closest bike with a low `match_score` and an explanation naming the unmet filter; `max_tokens=8000`, a warning is logged on `stop_reason == "max_tokens"`), parsed with `app/json_extract.extract_json()`. Runs only on a DB miss
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns every matching bike as a JSON array (min 1: when nothing meets every filter, the closest bike with a low `match_score` and an explanation naming the unmet filter; `max_tokens=8000`, a warning is logged on `stop_reason == "max_tokens"`), parsed with `app/json_extract.extract_json()`; `explanation` and `accessories` come back in Polish (brand/model and named components untranslated). Runs only on a DB miss
 
 A response with no parseable JSON returns `bikes: []` (never a 502) and is not cached; an upstream API error is a 502. When the AI returns bikes, the response is written to the generic cache and to `search_cache` + `search_bike_rating_cache` via `store.save_search`. A DB-served result is **not** written back to either — see [Search Cache](#search-cache).
 
@@ -279,13 +279,13 @@ Content-Type: application/json
 }
 ```
 
-**Response includes:** `description` (4–5 sentence plain-text overview), `components` (category tree), `photos` (up to 8 manufacturer product image URLs).
+**Response includes:** `description` (4–5 sentence plain-text overview, written in Polish), `components` (category tree — each element `description` is Polish, while category/subcategory/spec keys, element names and spec values stay English), `photos` (up to 8 manufacturer product image URLs).
 
 On the happy path the result is also written to the queryable ORM details tables via `repository.save_bike_details` (see [Details storage — normalised ORM tables](#details-storage--normalised-orm-tables)). A cached repeat is served from those tables with **zero outbound calls**; the lookup is case-insensitive and the response echoes the caller's casing.
 
 **Flow (all three run in parallel via `asyncio.gather`):**
 1. `POST https://api.anthropic.com/v1/messages` × 8 — Claude Haiku with `web_search_20250305` tool, one focused search per component category (sequential): Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories
-2. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool + prompt caching, generates a 4–5 sentence bike overview
+2. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool + prompt caching, generates a 4–5 sentence bike overview in Polish
 3. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool finds the official manufacturer product page URL, then Playwright (headless=False) scrapes up to 8 product `<img>` URLs from the rendered page
 
 **Parsing:** each category response goes through the shared `app/json_extract.py` `extract_json()`, which pulls the first parseable fenced block or balanced `{...}` / `[...]` out of surrounding prose. The model routinely narrates ("I'll search for the Brakes specifications...") before emitting the JSON, so a parser that assumed the whole response was JSON silently dropped whole categories. A category with genuinely no JSON in its response is logged and skipped — never a 502.
@@ -310,13 +310,14 @@ Content-Type: application/json
 ```json
 {
   "score": 8,
-  "explanation": "The Canyon Grizl CF 7 ESC is widely praised for its...",
+  "explanation": "Canyon Grizl CF 7 ESC jest powszechnie chwalony za...",
   "ref": ["https://...", "https://..."],
   "rating": 7.7,
   "sources_used": 3
 }
 ```
 
+- `explanation` — 5–10 sentences in **Polish** (forced by `app/prompts/bike_review.md` § Language; the fallback is `"Recenzja niedostępna."`).
 - `score` — a single synthesised editorial verdict (integer 0–10), as before.
 - `rating` — the **aggregate** rating (float 0–10) computed from per-source scores across the curated sources.
 - `sources_used` — count of curated sources that contributed a score to the aggregate; unaffected by the disagreement rule below — every consulted source still counts.
@@ -333,7 +334,7 @@ Claude searches the curated sources and returns a per-source score for each sour
 
 `rating = Σ(score × weight) / Σ(weight)`, rounded to 1 decimal. A non-zero rating **requires at least one professional (`pro_numeric` or `pro_qualitative`) source**; if only community sources are found, `rating` is `0.0` and `sources_used` is `0`.
 
-**Source disagreement:** when the spread between the highest and lowest per-source score exceeds `DISAGREEMENT_THRESHOLD` (3.0 points, a module-level constant in `app/bike_review_finder.py`), a weighted mean would hide a genuinely divisive verdict, so `rating` is anchored instead — to the mean of the `pro_numeric` scores, falling back to `pro_qualitative` if no `pro_numeric` source is present. `sources_used` is not affected; every consulted source still counts. When the rule fires, the backend (not the model) appends a sentence to `explanation` stating the spread and which camp the rating follows. Below the threshold, aggregation is the unchanged weighted mean above.
+**Source disagreement:** when the spread between the highest and lowest per-source score exceeds `DISAGREEMENT_THRESHOLD` (3.0 points, a module-level constant in `app/bike_review_finder.py`), a weighted mean would hide a genuinely divisive verdict, so `rating` is anchored instead — to the mean of the `pro_numeric` scores, falling back to `pro_qualitative` if no `pro_numeric` source is present. `sources_used` is not affected; every consulted source still counts. When the rule fires, the backend (not the model) appends a Polish sentence to `explanation` stating the spread and which camp the rating follows. Below the threshold, aggregation is the unchanged weighted mean above.
 
 The curated list is a starting point, not a whitelist: if no curated source covers the model, Claude may use any other credible review site or owner forum, tagged with the closest matching `type`. This prevents a bike with real but non-curated coverage from returning nothing.
 

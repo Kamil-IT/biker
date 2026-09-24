@@ -19,7 +19,7 @@ _CITE_TAG = re.compile(r"</?cite\b[^>]*>")
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
 _FALLBACK = BikeReviewResponse(
-    score=0, explanation="Review unavailable.", ref=[], rating=0.0, sources_used=0
+    score=0, explanation="Recenzja niedostępna.", ref=[], rating=0.0, sources_used=0
 )
 
 # Weighting scheme (TODO-013; tier list and rationale in
@@ -129,21 +129,22 @@ def _aggregate_rating(per_source: list) -> tuple[float, int, dict]:
 
 
 _TIER_LABEL = {
-    "pro_numeric": "professional reviews that publish a score",
-    "pro_qualitative": "professional reviews",
+    "pro_numeric": "profesjonalnych recenzji podających ocenę liczbową",
+    "pro_qualitative": "profesjonalnych recenzji",
 }
 
 
 def _disagreement_note(info: dict) -> str:
-    """One sentence stating the spread and which camp the rating follows."""
-    label = _TIER_LABEL.get(info.get("anchor_tier"), "professional reviews")
+    """One sentence (Polish, like the rest of the explanation) stating the spread
+    and which camp the rating follows."""
+    label = _TIER_LABEL.get(info.get("anchor_tier"), "profesjonalnych recenzji")
     return (
-        f"Sources disagree on this bike: individual scores range from "
-        f"{info['low']:.0f} to {info['high']:.0f} out of 10, a spread of "
-        f"{info['spread']:.0f} points — wider than the {DISAGREEMENT_THRESHOLD:.0f}-point "
-        f"threshold at which we stop averaging. The rating shown therefore follows the "
-        f"{label} rather than the blended average of "
-        f"{info['weighted_mean']:.1f}, which would hide the split."
+        f"Źródła nie są zgodne co do tego roweru: poszczególne oceny wahają się od "
+        f"{info['low']:.0f} do {info['high']:.0f} na 10, czyli różnią się o "
+        f"{info['spread']:.0f} pkt — więcej niż próg {DISAGREEMENT_THRESHOLD:.0f} pkt, "
+        f"powyżej którego przestajemy uśredniać. Dlatego pokazana ocena opiera się na "
+        f"{label}, a nie na średniej ważonej {info['weighted_mean']:.1f}, "
+        f"która ukryłaby ten rozdźwięk."
     )
 
 
