@@ -23,6 +23,11 @@ Merged is the bar. A task with finished code and an open PR is not done and does
 | 018 | Review source disagreement + `ref` order | [#65](https://github.com/Kamil-IT/biker/pull/65) — *moved here in its own PR, ahead of merge, as requested* |
 | 009 | DB-first search with offer-price join | [#66](https://github.com/Kamil-IT/biker/pull/66) |
 | 023 | Remove five search filters (incl. `price_max` gate) | [#82](https://github.com/Kamil-IT/biker/pull/82) |
+| 022 | Remove aggregate rating card from review section | [#73](https://github.com/Kamil-IT/biker/pull/73) |
+| 024 | DB-first details search + single AI call | [#84](https://github.com/Kamil-IT/biker/pull/84) |
+| 025 | Remove search result limit (min 1 bike) | [#85](https://github.com/Kamil-IT/biker/pull/85) |
+| 026 | Backend missing-data request counter | [#86](https://github.com/Kamil-IT/biker/pull/86) |
+| 027 | Frontend "Request data" button | [#86](https://github.com/Kamil-IT/biker/pull/86) |
 
 > ⚠️ **ID collision.** "Remove aggregate rating bar" was numbered **008**, which is already held by `backlog/blocked/TODO_008_ALLEGRO_API_OFFER.md`. Two different tasks now share that ID. The Allegro task is the older claimant and is referenced by PR #42's title, body and branch name, so renumbering *this* task is the cheaper fix — 019 is the next free ID. Left as-is pending a decision, since renaming someone else's task ID is not a call to make silently.
 

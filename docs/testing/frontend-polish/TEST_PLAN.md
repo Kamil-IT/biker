@@ -47,3 +47,21 @@
 | TC13 | Pass (known limitation) | Results header "Wyniki dla" shows `"Brand: Trek"` — the enriched query string built by the backend (`SearchRequest.enriched_query()` in `backend/app/schemas.py`), not a frontend string. AI explanations/accessory chips are also English (backend content, out of scope). User decided (2026-09-24) to leave backend-generated text as-is — out of scope |
 
 No console errors. Evidence: Playwright screenshots in the session scratchpad (`shots/tc*.png`).
+
+## Round 3 — spec-tree labels (2026-09-24)
+
+Request: translate the component tree's labels (Material, Weight, Axle Dimension, category and subcategory names). Implemented in `frontend/src/specLabels.ts`, applied in `BikeDetailsShared.tsx` `CategorySection`. Coverage on `cache.db` data: categories 100 %, subcategories 100 %, spec keys 95 % of rows (most of the remainder read the same in Polish: Standard, Tubeless, Offset, Reach, TPI).
+
+**Constraint:** no Anthropic tokens available, so only cached requests could reach the backend. Bike: Goetze Onyx Pro (`parse`, `search`, `details`, `offer`, `ceneo`, `decathlon` cached); `review`, `used` and equipment endpoints were mocked, and any other request was aborted. The backend log for the run shows 6 cache hits and no misses.
+
+| ID | Case | Result |
+|---|---|---|
+| TS01 | Category headers are Polish (Rama, Napęd, Hamulce, Koła, Kokpit, Siodło i sztyca, Oświetlenie), with no English | Pass |
+| TS02 | Subcategories are Polish (Widelec, Przerzutka tylna, Kaseta, Korba, Suport, Łańcuch…) | Pass |
+| TS03 | Spec keys are Polish (Materiał, Waga, Wymiar osi, Prześwit na oponę, Średnica rury sterowej, Zębatki, Zakres…) | Pass |
+| TS04 | Spec values (`Steel`) and component names (`Shimano Tourney …`) are unchanged | Pass |
+| TS05 | The component-name link still sends the untranslated name to `/v1/equipment/details` | Pass |
+| TS06 | Regression: the rest of the details page is still Polish | Pass |
+| TS07 | No uncached request was sent | Pass |
+
+7 passed · 0 failed · 0 blocked.
