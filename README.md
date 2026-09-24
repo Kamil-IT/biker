@@ -12,7 +12,21 @@ AI-powered bike finder. Describe what you're looking for in plain English and ge
 
 ## Running the project
 
-You need **two terminals** — backend and frontend run separately.
+You need **Docker** for the database and **two terminals** — backend and frontend run separately.
+
+### Step 0 — Database (PostgreSQL in Docker)
+
+```bash
+# first time — creates the container and a persistent volume
+docker run -d --name biker-pg -e POSTGRES_USER=biker -e POSTGRES_PASSWORD=biker -e POSTGRES_DB=biker -p 5432:5432 -v biker-pgdata:/var/lib/postgresql/data postgres:17
+# every later time
+docker start biker-pg
+# check it is up
+docker exec biker-pg pg_isready -U biker -d biker
+```
+
+The backend connects to it when `DATABASE_URL=postgresql+psycopg://biker:biker@localhost:5432/biker` is set
+(TODO-028). Without `DATABASE_URL` it falls back to the SQLite file `backend/cache.db`.
 
 ### Terminal 1 — Backend
 

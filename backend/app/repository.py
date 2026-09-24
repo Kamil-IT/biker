@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import text
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from .models import (
     Bike,
@@ -16,6 +15,7 @@ from .models import (
     BikeMissingRequest,
     BikeOffer,
     BikeOfferPhoto,
+    dialect_insert,
     get_session,
 )
 from .schemas import (
@@ -530,7 +530,8 @@ def record_missing_request(company: str, model: str, missing_type: str) -> Missi
             return MissingDataResponse(bike_id=None, missing_type=missing_type, counter=0)
 
         # One atomic upsert: first request inserts counter=1, later ones add 1.
-        stmt = sqlite_insert(BikeMissingRequest).values(
+        # SQLite and PostgreSQL both support INSERT … ON CONFLICT DO UPDATE.
+        stmt = dialect_insert(BikeMissingRequest).values(
             bike_id=bike_id, missing_type=missing_type, counter=1,
         )
         session.execute(stmt.on_conflict_do_update(

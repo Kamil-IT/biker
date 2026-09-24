@@ -1,13 +1,13 @@
 """Additive, queryable cache for follow-up search queries.
 
-Sits on top of the generic response cache in `cache.py` (shares the same
-`cache.db` connection). Unlike the generic `endpoint_req_to_body_cache`, this is
-keyed by semantic identity (the normalised enriched query) and is queryable by
-attribute (e.g. find cached bikes by brand), so follow-up requests can be served
-without any web/Claude call.
+Sits on top of the generic response cache in `cache.py` (same database, via
+the shared SQLAlchemy engine in `models.py`). Unlike the generic
+`endpoint_req_to_body_cache`, this is keyed by semantic identity (the normalised
+enriched query) and is queryable by attribute (e.g. find cached bikes by brand),
+so follow-up requests can be served without any web/Claude call.
 
 Two tables, both defined as ORM models in `app/models.py` and created by
-`init_db()`; this module reads/writes them via the shared raw connection:
+`init_db()`; this module reads/writes them through ORM sessions:
 
 - `search_cache`               — one row per query: `query`, `time_stored`.
 - `search_bike_rating_cache`   — one row per bike a search returned: FK to
@@ -21,7 +21,9 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from .cache import get_conn
+from sqlalchemy import func
+
+from .models import Bike, SearchBikeRating, SearchCache, get_session
 from .schemas import BikeResult
 
 logger = logging.getLogger(__name__)
@@ -59,24 +61,26 @@ def _norm(text: str) -> str:
 # FK. accessories is stored inline as a JSON array of strings.
 
 
-def _get_or_create_bike(conn, brand: str, model: str) -> int:
+def _get_or_create_bike(session, brand: str, model: str) -> int:
     """Resolve a bike identity to its `bike.id`, creating the row if needed.
 
     Lookup is case-insensitive but the row keeps the caller's original casing —
     UNIQUE(brand, model) is case-sensitive, so matching on LOWER() is what stops
     'Trek' and 'trek' becoming two identities (the case-split TODO-019 flags).
     """
-    row = conn.execute(
-        "SELECT id FROM bike WHERE LOWER(brand) = ? AND LOWER(model) = ?",
-        (_norm(brand), _norm(model)),
-    ).fetchone()
-    if row is not None:
-        return row[0]
-    cur = conn.execute(
-        "INSERT INTO bike (brand, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
-        (brand, model, _now_iso(), _now_iso()),
+    bike_id = (
+        session.query(Bike.id)
+        .filter(func.lower(Bike.brand) == _norm(brand), func.lower(Bike.model) == _norm(model))
+        .order_by(Bike.id)
+        .limit(1)
+        .scalar()
     )
-    return cur.lastrowid
+    if bike_id is not None:
+        return bike_id
+    bike = Bike(brand=brand, model=model)
+    session.add(bike)
+    session.flush()
+    return bike.id
 
 
 def _row_to_bike(brand, model, rating, explanation, accessories_json) -> BikeResult:
@@ -97,94 +101,95 @@ def _row_to_bike(brand, model, rating, explanation, accessories_json) -> BikeRes
 def save_search(query: str, bikes: list[BikeResult], ttl: int = SEARCH_TTL_SECONDS) -> None:
     """Upsert a search and its rated bikes. `ttl` is accepted for signature
     compatibility but unused — freshness comes from SEARCH_TTL_SECONDS."""
-    conn = get_conn()
+    session = get_session()
     try:
         norm = _norm(query)
-        row = conn.execute(
-            "SELECT id FROM search_cache WHERE query = ?", (norm,)
-        ).fetchone()
-        if row is not None:
-            search_id = row[0]
+        search = session.query(SearchCache).filter_by(query=norm).first()
+        if search is not None:
             # Replace this query's bikes wholesale.
-            conn.execute(
-                "DELETE FROM search_bike_rating_cache WHERE search_cache_id = ?",
-                (search_id,),
-            )
-            conn.execute(
-                "UPDATE search_cache SET time_stored = ? WHERE id = ?",
-                (_now_iso(), search_id),
-            )
+            session.query(SearchBikeRating).filter_by(search_cache_id=search.id).delete()
+            search.time_stored = _now_iso()
         else:
-            cur = conn.execute(
-                "INSERT INTO search_cache (query, time_stored) VALUES (?, ?)",
-                (norm, _now_iso()),
-            )
-            search_id = cur.lastrowid
+            search = SearchCache(query=norm, time_stored=_now_iso())
+            session.add(search)
+        session.flush()
 
         for i, b in enumerate(bikes):
-            bike_id = _get_or_create_bike(conn, b.brand, b.model)
-            conn.execute(
-                "INSERT INTO search_bike_rating_cache "
-                "(search_cache_id, bike_id, rating, explanation, accessories, display_order) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (search_id, bike_id, b.match_score, b.explanation,
-                 json.dumps(b.accessories), i),
-            )
-        conn.commit()
+            session.add(SearchBikeRating(
+                search_cache_id=search.id,
+                bike_id=_get_or_create_bike(session, b.brand, b.model),
+                rating=b.match_score,
+                explanation=b.explanation,
+                accessories=json.dumps(b.accessories),
+                display_order=i,
+            ))
+        session.commit()
         logger.info("search_cache store | query=%r bikes=%d", query, len(bikes))
     except Exception as exc:  # noqa: BLE001 — cache writes must never break the request
-        conn.rollback()
+        session.rollback()
         logger.warning("search_cache store failed (non-fatal) | %s", exc)
+    finally:
+        session.close()
+
+
+# brand, model, rating, explanation, accessories — the columns _row_to_bike takes.
+_RATED_COLUMNS = (
+    Bike.brand, Bike.model, SearchBikeRating.rating,
+    SearchBikeRating.explanation, SearchBikeRating.accessories,
+)
 
 
 def get_search_by_query(query: str) -> Optional[list[BikeResult]]:
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT id, time_stored FROM search_cache WHERE query = ?",
-        (_norm(query),),
-    ).fetchone()
-    if row is None:
-        logger.info("search_cache miss | query=%r", query)
-        return None
-    search_id, time_stored = row
-    if not _is_fresh(time_stored, SEARCH_TTL_SECONDS):
-        logger.info("search_cache stale | query=%r", query)
-        return None
-    logger.info("search_cache hit | query=%r", query)
-    rows = conn.execute(
-        "SELECT b.brand, b.model, r.rating, r.explanation, r.accessories "
-        "FROM search_bike_rating_cache r JOIN bike b ON b.id = r.bike_id "
-        "WHERE r.search_cache_id = ? ORDER BY r.display_order, r.id",
-        (search_id,),
-    ).fetchall()
-    return [_row_to_bike(*r) for r in rows]
+    session = get_session()
+    try:
+        search = (
+            session.query(SearchCache.id, SearchCache.time_stored)
+            .filter_by(query=_norm(query))
+            .first()
+        )
+        if search is None:
+            logger.info("search_cache miss | query=%r", query)
+            return None
+        if not _is_fresh(search.time_stored, SEARCH_TTL_SECONDS):
+            logger.info("search_cache stale | query=%r", query)
+            return None
+        logger.info("search_cache hit | query=%r", query)
+        rows = (
+            session.query(*_RATED_COLUMNS)
+            .select_from(SearchBikeRating)
+            .join(Bike, Bike.id == SearchBikeRating.bike_id)
+            .filter(SearchBikeRating.search_cache_id == search.id)
+            .order_by(SearchBikeRating.display_order, SearchBikeRating.id)
+            .all()
+        )
+        return [_row_to_bike(*r) for r in rows]
+    finally:
+        session.close()
 
 
 def _find_rated_bikes(brand: Optional[str], model: Optional[str]) -> list[BikeResult]:
     """Shared lookup-by-attribute over fresh searches. Joins ratings to their
     search (for the freshness check) and to `bike` (for brand/model), filters in
     SQL where it can, dedups by (brand, model). Purely a cache read."""
-    conn = get_conn()
-    sql = (
-        "SELECT s.time_stored, b.brand, b.model, r.rating, r.explanation, r.accessories "
-        "FROM search_bike_rating_cache r "
-        "JOIN search_cache s ON s.id = r.search_cache_id "
-        "JOIN bike b ON b.id = r.bike_id"
-    )
-    conds, params = [], []
-    if brand is not None:
-        conds.append("LOWER(b.brand) = ?")
-        params.append(_norm(brand))
-    if model is not None:
-        conds.append("LOWER(b.model) = ?")
-        params.append(_norm(model))
-    if conds:
-        sql += " WHERE " + " AND ".join(conds)
-    sql += " ORDER BY r.display_order, r.id"
+    session = get_session()
+    try:
+        q = (
+            session.query(SearchCache.time_stored, *_RATED_COLUMNS)
+            .select_from(SearchBikeRating)
+            .join(SearchCache, SearchCache.id == SearchBikeRating.search_cache_id)
+            .join(Bike, Bike.id == SearchBikeRating.bike_id)
+        )
+        if brand is not None:
+            q = q.filter(func.lower(Bike.brand) == _norm(brand))
+        if model is not None:
+            q = q.filter(func.lower(Bike.model) == _norm(model))
+        rows = q.order_by(SearchBikeRating.display_order, SearchBikeRating.id).all()
+    finally:
+        session.close()
 
     matches: list[BikeResult] = []
     seen: set[tuple[str, str]] = set()
-    for time_stored, br, mo, rating, expl, acc in conn.execute(sql, params).fetchall():
+    for time_stored, br, mo, rating, expl, acc in rows:
         if not _is_fresh(time_stored, SEARCH_TTL_SECONDS):
             continue
         key = (_norm(br), _norm(mo))

@@ -501,20 +501,67 @@ print("OK — empty model in offer correctly rejected with 422")
 # leans on pre-existing seed data silently stops testing the DB path a day
 # later and then fails as if TODO_009 had regressed.
 # ══════════════════════════════════════════════════════════════════════════
-import sqlite3
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BACKEND_DIR / "cache.db"
 sys.path.insert(0, str(BACKEND_DIR))
+load_dotenv(BACKEND_DIR / ".env")  # same DATABASE_URL as the server under test
+
+from sqlalchemy import text  # noqa: E402
+
+from app.models import get_engine  # noqa: E402
 
 SEARCH_TTL = 24 * 60 * 60
 
 
+class _Cursor:
+    def __init__(self, rows, lastrowid=None):
+        self._rows = rows
+        self.lastrowid = lastrowid
+
+    def fetchone(self):
+        return tuple(self._rows[0]) if self._rows else None
+
+    def fetchall(self):
+        return [tuple(r) for r in self._rows]
+
+
+class _DB:
+    """sqlite3-style connection over the app's SQLAlchemy engine (TODO-028).
+
+    The fixtures below keep their `?` placeholders and `.lastrowid`; this runs
+    them against whichever database DATABASE_URL selects — SQLite or PostgreSQL.
+    """
+
+    def __init__(self):
+        self._conn = get_engine().connect()
+
+    def execute(self, sql, params=()):
+        names = iter(range(len(params)))
+        bound = re.sub(r"\?", lambda _: f":p{next(names)}", sql)
+        values = {f"p{i}": v for i, v in enumerate(params)}
+        insert_with_id = re.match(r"\s*INSERT INTO (bike|search_cache)\b", sql, re.I)
+        if insert_with_id:
+            bound += " RETURNING id"
+        result = self._conn.execute(text(bound), values)
+        if insert_with_id:
+            return _Cursor([], lastrowid=result.scalar_one())
+        return _Cursor(result.fetchall() if result.returns_rows else [])
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        self._conn.close()
+
+
 def _db():
-    return sqlite3.connect(str(DB_PATH))
+    return _DB()
 
 
 def _norm_key(fields: dict) -> str:

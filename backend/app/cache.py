@@ -1,69 +1,35 @@
 import json
 import logging
-import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional, Type, TypeVar
 
 from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
+
+from .models import dialect_insert, dispose_engine, endpoint_req_to_body_cache, get_engine
 
 logger = logging.getLogger(__name__)
 
-_DB_PATH = Path(__file__).parent.parent / "cache.db"
-_conn: Optional[sqlite3.Connection] = None
+# Generic per-endpoint response cache. The table is declared in app/models.py
+# and created by init_db(); every read/write goes through the shared SQLAlchemy
+# engine, so it lives in whichever database DATABASE_URL selects (TODO-028).
+_table = endpoint_req_to_body_cache
 
 
 def init_cache() -> None:
-    global _conn
-    db_existed = _DB_PATH.exists()
-    _conn = sqlite3.connect(str(_DB_PATH), check_same_thread=False)
-    _conn.execute("PRAGMA journal_mode=WAL")
-    # SQLite ships with FK enforcement OFF per connection, so ON DELETE CASCADE
-    # never fires unless we ask. Without this, deleting a search_cache row orphans
-    # its search_bike_rating_cache children (and every other CASCADE is inert).
-    _conn.execute("PRAGMA foreign_keys=ON")
-    if db_existed:
-        row = _conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name='endpoint_req_to_body_cache'"
-        ).fetchone()
-        table_existed = row is not None
-    else:
-        table_existed = False
-    if not table_existed:
-        _conn.execute(
-            """
-            CREATE TABLE endpoint_req_to_body_cache (
-                endpoint    TEXT NOT NULL,
-                request     TEXT NOT NULL,
-                response    TEXT NOT NULL,
-                time_stored TEXT NOT NULL,
-                UNIQUE(endpoint, request)
-            )
-            """
-        )
-        _conn.commit()
-        logger.info("cache table created | path=%s", _DB_PATH)
-    else:
-        logger.info(
-            "cache loaded | path=%s rows=%d",
-            _DB_PATH,
-            _conn.execute(
-                "SELECT COUNT(*) FROM endpoint_req_to_body_cache"
-            ).fetchone()[0],
-        )
+    """Startup hook: log where the cache lives. Call after models.init_db()."""
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(select(func.count()).select_from(_table)).scalar_one()
+    logger.info(
+        "cache loaded | db=%s rows=%d",
+        engine.url.render_as_string(hide_password=True), rows,
+    )
 
 
 def close_cache() -> None:
-    global _conn
-    if _conn is not None:
-        _conn.close()
-        _conn = None
-
-
-def get_conn() -> sqlite3.Connection:
-    assert _conn is not None, "cache not initialised — call init_cache() first"
-    return _conn
+    dispose_engine()
 
 
 def _normalise(fields: dict) -> str:
@@ -78,33 +44,31 @@ T = TypeVar("T", bound=BaseModel)
 
 
 def get_cached(endpoint: str, fields: dict, model_cls: Type[T]) -> Optional[T]:
-    assert _conn is not None
-    row = _conn.execute(
-        "SELECT response FROM endpoint_req_to_body_cache "
-        "WHERE endpoint = ? AND request = ?",
-        (endpoint, _normalise(fields)),
-    ).fetchone()
-    if row is None:
+    with get_engine().connect() as conn:
+        response = conn.execute(
+            select(_table.c.response).where(
+                _table.c.endpoint == endpoint,
+                _table.c.request == _normalise(fields),
+            )
+        ).scalar_one_or_none()
+    if response is None:
         logger.info("cache miss | endpoint=%s", endpoint)
         return None
     logger.info("cache hit  | endpoint=%s", endpoint)
-    return model_cls.model_validate_json(row[0])
+    return model_cls.model_validate_json(response)
 
 
 def set_cached(endpoint: str, fields: dict, response: BaseModel) -> None:
-    assert _conn is not None
+    # First write wins — the old INSERT OR IGNORE, portable across dialects.
+    stmt = dialect_insert(_table).values(
+        endpoint=endpoint,
+        request=_normalise(fields),
+        response=response.model_dump_json(),
+        time_stored=datetime.now(timezone.utc).isoformat(),
+    ).on_conflict_do_nothing(index_elements=["endpoint", "request"])
     try:
-        _conn.execute(
-            "INSERT OR IGNORE INTO endpoint_req_to_body_cache "
-            "(endpoint, request, response, time_stored) VALUES (?, ?, ?, ?)",
-            (
-                endpoint,
-                _normalise(fields),
-                response.model_dump_json(),
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        _conn.commit()
+        with get_engine().begin() as conn:
+            conn.execute(stmt)
         logger.info("cache store | endpoint=%s", endpoint)
-    except sqlite3.Error as exc:
+    except SQLAlchemyError as exc:
         logger.warning("cache store failed (non-fatal) | %s", exc)

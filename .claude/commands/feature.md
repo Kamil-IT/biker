@@ -23,6 +23,7 @@ Use the persistent Ruflo terminal to start the backend and run all checks:
 
 ```
 mcp__ruflo__terminal_create(name="biker-server")
+mcp__ruflo__terminal_execute: docker start biker-pg
 mcp__ruflo__terminal_execute: cd /d C:\...\backend && .venv\Scripts\activate && start "biker-backend" cmd /k "uvicorn app.main:app --reload --port 8000"
 ```
 

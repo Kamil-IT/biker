@@ -45,8 +45,9 @@ The workflow ensures:
 
 **Before running the test dedicated to your change, run the existing smoke tests first** — this catches regressions in other endpoints before you focus on the new one.
 
-Start the backend server (if not already running):
+Start the database and the backend server (if not already running):
 ```bash
+docker start biker-pg   # local PostgreSQL — first-time `docker run` command in README.md
 cd backend
 .venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000
 ```
