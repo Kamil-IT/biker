@@ -6,12 +6,14 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from .models import (
     Bike,
     BikeDetails,
     BikeDetailPhoto,
     BikeDetailComponent,
+    BikeMissingRequest,
     BikeOffer,
     BikeOfferPhoto,
     get_session,
@@ -21,6 +23,7 @@ from .schemas import (
     BikeDescription,
     BikeResult,
     BikeCategory,
+    MissingDataResponse,
     BikeSubcategory,
     ComponentElement,
     SpecItem,
@@ -494,5 +497,60 @@ def find_bikes_by_details(req) -> list[BikeResult]:
     except Exception as exc:  # noqa: BLE001 — a DB read must never break search
         logger.warning("find_bikes_by_details failed (non-fatal) | %s", exc)
         return []
+    finally:
+        session.close()
+
+
+# ── Missing-data requests (TODO-026) ────────────────────────────────────────
+
+
+def record_missing_request(company: str, model: str, missing_type: str) -> MissingDataResponse:
+    """Count one user request for a missing details section of an existing bike.
+
+    The bike is looked up, never created: `save_search` always writes it before
+    the details view can open, so a miss means that write was swallowed (locked
+    SQLite, unmigrated DB). Brand/model are normalised in Python like
+    find_bikes_by_details — SQLite's lower() is ASCII-only. A miss or a failed
+    write returns counter 0 and leaves the DB untouched.
+    """
+    session = get_session()
+    try:
+        brand, name = _lc(company), _lc(model)
+        # Oldest row wins should a case-split duplicate identity exist.
+        bike_id = next(
+            (b.id for b in session.query(Bike.id, Bike.brand, Bike.model).order_by(Bike.id)
+             if _lc(b.brand) == brand and _lc(b.model) == name),
+            None,
+        )
+        if bike_id is None:
+            logger.error(
+                "missing request: bike not found, nothing recorded | company=%r model=%r type=%r",
+                company, model, missing_type,
+            )
+            return MissingDataResponse(bike_id=None, missing_type=missing_type, counter=0)
+
+        # One atomic upsert: first request inserts counter=1, later ones add 1.
+        stmt = sqlite_insert(BikeMissingRequest).values(
+            bike_id=bike_id, missing_type=missing_type, counter=1,
+        )
+        session.execute(stmt.on_conflict_do_update(
+            index_elements=["bike_id", "missing_type"],
+            set_={"counter": BikeMissingRequest.counter + 1},
+        ))
+        counter = session.query(BikeMissingRequest.counter).filter_by(
+            bike_id=bike_id, missing_type=missing_type,
+        ).scalar()
+        session.commit()
+        logger.info(
+            "missing request recorded | bike_id=%d type=%r counter=%d", bike_id, missing_type, counter,
+        )
+        return MissingDataResponse(bike_id=bike_id, missing_type=missing_type, counter=counter)
+    except Exception as exc:  # noqa: BLE001 — a failed tally must not break the details view
+        session.rollback()
+        logger.error(
+            "missing request store failed | company=%r model=%r type=%r | %s",
+            company, model, missing_type, exc,
+        )
+        return MissingDataResponse(bike_id=None, missing_type=missing_type, counter=0)
     finally:
         session.close()

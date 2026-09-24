@@ -790,3 +790,94 @@ finally:
     _conn.close()
 assert _leftover == 0, f"{_leftover} TODO-009 fixture row(s) left in search_cache"
 print("OK — no TODO-009 fixture rows left behind")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TODO_026 — POST /v1/bike/missing counts "Request data" clicks per bike + section
+#
+# The route never creates a bike, so the suite seeds its own namespaced `bike`
+# row and deletes it (and its request rows) on the way out.
+# ══════════════════════════════════════════════════════════════════════════
+MISSING_URL = "http://localhost:8000/v1/bike/missing"
+FIX_MISSING_BRAND, FIX_MISSING_MODEL = "TODO-026 Fixture", "Missing Data Bike"
+
+
+def _missing_rows(bike_id: int) -> list[tuple[str, int]]:
+    conn = _db()
+    try:
+        return conn.execute(
+            "SELECT missing_type, counter FROM bike_missing_request WHERE bike_id = ? ORDER BY missing_type",
+            (bike_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def _drop_missing_fixture() -> None:
+    conn = _db()
+    try:
+        conn.execute(
+            "DELETE FROM bike_missing_request WHERE bike_id IN "
+            "(SELECT id FROM bike WHERE brand = ? AND model = ?)", (FIX_MISSING_BRAND, FIX_MISSING_MODEL),
+        )
+        conn.execute("DELETE FROM bike WHERE brand = ? AND model = ?", (FIX_MISSING_BRAND, FIX_MISSING_MODEL))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── [TC-27] Existing bike: counter starts at 1 and adds 1 per call, one row per type ──
+print("\n── [TC-27] POST /v1/bike/missing — counter increments on an existing bike ──")
+_drop_missing_fixture()
+_conn = _db()
+try:
+    _now = datetime.now(timezone.utc).isoformat()
+    fix_bike_id = _conn.execute(
+        "INSERT INTO bike (brand, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
+        (FIX_MISSING_BRAND, FIX_MISSING_MODEL, _now, _now),
+    ).lastrowid
+    _conn.commit()
+finally:
+    _conn.close()
+try:
+    # Different casing/whitespace than the stored row: lookup is normalised.
+    tc27_body = {"company": " todo-026 fixture ", "model": "MISSING DATA BIKE", "missing_type": "photos"}
+    first = _show("[TC-27] 1st", tc27_body, httpx.post(MISSING_URL, json=tc27_body, timeout=10))
+    resp_tc27 = httpx.post(MISSING_URL, json=tc27_body, timeout=10)
+    second = _show("[TC-27] 2nd", tc27_body, resp_tc27)
+    assert resp_tc27.status_code == 200, f"Expected 200, got {resp_tc27.status_code}"
+    assert first == {"bike_id": fix_bike_id, "missing_type": "photos", "counter": 1}, first
+    assert second["counter"] == first["counter"] + 1, f"Counter did not go up by 1: {first} -> {second}"
+    other = httpx.post(MISSING_URL, json={**tc27_body, "missing_type": "review"}, timeout=10).json()
+    assert other["counter"] == 1, f"A new missing_type must start its own counter, got {other}"
+    assert _missing_rows(fix_bike_id) == [("photos", 2), ("review", 1)], _missing_rows(fix_bike_id)
+    assert not _cache_row_exists("/v1/bike/missing", _norm_key(tc27_body)), \
+        "/v1/bike/missing must not write a generic-cache row"
+    print("OK — counter 1 → 2, separate row per missing_type, no cache row")
+finally:
+    _drop_missing_fixture()
+
+
+# ── [TC-28] Unknown bike → 200, bike_id null, counter 0, nothing written ──
+print("\n── [TC-28] POST /v1/bike/missing — unknown bike is a 200 no-op ──")
+tc28_body = {"company": "TODO-026 Fixture", "model": "Does Not Exist", "missing_type": "photos"}
+resp_tc28 = httpx.post(MISSING_URL, json=tc28_body, timeout=10)
+data_tc28 = _show("[TC-28]", tc28_body, resp_tc28)
+assert resp_tc28.status_code == 200, f"Expected 200, got {resp_tc28.status_code}"
+assert data_tc28 == {"bike_id": None, "missing_type": "photos", "counter": 0}, data_tc28
+_conn = _db()
+try:
+    assert _conn.execute(
+        "SELECT COUNT(*) FROM bike WHERE brand = ? AND model = ?", (tc28_body["company"], tc28_body["model"])
+    ).fetchone()[0] == 0, "An unknown bike must not be created"
+finally:
+    _conn.close()
+print("OK — unknown bike: bike_id null, counter 0, no bike row created")
+
+
+# ── [TC-29] Invalid missing_type → 422 ──
+print("\n── [TC-29] POST /v1/bike/missing — empty / blank / >64-char missing_type → 422 ──")
+for _bad in ["", "   ", "x" * 65]:
+    _r = httpx.post(MISSING_URL, json={**tc28_body, "missing_type": _bad}, timeout=10)
+    assert _r.status_code == 422, f"missing_type={_bad[:10]!r}…: expected 422, got {_r.status_code}"
+print("OK — invalid missing_type rejected with 422")

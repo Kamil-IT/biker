@@ -119,6 +119,17 @@ url: str
 display_order: int
 ```
 
+**`bike_missing_request`** — "Request data" clicks per bike + missing section (TODO-026)
+```
+id (PK)
+bike_id (FK → bike.id)
+missing_type: str (≤ 64 chars, free string from the frontend)
+counter: int (1 on first request, +1 on each later one)
+UNIQUE(bike_id, missing_type)
+```
+New table only — `init_db()`'s `create_all()` creates it on an existing `cache.db` at startup, so
+`scripts/migrate_bike_details.py` needs no change.
+
 ## Migration Steps
 
 ### 1. Install SQLAlchemy
@@ -170,6 +181,8 @@ save_search(query, old_data)
   (backed by `bike_detail` + `bike_detail_component` + `bike_detail_photos`).
 - DB-first search (TODO-024) — `app.repository.find_bikes_by_details`: matches
   `/v1/bike/search` checkable fields against `bike` + `bike_detail_component`.
+- Missing-data requests (TODO-026) — `app.repository.record_missing_request`:
+  looks up an existing `bike` and upserts `bike_missing_request` (`POST /v1/bike/missing`).
 
 (The `bike_results` + `accessories` tables and `repository`'s own copies of the
 search helpers were removed once the store versions became authoritative.)

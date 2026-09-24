@@ -17,6 +17,7 @@ from .schemas import (  # noqa: E402
     EquipmentReviewRequest, EquipmentReviewResponse,
     ParseRequest, ParseResponse,
     CachedSearchResponse,
+    MissingDataRequest, MissingDataResponse,
 )
 from .bike_finder import find_bikes  # noqa: E402
 from .bike_details_finder import find_bike_details  # noqa: E402
@@ -38,7 +39,9 @@ from .store import (  # noqa: E402
 )
 # Details are served from the ORM tables (bike_detail + bike_detail_component),
 # not the retired bike_details_cache blob — see TODO-019.
-from .repository import save_bike_details, get_bike_details, find_bikes_by_details  # noqa: E402
+from .repository import (  # noqa: E402
+    save_bike_details, get_bike_details, find_bikes_by_details, record_missing_request,
+)
 from .models import init_db  # noqa: E402
 
 logging.basicConfig(
@@ -173,6 +176,17 @@ async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
     set_cached("/v1/bike/details", _fields, response)
     save_bike_details(req.company, req.model, response)
     return response
+
+
+@app.post("/v1/bike/missing", response_model=MissingDataResponse)
+async def bike_missing(req: MissingDataRequest) -> MissingDataResponse:
+    """Count a user's "Request data" click for an empty details section (TODO-026).
+
+    No AI call and no generic cache — just an upsert on bike_missing_request.
+    An unknown bike is still a 200, with bike_id null and counter 0.
+    """
+    logger.info("missing request | company=%r model=%r type=%r", req.company, req.model, req.missing_type)
+    return record_missing_request(req.company, req.model, req.missing_type)
 
 
 @app.post("/v1/bike/review", response_model=BikeReviewResponse)
