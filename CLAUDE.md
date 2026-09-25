@@ -189,6 +189,12 @@ npm run preview   # serve production build locally
 - **Dev server**: http://localhost:5173 — requires the backend to be running on port 8000 (Vite proxies `/v1/*` → `http://localhost:8000`)
 - **Node version**: v24 / npm 11
 
+## Docker (whole stack)
+
+`docker compose up --build -d` → http://localhost:8080 (db on 5433, backend on 8000, nginx frontend on 8080). Load data once with
+`copy_sqlite_to_postgres.py --target postgresql+psycopg://biker:biker@localhost:5433/biker`. Backend image = the Cloud Run image
+(`$PORT`, `PLAYWRIGHT_HEADLESS=true`, no secrets). Details in `README.md` § Run with Docker.
+
 ## Parallel Development (Worktrees)
 
 Work on multiple features simultaneously — each in its own directory, its own branch, without stashing.
@@ -238,10 +244,11 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 | Review finder | `app/bike_review_finder.py` | Single `web_search` call across curated sources (tier list and weights in `backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md`); synthesises score 0–10, explanation, source URLs, plus a per-source score array from which it computes a weighted aggregate `rating` (0–10) and `sources_used` count (pro/numeric 3×, pro/qualitative 2×, community 1×; non-zero rating requires ≥1 pro source). When the highest and lowest per-source score spread by more than `DISAGREEMENT_THRESHOLD` (3.0), `rating` anchors to the pro/numeric mean (falling back to pro/qualitative) instead of the weighted mean, and a disagreement sentence is appended to `explanation`; `sources_used` is unaffected. `ref` is returned sorted Tier 1 → Tier 2 → Tier 3. Tolerates the model narrating before the JSON via a balanced-brace scan over all text blocks, with a no-tool prefilled repair call as a last resort |
 | Offer finder | `app/bike_offer_finder.py` | Single `web_search` call to find 1 current offer on allegro.pl |
 | Used bikes finder | `app/bike_used_finder.py` | Single `web_search` call to find up to 5 used listings on olx.pl with cascade fallback; then Playwright scrapes photos via `olx_image_fetcher.py` |
-| OLX image fetcher | `app/olx_image_fetcher.py` | Playwright (headless=False) scrapes up to 4 `<img>` URLs from each OLX listing URL using `*.apollo.olxcdn.com` regex |
+| Browser config | `app/browser_config.py` | `playwright_headless()` — reads `PLAYWRIGHT_HEADLESS` (`true` in the Docker image; unset = visible browser for local debugging); used by every Playwright launch |
+| OLX image fetcher | `app/olx_image_fetcher.py` | Playwright (`PLAYWRIGHT_HEADLESS`; unset = visible browser) scrapes up to 4 `<img>` URLs from each OLX listing URL using `*.apollo.olxcdn.com` regex |
 | Ceneo finder | `app/bike_offer_ceneo_finder.py` | Single `web_search` call to find 1 current offer on ceneo.pl |
 | Decathlon finder | `app/bike_offer_decathlon_finder.py` | Single `web_search` call to find 1 current offer on decathlon.pl |
-| Photos finder | `app/bike_photos_finder.py` | Two-step: (1) Claude `web_search` to find manufacturer product page URL, (2) Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs from rendered page; runs in parallel with details and description finders |
+| Photos finder | `app/bike_photos_finder.py` | Two-step: (1) Claude `web_search` to find manufacturer product page URL, (2) Playwright (`PLAYWRIGHT_HEADLESS`; unset = visible browser) scrapes up to 8 product `<img>` URLs from rendered page; runs in parallel with details and description finders |
 | Equipment details finder | `app/equipment_details_finder.py` | Resolves the equipment category (given or inferred), runs one focused component-search call with that category's `equipment_details_{slug}.md` prompt, returns the bike-style component tree (web_search behind a `TODO` flag, mirroring the bike details finder) |
 | Equipment description finder | `app/equipment_description_finder.py` | Single `web_search` call with prompt caching for a 4–5 sentence equipment overview |
 | Equipment photos finder | `app/equipment_photos_finder.py` | Two-step manufacturer-page → Playwright scrape (mirrors `bike_photos_finder.py`) |
@@ -276,7 +283,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 - Runs three calls in parallel via `asyncio.gather`:
   1. `claude-haiku-4-5-20251001` with `web_search_20250305` **8 times** sequentially — one focused search per component category (Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories), each using a dedicated `app/prompts/bike_details_{slug}.md` system prompt
   2. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — generates a 4–5 sentence plain-text overview **in Polish** using `app/prompts/bike_description.md` with prompt caching on the system prompt
-  3. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — finds the official manufacturer product page URL, then Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs from the rendered page; uses `app/prompts/bike_photos.md`
+  3. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — finds the official manufacturer product page URL, then Playwright (`PLAYWRIGHT_HEADLESS`; unset = visible browser) scrapes up to 8 product `<img>` URLs from the rendered page; uses `app/prompts/bike_photos.md`
 - Returns: `{ company, model, description: str, components: [...], photos: [url, ...] }` — `description` and every component element `description` are Polish; `category`, `subcategory`, spec `key`, element `name` and spec `value` stay English (the frontend translates labels via `specLabels.ts`; DB-first search matches values — its brake patterns also carry Polish stems)
 - Each category response is parsed with the shared `app/json_extract.py` `extract_json()`, which lifts the JSON out of any surrounding narration/code fence — the model routinely prefaces the object with prose
 - If a response genuinely contains no JSON: logs the error and skips that category — never returns 502
@@ -303,7 +310,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 **Endpoint** `POST /v1/bike/used`
 - Request: `{"company": "Trek", "model": "Marlin 5"}`
 - Calls `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — searches olx.pl using `app/prompts/bike_offer_olx.md` as the system prompt; cascade fallback (exact → model-family → brand/category)
-- Then Playwright (headless=False) fetches up to 4 photo URLs per listing from OLX CDN
+- Then Playwright (`PLAYWRIGHT_HEADLESS`; unset = visible browser) fetches up to 4 photo URLs per listing from OLX CDN
 - Returns `{ offers: [{ brand, model, price, is_new, url, photos, source, city }], info: str }` (up to 5 listings, always used)
 - On JSON parse error: returns `{ offers: [], info: raw_text }` — never returns 502
 
@@ -331,7 +338,7 @@ Each worktree shares `node_modules` and `.venv` via Junction symlinks (created a
 - Runs three calls in parallel via `asyncio.gather` (mirrors `/v1/bike/details`):
   1. `claude-haiku-4-5-20251001` **once** — one focused component search using the resolved category's `app/prompts/equipment_details_{slug}.md` prompt (web_search behind a `TODO` flag, like the bike details finder)
   2. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — 4–5 sentence overview using `app/prompts/equipment_description.md` with prompt caching
-  3. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — finds the manufacturer product page URL, then Playwright (`headless=False`) scrapes up to 8 product `<img>` URLs; uses `app/prompts/equipment_photos.md`
+  3. `claude-haiku-4-5-20251001` with `web_search_20250305` **once** — finds the manufacturer product page URL, then Playwright (`PLAYWRIGHT_HEADLESS`; unset = visible browser) scrapes up to 8 product `<img>` URLs; uses `app/prompts/equipment_photos.md`
 - Returns `{ company, model, category, description, components: [...], photos: [...] }` — **never** any offer/buy links
 - Cache: keyed on `{company, model, category}`; always cached (empty is valid)
 - On JSON parse error for the category: logs and skips — never returns 502

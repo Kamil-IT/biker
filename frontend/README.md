@@ -15,6 +15,11 @@ The SPA has three views, switched by `App.tsx` (no router):
 
 `BikeDetailsView` and `EquipmentDetailsView` share their building blocks (`PhotoGallery`, `DescriptionCard`, `ReviewSection`, `LoadingSkeleton`, `CategorySection`) from `components/BikeDetailsShared.tsx`. The overview renders its sources as **citation footnote chips** (`components/CitationChips.tsx`) — a "Sources" row of terracotta pill links showing each source's domain, opening in a new tab with the full URL as a hover tooltip. The expert review renders its sources as a **full-width source table** below the explanation instead: one row per URL, `stars | domain | "Read review →"`, each row an external link with the full URL as a hover tooltip. The stars are decorative, mapped 0–10 → 1–5 from the aggregate `rating` where one exists.
 
+### Docker
+
+`frontend/Dockerfile` builds the bundle (node 24) and serves it from nginx on port 8080; `nginx.conf` adds the SPA fallback
+and proxies `/v1/*` to `backend:8000` — the same routing Vite does in dev. Used by the root `docker-compose.yml` only.
+
 ### API integration (all proxied via Vite `/v1` → backend on :8000)
 
 | Call | Request | Response |

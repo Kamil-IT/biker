@@ -1,0 +1,42 @@
+# Full stack on one machine: Postgres + backend + frontend (TODO-029).
+#   docker compose up --build   →   http://localhost:8080
+# Needs backend/.env with ANTHROPIC_API_KEY. DATABASE_URL is set here and overrides the .env value.
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: biker
+      POSTGRES_PASSWORD: biker
+      POSTGRES_DB: biker
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"   # 5433 so it does not clash with the dev container biker-pg on 5432
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U biker -d biker"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://biker:biker@db:5432/biker
+      PLAYWRIGHT_HEADLESS: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    shm_size: "1gb"   # Chromium crashes with Docker's default 64 MB /dev/shm
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:

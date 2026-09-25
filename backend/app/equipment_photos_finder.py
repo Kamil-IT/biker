@@ -6,6 +6,8 @@ from pathlib import Path
 
 from anthropic import AsyncAnthropic
 
+from .browser_config import playwright_headless
+
 logger = logging.getLogger("biker.equipment.photos")
 
 MODEL = "claude-haiku-4-5-20251001"
@@ -63,7 +65,7 @@ def _scrape_images_sync(url: str) -> list[str]:
     t = time.perf_counter()
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
+            browser = p.chromium.launch(headless=playwright_headless())
             try:
                 context = browser.new_context(
                     user_agent=(

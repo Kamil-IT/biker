@@ -50,6 +50,23 @@ Open **http://localhost:5173** in your browser.
 
 > The frontend proxies `/v1/*` to the backend automatically — no CORS config needed.
 
+## Run with Docker (whole stack)
+
+`docker-compose.yml` runs Postgres + backend + frontend (TODO-029). Needs `backend/.env` with `ANTHROPIC_API_KEY`.
+
+```bash
+docker compose up --build -d          # → http://localhost:8080
+# once, to load the existing cache.db into the compose Postgres (published on 5433):
+cd backend && .venv\Scripts\python scripts/copy_sqlite_to_postgres.py --target postgresql+psycopg://biker:biker@localhost:5433/biker
+docker compose down                   # data stays in the pgdata volume; `down -v` wipes it
+```
+
+| Service | Image | Port | Notes |
+|---|---|---|---|
+| `db` | `postgres:17` | 5433 → 5432 | named volume `pgdata`; 5433 so it does not clash with `biker-pg` |
+| `backend` | `backend/Dockerfile` | 8000 | Python 3.14 + patchright Chromium, `PLAYWRIGHT_HEADLESS=true`, listens on `$PORT` (Cloud Run), non-root, no secrets baked in |
+| `frontend` | `frontend/Dockerfile` | 8080 | `npm run build` served by nginx, `/v1/*` proxied to `backend:8000` (600 s timeout) |
+
 ## Other useful commands
 
 | Command | What it does |
