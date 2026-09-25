@@ -70,9 +70,15 @@ uvicorn app.main:app --reload --port 8000
 > The same script also repairs placeholder (all-lowercase) brand casing left by earlier builds, on
 > **every** run — no `--force` needed — as long as `search_cache` still exists.
 
+`SEARCHER_URL` / `SEARCHER_API_KEY` (TODO-031) point `POST /v1/bike/used/search` at the on-demand OLX searcher
+(top-level `searcher/`, `http://localhost:8100` locally; the key is sent as `X-Searcher-Key` and must equal the
+searcher's own `SEARCHER_API_KEY`). `SEARCHER_TIMEOUT` (seconds, default 600) bounds one search. Leave `SEARCHER_URL`
+unset to run without the searcher — that route then answers 503, while `POST /v1/bike/used` keeps serving whatever is
+stored in `bike_offer`.
+
 ```bash
 # In a second terminal:
-python scripts/test_search.py   # smoke-test POST /v1/bike/search
+python scripts/test_search.py   # smoke-test POST /v1/bike/search (+ the DB-only routes: search-cache, missing, used — TC-20 – TC-32)
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
 python scripts/test_review.py   # smoke-test POST /v1/bike/review
 python scripts/test_offer.py    # smoke-test POST /v1/bike/offer
@@ -89,8 +95,8 @@ pytest scripts/test_details_parity.py -v   # blob vs ORM read parity
 `backend/Dockerfile` is the image docker compose and Cloud Run both use: Python 3.14 slim, `patchright install --with-deps chromium`,
 non-root user, `uvicorn` on `$PORT` (default 8000). `.env`/`cache.db` are excluded by `.dockerignore` — `ANTHROPIC_API_KEY`
 and `DATABASE_URL` come from the environment. `PLAYWRIGHT_HEADLESS=true` (read by `app/browser_config.py`) runs the photo /
-OLX / Allegro scrapers without a display; unset keeps the visible browser for local debugging. See the root `README.md`
-§ Run with Docker.
+Allegro scrapers without a display; unset keeps the visible browser for local debugging (the OLX scraper moved to
+`searcher/` in TODO-031). See the root `README.md` § Run with Docker.
 
 ## Unit tests
 
@@ -441,7 +447,7 @@ Content-Type: application/json
 
 ### `POST /v1/bike/used`
 
-Return current used-bike listings from OLX.pl for a specific bike model.
+Return the used-bike listings from OLX.pl **stored in the database** for a specific bike model — a pure read of `bike_offer` + `bike_offer_photos` (TODO-031). **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/bike/used/search`](#post-v1bikeusedsearch)); nothing stored → 200 with an empty list.
 
 ```http
 POST http://localhost:8000/v1/bike/used
@@ -459,22 +465,54 @@ Content-Type: application/json
   "offers": [
     {
       "brand": "Trek",
-      "model": "Marlin 5 2022",
+      "model": "Marlin 5",
       "price": "2 500 zł",
       "is_new": false,
       "url": "https://www.olx.pl/d/oferta/...",
       "photos": ["https://ireland.apollo.olxcdn.com/...jpg"],
       "source": "olx.pl",
-      "city": "Warsaw"
+      "city": "Warszawa"
     }
   ],
-  "info": "Exact match found on OLX.pl"
+  "info": ""
 }
 ```
 
+- The bike is looked up in `bike` by `company` + `model` normalised in Python (`strip().lower()`, never SQL `lower()`) and is never created; `brand`/`model` on every offer are the bike row's stored casing.
+- Offers are the bike's `bike_offer` rows with `source = 'olx.pl'` in `id` order (insertion order); `photos` are its `bike_offer_photos` rows ordered by `display_order`; `is_new` is always `false`; `city` comes from the row. `info` is always `""`.
+- Unknown bike, no rows, or a DB error → `{ "offers": [], "info": "" }` (logged, never a 5xx) so the details view keeps rendering.
+
+**Flow:** none — no outbound HTTP calls; one DB read of `bike` + `bike_offer` + `bike_offer_photos`.
+
+**Tests:** `scripts/test_search.py` TC-30 (seeded fixture bike with 2 `olx.pl` offers → exactly those 2 in `id` order, photos in `display_order`, < 5 s — the read is ~0.5 s, the rest is Windows refusing `localhost` as `::1` first, no generic-cache row) and TC-31 (unknown bike → 200 `{ "offers": [], "info": "" }` in < 5 s).
+
+---
+
+### `POST /v1/bike/used/search`
+
+Run the OLX search **on demand** through the separate searcher service (`searcher/`, TODO-031) and wait for it. The searcher runs the Claude Code CLI (subscription OAuth token — no Anthropic API key) with `bike_offer_olx.md`, scrapes up to 4 photos per listing with Playwright, and **replaces** the bike's `olx.pl` rows in `bike_offer` + `bike_offer_photos` — so the next `POST /v1/bike/used` returns them. Triggered by the frontend's **Poproś o dane** button in the "Używane" card (alongside `POST /v1/bike/missing`); also usable from `curl`. Never cached.
+
+```http
+POST http://localhost:8000/v1/bike/used/search
+Content-Type: application/json
+
+{
+  "company": "Trek",
+  "model": "Marlin 5"
+}
+```
+
+**Response:** the searcher's `{ offers, info }` — the same shape as `POST /v1/bike/used` (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `offers: []`.
+
+- **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/missing`). The searcher itself creates missing bikes for direct `curl` calls, but the backend never lets anonymous web traffic mint `bike` rows — they would surface in the DB-first search — nor spend a subscription run on them.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"OLX searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"OLX searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"OLX searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 1, never more than the searcher's `SEARCHER_MAX_CONCURRENT`) distinct searches and the searcher answers 503 itself when its slot is taken — nothing queues, because a queued search would outlive the timeout and end in a second paid run. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **502** when the searcher answers with a non-200/503 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
+- `company` / `model` must be non-empty and at most 255 characters (422).
+
 **Flow:**
-1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches olx.pl with cascade fallback (exact → model-family → brand/category); returns up to 5 used listings with price, city, direct link
-2. Playwright (`PLAYWRIGHT_HEADLESS`; unset = visible browser) navigates each listing URL and extracts up to 4 `<img>` URLs matching the OLX CDN pattern (`*.apollo.olxcdn.com`)
+1. `POST {SEARCHER_URL}/v1/search/olx` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), which runs the `claude` CLI once (`WebSearch`/`WebFetch`, `claude-haiku-4-5-20251001`) and Playwright once per listing, then writes the rows. The backend itself makes no Anthropic call.
+
+**Tests:** `scripts/test_search.py` TC-32 — an unknown bike is a **404** whatever the searcher's state; then it probes `GET {SEARCHER_URL}/health` (3 s) and, when reachable, runs a live Trek Marlin 5 search (200, every `url` on `https://www.olx.pl/`, `source = "olx.pl"`, no generic-cache row) and checks that `POST /v1/bike/used` then returns the same offers (DB round-trip); otherwise expects **503** and prints SKIP for the live part.
 
 ---
 

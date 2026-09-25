@@ -129,45 +129,8 @@ dc_404 = httpx.get(DETAILS_CACHE_URL, params={"company": "FakeBrand", "model": "
 assert dc_404.status_code == 404, f"Expected 404, got {dc_404.status_code}"
 print("OK -- unknown bike correctly returned 404")
 
-# Smoke test: /v1/bike/used happy path
-USED_URL = "http://localhost:8000/v1/bike/used"
-used_payload = {"company": "Trek", "model": "Marlin 5"}
-
-print(f"\nPOST {USED_URL}")
-print(f"Body: {json.dumps(used_payload)}\n")
-
-used_resp = httpx.post(USED_URL, json=used_payload, timeout=120)
-
-assert used_resp.status_code == 200, f"Expected 200, got {used_resp.status_code}"
-used_data = used_resp.json()
-assert isinstance(used_data.get("offers"), list), \
-    f"Expected offers to be a list, got: {type(used_data.get('offers'))}"
-assert isinstance(used_data.get("info"), str), \
-    f"Expected info to be a string, got: {type(used_data.get('info'))}"
-print(f"OK -- /v1/bike/used returned {len(used_data['offers'])} offers")
-
-# Cache hit for /v1/bike/used
-print("\n-- Cache hit test: POST /v1/bike/used (second call should be fast) --")
-t0 = _time.perf_counter()
-used_resp2 = httpx.post(USED_URL, json=used_payload, timeout=10)
-elapsed_used2 = _time.perf_counter() - t0
-
-assert used_resp2.status_code == 200, f"Expected 200 on cached used call, got {used_resp2.status_code}"
-assert used_resp2.json() == used_data, "Cached used response differs from original"
-assert elapsed_used2 < 10.0, f"Used cache hit took {elapsed_used2:.2f}s -- expected < 10s (cache miss?)"
-print(f"OK -- used cache hit returned in {elapsed_used2:.3f}s")
-
-# Fallback: unknown brand/model must return HTTP 200 with empty or graceful offers list
-print("\n-- Fallback test: POST /v1/bike/used with unknown brand/model --")
-fallback_payload = {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}
-fallback_resp = httpx.post(USED_URL, json=fallback_payload, timeout=120)
-
-assert fallback_resp.status_code == 200, \
-    f"Expected 200 for unknown bike, got {fallback_resp.status_code}"
-fallback_data = fallback_resp.json()
-assert isinstance(fallback_data.get("offers"), list), \
-    "Expected offers to be a list even for unknown bike"
-print(f"OK -- fallback returned HTTP 200 with {len(fallback_data['offers'])} offers")
+# /v1/bike/used is a pure DB read since TODO-031 — its tests (TC-30 – TC-32)
+# live at the end of this file with seeded bike_offer fixtures.
 
 # -- Structured search: brand + model only, no free text --
 print("\n-- Structured search: brand + model only --")
@@ -545,7 +508,7 @@ class _DB:
         names = iter(range(len(params)))
         bound = re.sub(r"\?", lambda _: f":p{next(names)}", sql)
         values = {f"p{i}": v for i, v in enumerate(params)}
-        insert_with_id = re.match(r"\s*INSERT INTO (bike|search_cache)\b", sql, re.I)
+        insert_with_id = re.match(r"\s*INSERT INTO (bike|search_cache|bike_offer)\b", sql, re.I)
         if insert_with_id:
             bound += " RETURNING id"
         result = self._conn.execute(text(bound), values)
@@ -928,3 +891,194 @@ for _bad in ["", "   ", "x" * 65]:
     _r = httpx.post(MISSING_URL, json={**tc28_body, "missing_type": _bad}, timeout=10)
     assert _r.status_code == 422, f"missing_type={_bad[:10]!r}…: expected 422, got {_r.status_code}"
 print("OK — invalid missing_type rejected with 422")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TODO_031 — POST /v1/bike/used is a pure DB read of bike_offer; the OLX search
+# runs on demand in the separate searcher service via POST /v1/bike/used/search.
+#
+# TC-30/31 seed their own namespaced bike + bike_offer rows and delete them on
+# the way out. TC-32 talks to the searcher only when it is actually reachable;
+# otherwise the route must answer 503 and the live part is skipped.
+# ══════════════════════════════════════════════════════════════════════════
+import os  # noqa: E402
+
+USED_URL = "http://localhost:8000/v1/bike/used"
+USED_SEARCH_URL = "http://localhost:8000/v1/bike/used/search"
+FIX_USED_BRAND, FIX_USED_MODEL = "TODO-031 Fixture", "Used Bike"
+FIX_USED_OFFERS = [
+    {"url": "https://www.olx.pl/d/oferta/todo-031-fixture-one-ID1.html", "price": "1 234 zł",
+     "city": "Wrocław",
+     "photos": ["https://ireland.apollo.olxcdn.com/todo-031/one-a.jpg",
+                "https://ireland.apollo.olxcdn.com/todo-031/one-b.jpg"]},
+    {"url": "https://www.olx.pl/d/oferta/todo-031-fixture-two-ID2.html", "price": "999 zł",
+     "city": None, "photos": []},
+]
+
+
+def _drop_used_fixture() -> None:
+    conn = _db()
+    try:
+        conn.execute(
+            "DELETE FROM bike_offer_photos WHERE bike_offer_id IN (SELECT id FROM bike_offer WHERE bike_id IN "
+            "(SELECT id FROM bike WHERE brand = ? AND model = ?))", (FIX_USED_BRAND, FIX_USED_MODEL),
+        )
+        conn.execute(
+            "DELETE FROM bike_offer WHERE bike_id IN (SELECT id FROM bike WHERE brand = ? AND model = ?)",
+            (FIX_USED_BRAND, FIX_USED_MODEL),
+        )
+        conn.execute("DELETE FROM bike WHERE brand = ? AND model = ?", (FIX_USED_BRAND, FIX_USED_MODEL))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _seed_used_fixture() -> int:
+    """bike + 2 olx.pl bike_offer rows; the first one's photos are inserted in
+    reverse so only display_order can put them back in order."""
+    _drop_used_fixture()
+    conn = _db()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        bike_id = conn.execute(
+            "INSERT INTO bike (brand, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (FIX_USED_BRAND, FIX_USED_MODEL, now, now),
+        ).lastrowid
+        for offer in FIX_USED_OFFERS:
+            offer_id = conn.execute(
+                "INSERT INTO bike_offer (bike_id, price, is_new, url, source, city, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (bike_id, offer["price"], False, offer["url"], "olx.pl", offer["city"], now),
+            ).lastrowid
+            for order, url in reversed(list(enumerate(offer["photos"]))):
+                conn.execute(
+                    "INSERT INTO bike_offer_photos (bike_offer_id, url, display_order) VALUES (?, ?, ?)",
+                    (offer_id, url, order),
+                )
+        conn.commit()
+        return bike_id
+    finally:
+        conn.close()
+
+
+# ── [TC-30] Stored offers served from bike_offer: id order, photos by display_order, no AI, no cache ──
+print("\n── [TC-30] POST /v1/bike/used — stored OLX offers served from bike_offer (no AI, no cache) ──")
+fix_used_bike_id = _seed_used_fixture()
+try:
+    tc30_body = {"company": " todo-031 fixture ", "model": "USED BIKE"}  # lookup is normalised
+    tc30_key = _norm_key(tc30_body)
+    _cache_row_delete("/v1/bike/used", tc30_key)  # so the "no row written" check below is meaningful
+    t0 = _time.perf_counter()
+    resp_tc30 = httpx.post(USED_URL, json=tc30_body, timeout=10)
+    elapsed_tc30 = _time.perf_counter() - t0
+    data_tc30 = _show("[TC-30]", tc30_body, resp_tc30)
+    assert resp_tc30.status_code == 200, f"Expected 200, got {resp_tc30.status_code}"
+    assert data_tc30["info"] == "", f"info must be empty for a DB read, got {data_tc30['info']!r}"
+    assert len(data_tc30["offers"]) == 2, f"Expected exactly the 2 seeded offers, got {len(data_tc30['offers'])}"
+    assert [o["url"] for o in data_tc30["offers"]] == [o["url"] for o in FIX_USED_OFFERS], \
+        "Offers must come back in bike_offer.id order"
+    for got, want in zip(data_tc30["offers"], FIX_USED_OFFERS):
+        assert got["price"] == want["price"], f"price mismatch: {got['price']!r} != {want['price']!r}"
+        assert got["city"] == want["city"], f"city mismatch: {got['city']!r} != {want['city']!r}"
+        assert got["photos"] == want["photos"], f"photos must follow display_order: {got['photos']}"
+        assert got["is_new"] is False, "used offers are never new"
+        assert got["source"] == "olx.pl", f"source must be olx.pl, got {got['source']!r}"
+        assert got["brand"] == FIX_USED_BRAND and got["model"] == FIX_USED_MODEL, \
+            f"brand/model must be the bike row's casing, got {got['brand']!r} {got['model']!r}"
+    # 5 s, not 3 s, on purpose: the read itself is ~0.5 s via 127.0.0.1, but
+    # httpx tries `localhost` as ::1 first and Windows takes 2.6–3.0 s to refuse
+    # it (measured 2026-09-25: 3 × 2.6–2.7 s end-to-end, server-side 0.007 s).
+    # An AI/searcher call would take 30 s+, so 5 s still tells the paths apart.
+    assert elapsed_tc30 < 5.0, f"DB read took {elapsed_tc30:.2f}s — expected < 5s (AI ran?)"
+    assert not _cache_row_exists("/v1/bike/used", tc30_key), \
+        "/v1/bike/used must not write a generic-cache row"
+    print(f"OK — 2 stored offers in {elapsed_tc30:.3f}s, id order + display_order kept, no cache row")
+finally:
+    _drop_used_fixture()
+
+
+# ── [TC-31] Unknown bike → fast 200 with no offers ──
+print("\n── [TC-31] POST /v1/bike/used — unknown bike is a fast 200 with no offers ──")
+tc31_body = {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}
+t0 = _time.perf_counter()
+resp_tc31 = httpx.post(USED_URL, json=tc31_body, timeout=10)
+elapsed_tc31 = _time.perf_counter() - t0
+data_tc31 = _show("[TC-31]", tc31_body, resp_tc31)
+assert resp_tc31.status_code == 200, f"Expected 200, got {resp_tc31.status_code}"
+assert data_tc31 == {"offers": [], "info": ""}, data_tc31
+assert elapsed_tc31 < 5.0, f"Unknown bike took {elapsed_tc31:.2f}s — expected < 5s (no AI, no searcher; see TC-30)"
+print(f"OK — unknown bike: empty offers in {elapsed_tc31:.3f}s")
+
+
+# ── [TC-32] /v1/bike/used/search — proxied to the searcher (live when reachable, else 503) ──
+print("\n── [TC-32] POST /v1/bike/used/search — searcher proxy ──")
+SEARCHER_URL = os.getenv("SEARCHER_URL", "").strip().rstrip("/")
+
+
+def _searcher_reachable() -> bool:
+    if not SEARCHER_URL:
+        return False
+    try:
+        r = httpx.get(f"{SEARCHER_URL}/health", timeout=3)
+        return r.status_code == 200 and r.json().get("status") == "ok"
+    except Exception:  # noqa: BLE001 — not running / refused / timed out
+        return False
+
+
+def _offers_by_url(offers: list[dict]) -> dict:
+    return {o["url"]: (o["price"], o["city"], o["photos"]) for o in offers}
+
+
+# An unknown bike is refused before any searcher call — whatever the searcher's state.
+tc32_unknown = {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}
+resp_tc32_404 = httpx.post(USED_SEARCH_URL, json=tc32_unknown, timeout=30)
+_show("[TC-32] unknown bike", tc32_unknown, resp_tc32_404)
+assert resp_tc32_404.status_code == 404, f"Expected 404 for an unknown bike, got {resp_tc32_404.status_code}"
+print("OK — unknown bike → 404, no searcher call")
+
+tc32_body = {"company": "Trek", "model": "Marlin 5"}
+tc32_key = _norm_key(tc32_body)
+if _searcher_reachable():
+    print(f"searcher reachable at {SEARCHER_URL} — running the live OLX search (up to 600 s)")
+    t0 = _time.perf_counter()
+    resp_tc32 = httpx.post(USED_SEARCH_URL, json=tc32_body, timeout=600)
+    elapsed_tc32 = _time.perf_counter() - t0
+    data_tc32 = _show("[TC-32]", tc32_body, resp_tc32)
+    assert resp_tc32.status_code == 200, f"Expected 200, got {resp_tc32.status_code}: {resp_tc32.text}"
+    assert isinstance(data_tc32["offers"], list), "offers must be a list"
+    assert isinstance(data_tc32["info"], str), "info must be a string"
+    assert set(data_tc32) == {"offers", "info"}, f"bike_id/saved must be dropped, got keys {sorted(data_tc32)}"
+    for o in data_tc32["offers"]:
+        assert o["url"].startswith("https://www.olx.pl/"), f"offer url must be on olx.pl: {o['url']!r}"
+        assert o["source"] == "olx.pl", f"source must be olx.pl, got {o['source']!r}"
+        assert o["is_new"] is False, "used offers are never new"
+        assert isinstance(o["photos"], list), "photos must be a list"
+    assert not _cache_row_exists("/v1/bike/used/search", tc32_key), \
+        "/v1/bike/used/search must never write a generic-cache row"
+    # DB round-trip: what the searcher returned is what /v1/bike/used now reads back.
+    resp_rt = httpx.post(USED_URL, json=tc32_body, timeout=10)
+    data_rt = _show("[TC-32] round-trip", tc32_body, resp_rt)
+    assert resp_rt.status_code == 200, f"Expected 200 from /v1/bike/used, got {resp_rt.status_code}"
+    assert _offers_by_url(data_rt["offers"]) == _offers_by_url(data_tc32["offers"]), \
+        "/v1/bike/used must return the offers the searcher just stored (url, price, city, photos)"
+    print(f"OK — live search returned {len(data_tc32['offers'])} offer(s) in {elapsed_tc32:.1f}s "
+          f"and /v1/bike/used reads the same rows back")
+else:
+    print(f"SKIP — searcher not reachable (SEARCHER_URL={SEARCHER_URL or 'unset'}); expecting 503 from the proxy")
+    resp_tc32 = httpx.post(USED_SEARCH_URL, json=tc32_body, timeout=30)
+    data_tc32 = _show("[TC-32]", tc32_body, resp_tc32)
+    assert resp_tc32.status_code == 503, f"Expected 503 without a searcher, got {resp_tc32.status_code}"
+    assert "searcher" in str(data_tc32.get("detail", "")).lower(), f"detail should name the searcher: {data_tc32}"
+    print("OK — 503 when the searcher is not configured / unreachable")
+
+
+# ── TODO_031 fixture hygiene ──
+_conn = _db()
+try:
+    _left = _conn.execute(
+        "SELECT COUNT(*) FROM bike WHERE brand = ? AND model = ?", (FIX_USED_BRAND, FIX_USED_MODEL)
+    ).fetchone()[0]
+finally:
+    _conn.close()
+assert _left == 0, f"{_left} TODO-031 fixture bike row(s) left behind"
+print("OK — no TODO-031 fixture rows left behind")

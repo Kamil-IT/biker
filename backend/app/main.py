@@ -25,7 +25,6 @@ from .bike_description_finder import find_bike_description  # noqa: E402
 from .bike_photos_finder import find_bike_photos  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_finder import find_bike_offers  # noqa: E402
-from .bike_used_finder import find_used_bikes  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
 from .bike_offer_decathlon_finder import find_decathlon_offers  # noqa: E402
 from .equipment_details_finder import find_equipment_details  # noqa: E402
@@ -41,6 +40,12 @@ from .store import (  # noqa: E402
 # not the retired bike_details_cache blob — see TODO-019.
 from .repository import (  # noqa: E402
     save_bike_details, get_bike_details, find_bikes_by_details, record_missing_request,
+)
+from .offers_repository import get_used_offers, bike_exists  # noqa: E402
+# OLX used-bike search lives in the separate searcher service (TODO-031); the
+# backend reads bike_offer and proxies the on-demand search to it.
+from .searcher_client import (  # noqa: E402
+    search_olx, SearcherNotConfigured, SearcherUnavailable, SearcherBusy, SearcherFailed,
 )
 from .models import init_db  # noqa: E402
 
@@ -233,18 +238,53 @@ async def bike_offer(req: BikeOfferRequest) -> BikeOfferResponse:
 
 @app.post("/v1/bike/used", response_model=UsedBikeResponse)
 async def bike_used(req: UsedBikeRequest) -> UsedBikeResponse:
-    logger.info("used bikes request | company=%r model=%r", req.company, req.model)
-    _fields = {"company": req.company, "model": req.model}
-    cached = get_cached("/v1/bike/used", _fields, UsedBikeResponse)
-    if cached is not None:
-        return cached
+    """Stored OLX listings for the bike — a pure DB read (TODO-031).
 
+    No AI call and no generic cache: bike_offer / bike_offer_photos are filled
+    only by the searcher service, triggered through /v1/bike/used/search.
+    Nothing stored → 200 with an empty list.
+    """
+    logger.info("used bikes request | company=%r model=%r", req.company, req.model)
     t_start = time.perf_counter()
-    result = await find_used_bikes(req.company, req.model)
+    result = get_used_offers(req.company, req.model)
     elapsed = time.perf_counter() - t_start
-    logger.info("used bikes complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
-    if result.offers:
-        set_cached("/v1/bike/used", _fields, result)
+    logger.info("used bikes served from DB | offers=%d elapsed=%.3fs", len(result.offers), elapsed)
+    return result
+
+
+@app.post("/v1/bike/used/search", response_model=UsedBikeResponse)
+async def bike_used_search(req: UsedBikeRequest) -> UsedBikeResponse:
+    """Run the OLX search on demand through the searcher service (TODO-031).
+
+    Proxies to {SEARCHER_URL}/v1/search/olx and waits for it (SEARCHER_TIMEOUT,
+    default 600 s). The searcher writes the listings to the DB, so a later
+    /v1/bike/used returns them. 503 when the searcher is not configured or
+    unreachable, 502 (its detail passed through) when it fails. Never cached.
+    """
+    logger.info("used bikes search request | company=%r model=%r", req.company, req.model)
+    # Only bikes the app already knows (save_search writes them before the details
+    # view can open): the searcher would otherwise mint a `bike` row for any string
+    # an anonymous caller sends, and every run costs a subscription search.
+    if not bike_exists(req.company, req.model):
+        logger.warning("used bikes search refused: unknown bike | company=%r model=%r", req.company, req.model)
+        raise HTTPException(status_code=404, detail="Bike not found")
+    t_start = time.perf_counter()
+    try:
+        result = await search_olx(req.company, req.model)
+    except SearcherNotConfigured as exc:
+        logger.error("used bikes search: searcher not configured | %s", exc)
+        raise HTTPException(status_code=503, detail="OLX searcher is not configured") from exc
+    except SearcherUnavailable as exc:
+        logger.error("used bikes search: searcher unavailable | %s", exc)
+        raise HTTPException(status_code=503, detail="OLX searcher unavailable") from exc
+    except SearcherBusy as exc:
+        logger.warning("used bikes search: searcher busy | %s", exc)
+        raise HTTPException(status_code=503, detail="OLX searcher is busy — try again in a moment") from exc
+    except SearcherFailed as exc:
+        logger.error("used bikes search failed | status=%d detail=%r", exc.status, exc.detail)
+        raise HTTPException(status_code=502, detail=exc.detail) from exc
+    elapsed = time.perf_counter() - t_start
+    logger.info("used bikes search complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     return result
 
 

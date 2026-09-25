@@ -48,6 +48,8 @@ interface BikeDetailsViewProps {
   onBack: () => void
   onRetry: () => void
   onEquipmentSelect: (name: string) => void
+  // On-demand OLX search behind the Used card's "Request data" button (TODO-031).
+  onSearchUsed: () => Promise<void>
 }
 
 export default function BikeDetailsView({
@@ -70,6 +72,7 @@ export default function BikeDetailsView({
   onBack,
   onRetry,
   onEquipmentSelect,
+  onSearchUsed,
 }: BikeDetailsViewProps) {
   const { brand, model, accessories, match_score } = bike
   const scoreDisplay = match_score === 10 ? '10' : match_score.toFixed(1)
@@ -172,6 +175,7 @@ export default function BikeDetailsView({
           decathlonState={decathlonState}
           usedBikes={usedBikes}
           usedBikeState={usedBikeState}
+          onSearchUsed={onSearchUsed}
         />
 
         {/* Review */}
@@ -259,6 +263,7 @@ interface MergedOffersSectionProps {
   decathlonState: OfferState
   usedBikes: UsedBikeResponse | null
   usedBikeState: OfferState
+  onSearchUsed: () => Promise<void>
 }
 
 function MergedOffersSection({
@@ -272,6 +277,7 @@ function MergedOffersSection({
   decathlonState,
   usedBikes,
   usedBikeState,
+  onSearchUsed,
 }: MergedOffersSectionProps) {
   // Pool every offer from all four sources, then split purely on the is_new flag.
   const allOffers: BikeOffer[] = [
@@ -287,7 +293,9 @@ function MergedOffersSection({
 
   // A late source can still add rows to either category, so both cards show their
   // skeleton for the first 5 s while any source is loading; after that each card
-  // shows whatever rows it has, or its own "Request data" button (TODO-027).
+  // shows whatever rows it has, or its own "Request data" button (TODO-027). In the
+  // Used card that button also runs the on-demand OLX search (TODO-031); the rows
+  // it returns land in `usedBikes` and take the button's place.
   const anyLoading =
     offerState === 'loading' ||
     ceneoState === 'loading' ||
@@ -310,6 +318,8 @@ function MergedOffersSection({
           company={company}
           model={model}
           missingType={MissingType.OffersUsed}
+          onRequested={onSearchUsed}
+          pendingLabel="Szukam na OLX…"
         />
         <OfferCategoryCard
           title="Nowe"
@@ -331,9 +341,21 @@ interface OfferCategoryCardProps {
   company: string
   model: string
   missingType: MissingType
+  // Used card only (TODO-031): the search the button runs after recording the click.
+  onRequested?: () => Promise<void>
+  pendingLabel?: string
 }
 
-function OfferCategoryCard({ title, list, loading, company, model, missingType }: OfferCategoryCardProps) {
+function OfferCategoryCard({
+  title,
+  list,
+  loading,
+  company,
+  model,
+  missingType,
+  onRequested,
+  pendingLabel,
+}: OfferCategoryCardProps) {
   // Skeleton during the loading grace period; afterwards the rows, or a
   // "Request data" button while the category is still empty.
   return (
@@ -363,7 +385,14 @@ function OfferCategoryCard({ title, list, loading, company, model, missingType }
           ))}
         </div>
       ) : (
-        <RequestDataButton variant="inline" company={company} model={model} missingType={missingType} />
+        <RequestDataButton
+          variant="inline"
+          company={company}
+          model={model}
+          missingType={missingType}
+          onRequested={onRequested}
+          pendingLabel={pendingLabel}
+        />
       )}
     </div>
   )

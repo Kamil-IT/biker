@@ -1,6 +1,7 @@
-# Full stack on one machine: Postgres + backend + frontend (TODO-029).
+# Full stack on one machine: Postgres + backend + frontend + searcher (TODO-029/031).
 #   docker compose up --build   →   http://localhost:8080
-# Needs backend/.env with ANTHROPIC_API_KEY. DATABASE_URL is set here and overrides the .env value.
+# Needs backend/.env with ANTHROPIC_API_KEY and searcher/.env with SEARCHER_API_KEY (+ CLAUDE_CODE_OAUTH_TOKEN
+# for the claude CLI inside the container). DATABASE_URL is set here and overrides the .env values.
 services:
   db:
     image: postgres:17
@@ -24,12 +25,30 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://biker:biker@db:5432/biker
       PLAYWRIGHT_HEADLESS: "true"
+      SEARCHER_URL: http://searcher:8100   # SEARCHER_API_KEY comes from backend/.env
     depends_on:
       db:
         condition: service_healthy
     ports:
       - "8000:8000"
     shm_size: "1gb"   # Chromium crashes with Docker's default 64 MB /dev/shm
+
+  # On-demand OLX searcher (TODO-031): claude CLI + Playwright, writes bike_offer into the same db.
+  searcher:
+    build: ./searcher
+    env_file: searcher/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://biker:biker@db:5432/biker
+      PLAYWRIGHT_HEADLESS: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started   # the backend's init_db() creates the shared tables
+    restart: on-failure              # …and the searcher refuses to start until they exist
+    ports:
+      - "8100:8100"
+    shm_size: "1gb"   # same Chromium /dev/shm issue as the backend
 
   frontend:
     build: ./frontend

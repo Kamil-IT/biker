@@ -1,0 +1,154 @@
+# Biker Searcher
+
+The on-demand OLX used-bike search (TODO-031). A small FastAPI service that runs **only when asked**: it searches
+olx.pl for a bike, scrapes each listing's photos with Playwright and writes the result into the shared bike database
+(`bike_offer` + `bike_offer_photos`, `source = 'olx.pl'`). The backend never searches OLX itself — `POST /v1/bike/used`
+is a pure DB read, and `POST /v1/bike/used/search` proxies here when the user clicks **Poproś o dane** in the
+"Używane" card.
+
+## Why the Claude Code CLI
+
+The search is the most token-hungry call in the project (web search + fetch per bike), so it is billed to the Claude
+**subscription** instead of the API key: every model call goes through `claude -p` — the Claude Code CLI — with
+`ANTHROPIC_API_KEY` stripped from the child environment. Locally that is your logged-in `claude`; on a server it is
+`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`. `--output-format json --json-schema` makes the CLI return an
+already-validated `structured_output`, so there is no prose parsing.
+
+```
+claude -p "Find current used bike offers on OLX for: Trek Marlin 5" \
+  --system-prompt "<app/prompts/bike_offer_olx.md>" --output-format json --json-schema '<schema>' \
+  --tools WebSearch,WebFetch --allowedTools WebSearch,WebFetch --permission-prompts none \
+  --strict-mcp-config --setting-sources "" --no-session-persistence \
+  --exclude-dynamic-system-prompt-sections --model claude-haiku-4-5-20251001
+```
+
+Probe on 2026-09-25: Trek Marlin 5 → 5 real listings in 34 s.
+
+## Layout
+
+| File | Responsibility |
+|------|----------------|
+| `app/main.py` | FastAPI app: `GET /health` (open) · `POST /v1/search/olx` (`X-Searcher-Key`); one `asyncio.Semaphore(SEARCHER_MAX_CONCURRENT)` around the whole search |
+| `app/config.py` | Env vars (see below), loads `searcher/.env`; `DATABASE_URL` is required — no SQLite fallback |
+| `app/claude_cli.py` | `run_structured()` — the `claude -p` subprocess wrapper (argv list, `stdin=DEVNULL`, timeout, sanitised errors); `cli_version()` |
+| `app/olx_finder.py` | The moved `find_used_bikes`: prompt → CLI → ≤ 5 offers (`is_new=false`, `source=olx.pl`) → photo scrape |
+| `app/olx_image_fetcher.py` · `app/browser_config.py` | Playwright scrape of ≤ 4 `apollo.olxcdn.com` images per listing (copied from the backend) |
+| `app/models.py` · `app/repository.py` | SQLAlchemy over `bike` / `bike_offer` / `bike_offer_photos` (DDL identical to `backend/app/models.py`; `init_db()` only checks they exist); `save_used_offers()` upserts on `url` within this bike, never re-parents a listing, deletes the bike's stale OLX rows only when something new was stored |
+| `app/prompts/bike_offer_olx.md` | The OLX system prompt (byte-for-byte the backend's former prompt) |
+| `scripts/test_searcher.py` | Smoke test: health, 401 ×2, 422, one real search, DB rows |
+
+## Run locally
+
+Prerequisites: the `claude` CLI installed and logged in (`claude --version` works), the local PostgreSQL
+(`docker start biker-pg`), and Chromium for patchright (`patchright install chromium` — the backend venv already has it).
+
+```bash
+cd searcher
+copy .env.example .env      # SEARCHER_API_KEY + DATABASE_URL are already filled in for local use
+
+# either reuse the backend venv (it has every dependency) …
+..\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8100
+# … or make its own
+python -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt && patchright install chromium
+uvicorn app.main:app --port 8100
+```
+
+Startup logs the database URL (password hidden) and the CLI version; a missing `DATABASE_URL` aborts startup with a
+`RuntimeError`. Then, in a second terminal:
+
+```bash
+..\backend\.venv\Scripts\python.exe scripts/test_searcher.py
+```
+
+The backend picks it up through `SEARCHER_URL=http://localhost:8100` + `SEARCHER_API_KEY` in `backend/.env`.
+
+## Environment variables
+
+| Variable | Required | Meaning |
+|----------|----------|---------|
+| `SEARCHER_API_KEY` | yes | Shared secret; every `POST /v1/search/olx` must send it as `X-Searcher-Key`. Unset = 401 for everyone (fail closed) |
+| `DATABASE_URL` | yes | SQLAlchemy URL of the bike DB, e.g. `postgresql+psycopg://biker:biker@localhost:5432/biker`. SQLite URLs work too (tests), but there is no default |
+| `CLAUDE_CODE_OAUTH_TOKEN` | server | Subscription token for the CLI (`claude setup-token`). Locally the CLI login is used instead |
+| `CLAUDE_BIN` | no | Path to the CLI when it is not on `PATH` |
+| `SEARCHER_CLAUDE_MODEL` | no | Default `claude-haiku-4-5-20251001` |
+| `SEARCHER_CLI_TIMEOUT` | no | Seconds before a CLI run is killed (default 300) |
+| `SEARCHER_MAX_CONCURRENT` | no | CLI runs + browsers allowed at once; further requests get 503 "searcher busy" (default 1) |
+| `SEARCHER_CREATE_TABLES` | no | `true` = `create_all()` on startup for a database the backend never touches (scratch tests). Default: refuse to start until `bike` / `bike_offer` / `bike_offer_photos` exist — the backend creates them, and two `create_all()`s on one fresh database race |
+| `PLAYWRIGHT_HEADLESS` | no | `true` on servers / in Docker; unset = visible browser for debugging |
+
+Neither the API key, the OAuth token nor the DB password is ever logged.
+
+## Endpoints
+
+### `POST /v1/search/olx`
+
+```http
+POST http://localhost:8100/v1/search/olx
+Content-Type: application/json
+X-Searcher-Key: dev-local-searcher-key
+
+{"company": "Trek", "model": "Marlin 5"}
+```
+
+```bash
+curl -s -X POST http://localhost:8100/v1/search/olx \
+  -H "Content-Type: application/json" -H "X-Searcher-Key: dev-local-searcher-key" \
+  -d '{"company":"Trek","model":"Marlin 5"}'
+```
+
+- `200` → `{"offers": [BikeOffer…], "info": str, "bike_id": int | null, "saved": int}` — `BikeOffer =
+  {brand, model, price, is_new: false, url, photos: [str], source: "olx.pl", city: str | null}`. `offers` are exactly
+  the rows now stored under this bike (`saved == len(offers)`). A search that finds nothing is a 200 with
+  `offers: []` — and the bike's previously stored rows are **kept** (an OLX hiccup must not wipe paid-for data)
+- `401` missing/wrong `X-Searcher-Key` (also when `SEARCHER_API_KEY` is unset)
+- `422` empty `company`/`model` (after strip) or longer than 255 characters
+- `502` `{"detail": "claude CLI failed: exit 1" | "claude CLI timed out after 300 s" | "claude CLI returned no
+  structured output" | …}` — a short summary; the CLI's stderr tail is only in the server log
+- `503` `{"detail": "searcher busy"}` straight away when `SEARCHER_MAX_CONCURRENT` searches are already running —
+  nothing queues, because a queued search would outlive the backend's timeout and end in a second paid run
+- `500` `{"detail": "database write failed"}`
+
+**Flow**: (1) `claude -p` once (`--tools WebSearch,WebFetch`, the CLI does the olx.pl searches/fetches) →
+(2) Playwright opens each listing URL once (≤ 5, 20 s each; a non-200 page — OLX answers 503 when it rate-limits an
+IP — is logged and skipped) and takes ≤ 4 `apollo.olxcdn.com` image URLs →
+(3) one DB transaction: bike looked up by normalised brand/model (created with the caller's casing if missing),
+`INSERT … ON CONFLICT (url) DO UPDATE` per offer **limited to this bike's rows** (`url` is globally unique and the
+prompt's cascade returns model-family listings, so a URL already stored under another bike stays there and is not
+reported as saved), its photos rewritten in `display_order`, then — only when at least one offer was stored — every
+`olx.pl` row of that bike not in the new set deleted.
+
+### `GET /health`
+
+No auth. `{"status": "ok", "claude_cli": "2.1.282 (Claude Code)" | null, "database": true | false}`.
+
+## Docker
+
+`searcher/Dockerfile`: `python:3.14-slim` + Node 24 (nodesource) + `@anthropic-ai/claude-code` **pinned** to the
+version `app/claude_cli.py` was proven on (`ARG CLAUDE_CODE_VERSION=2.1.283`, `DISABLE_AUTOUPDATER=1` — bump it
+deliberately and re-run `scripts/test_searcher.py`) + patchright Chromium, non-root user `searcher` with a writable
+`HOME` (the CLI keeps state in `~/.claude`), `PLAYWRIGHT_HEADLESS=true`, `PORT=8100`. No secrets in the image — `CLAUDE_CODE_OAUTH_TOKEN`, `SEARCHER_API_KEY` and `DATABASE_URL` come from the
+environment.
+
+The root `docker-compose.yml` runs it as the `searcher` service on `8100` against the compose `db` (started after the
+backend with `restart: on-failure`, since the backend's `init_db()` creates the shared tables), and gives the backend
+`SEARCHER_URL=http://searcher:8100`. Put `CLAUDE_CODE_OAUTH_TOKEN` in `searcher/.env` for the container —
+there is no interactive login inside it.
+
+```bash
+docker compose up --build -d searcher
+curl -s http://localhost:8100/health
+```
+
+## Cloud Run (intended deployment — not done yet)
+
+Deploy only after the user has said which database the GCP searcher should write to. The plan:
+
+- One Cloud Run service `biker-searcher` built from `searcher/Dockerfile` (Cloud Build → Artifact Registry).
+- **Scale to zero** (`--min-instances 0`), `--max-instances 1`, `--concurrency 1` (one CLI run + one Chromium per
+  instance, mirroring `SEARCHER_MAX_CONCURRENT=1`), `--timeout 900` (a search is minutes, not seconds),
+  `--memory 2Gi` (Chromium + Node), `--cpu 1`.
+- Secrets from **Secret Manager** mounted as env vars: `CLAUDE_CODE_OAUTH_TOKEN`, `SEARCHER_API_KEY`, `DATABASE_URL`
+  (the Cloud SQL connection via the Cloud SQL connector or the `/cloudsql/...` socket in the URL).
+- Ingress: internal + the backend only; the backend gets `SEARCHER_URL=https://biker-searcher-….run.app` and the
+  same `SEARCHER_API_KEY`.
+- Cold start ≈ 10 s (image ~1 GB); the first request then waits on the CLI as usual.
