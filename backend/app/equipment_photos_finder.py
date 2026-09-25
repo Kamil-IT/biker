@@ -6,7 +6,7 @@ from pathlib import Path
 
 from anthropic import AsyncAnthropic
 
-from .browser_config import playwright_headless
+from .browser_config import BROWSER_SLOTS, playwright_headless
 
 logger = logging.getLogger("biker.equipment.photos")
 
@@ -64,7 +64,7 @@ def _scrape_images_sync(url: str) -> list[str]:
 
     t = time.perf_counter()
     try:
-        with sync_playwright() as p:
+        with BROWSER_SLOTS, sync_playwright() as p:   # slot first: the node driver counts too
             browser = p.chromium.launch(headless=playwright_headless())
             try:
                 context = browser.new_context(

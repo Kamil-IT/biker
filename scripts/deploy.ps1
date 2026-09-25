@@ -60,7 +60,7 @@ if ($Only -in 'all', 'backend') {
         gcloud run deploy biker-backend --project $Project --region $Region --image $img `
             --service-account $sa `
             --add-cloudsql-instances $SqlInstance `
-            --set-env-vars "DATABASE_URL=postgresql+psycopg://biker@/biker?host=/cloudsql/$SqlInstance,PLAYWRIGHT_HEADLESS=true" `
+            --set-env-vars "DATABASE_URL=postgresql+psycopg://biker@/biker?host=/cloudsql/$SqlInstance,PLAYWRIGHT_HEADLESS=true,BROWSER_MAX_CONCURRENCY=2" `
             --set-secrets "ANTHROPIC_API_KEY=anthropic-api-key:latest,PGPASSWORD=db-password:latest" `
             --port 8000 --cpu 2 --memory 2Gi --concurrency 20 --timeout 600 `
             --min-instances 0 --max-instances 2 --cpu-boost `

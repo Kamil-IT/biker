@@ -91,7 +91,9 @@ Who may call the services is a separate, one-time IAM decision made after the fi
 every redeploy and a brand-new service starts closed.
 
 Sizing (cost cap on the Free Trial): backend 2 vCPU / 2 GiB (Chromium), frontend 1 vCPU / 256 MiB, both `min-instances 0`,
-`max-instances 2`, request timeout 600 s (`/v1/bike/details` takes minutes).
+`max-instances 2`, request timeout 600 s (`/v1/bike/details` takes minutes). The backend caps simultaneous browser launches
+at `BROWSER_MAX_CONCURRENCY=2` (each ≈ 0.5–0.9 GiB), so a burst of uncached details/offer requests queues for a browser
+instead of exceeding the 2 GiB and getting the instance killed; raise it only together with `--memory`.
 
 ## Other useful commands
 
