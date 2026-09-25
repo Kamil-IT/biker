@@ -3,6 +3,7 @@ import logging
 import re
 import time
 
+from .browser_config import playwright_headless
 from .schemas import BikeOffer
 
 logger = logging.getLogger("biker.olx_images")
@@ -25,7 +26,7 @@ def _fetch_images_sync(urls: list[str]) -> dict[str, list[str]]:
     t = time.perf_counter()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=playwright_headless())
         try:
             context = browser.new_context(
                 user_agent=(
