@@ -27,6 +27,17 @@ Every table — the generic response cache included — goes through the one SQL
 | unset | SQLite file `backend/cache.db` (FK enforcement + WAL switched on per connection) |
 | `postgresql+psycopg://…` | PostgreSQL (`pool_pre_ping`, session `timezone=UTC`) |
 
+**GCP Cloud SQL (`biker-pg`, the database the app now uses).** Run the Cloud SQL Auth Proxy on the host
+(`cloud-sql-proxy --gcloud-auth --port 6543 biker-engine-prod:europe-central2:biker-pg`) and set in `backend/.env`:
+
+```
+DATABASE_URL=postgresql+psycopg://biker@127.0.0.1:6543/biker
+PGPASSFILE=C:/…/backend/gcp-prod-pgpass.conf
+```
+
+The URL carries no password: libpq reads it from `backend/gcp-prod-pgpass.conf` (gitignored, one line
+`127.0.0.1:6543:biker:biker:<password>`). Never commit it or put the password in `DATABASE_URL`.
+
 The schema is created at startup by `init_db()` (`create_all()`) on either database. Upserts
 (`set_cached`, `record_missing_request`) use `models.dialect_insert()`, which picks the SQLite or PostgreSQL
 `INSERT … ON CONFLICT` construct for the active engine.
@@ -88,9 +99,15 @@ pytest scripts/test_details_parity.py -v   # blob vs ORM read parity
 
 `backend/Dockerfile` is the image docker compose and Cloud Run both use: Python 3.14 slim, `patchright install --with-deps chromium`,
 non-root user, `uvicorn` on `$PORT` (default 8000). `.env`/`cache.db` are excluded by `.dockerignore` — `ANTHROPIC_API_KEY`
-and `DATABASE_URL` come from the environment. `PLAYWRIGHT_HEADLESS=true` (read by `app/browser_config.py`) runs the photo /
+and `DATABASE_URL` come from the environment; under compose the Cloud SQL password arrives as the mounted pgpass file (`PGPASSFILE`). `PLAYWRIGHT_HEADLESS=true` (read by `app/browser_config.py`) runs the photo /
 OLX / Allegro scrapers without a display; unset keeps the visible browser for local debugging. See the root `README.md`
 § Run with Docker.
+
+On Cloud Run (`scripts/deploy.ps1`, service `biker-backend`) the same image gets
+`DATABASE_URL=postgresql+psycopg://biker@/biker?host=/cloudsql/biker-engine-prod:europe-central2:biker-pg` — the unix socket
+mounted by `--add-cloudsql-instances`, still no password — plus `PGPASSWORD` and `ANTHROPIC_API_KEY` as Secret Manager
+references (`db-password`, `anthropic-api-key`). libpq picks `PGPASSWORD` up exactly like the pgpass file, so nothing in
+`app/` changes between compose and Cloud Run. See the root `README.md` § Deploy to GCP.
 
 ## Unit tests
 

@@ -191,9 +191,21 @@ npm run preview   # serve production build locally
 
 ## Docker (whole stack)
 
-`docker compose up --build -d` → http://localhost:8080 (db on 5433, backend on 8000, nginx frontend on 8080). Load data once with
-`copy_sqlite_to_postgres.py --target postgresql+psycopg://biker:biker@localhost:5433/biker`. Backend image = the Cloud Run image
-(`$PORT`, `PLAYWRIGHT_HEADLESS=true`, no secrets). Details in `README.md` § Run with Docker.
+`docker compose up --build -d` → http://localhost:8080 (backend on 8000, nginx frontend on 8080). The database is **GCP Cloud SQL**
+`biker-pg`, reached through the `cloudsql-proxy` sidecar (gcloud ADC); the password comes only from the gitignored
+`backend/gcp-prod-pgpass.conf` (libpq `PGPASSFILE`) — never put it in a URL, `.env.example` or git. The old local Postgres is
+the `db` service behind profile `local-db` (5433). Local uvicorn: host proxy on 6543 + `DATABASE_URL`/`PGPASSFILE` in `.env`. Backend image = the Cloud Run image
+(`$PORT`, `PLAYWRIGHT_HEADLESS=true`, no secrets). Frontend image: nginx renders `frontend/nginx.conf.template` at start (`PORT`, `BACKEND_URL`
+via envsubst; default `http://backend:8000`). Details in `README.md` § Run with Docker.
+
+## Deploy to GCP (TODO-030)
+
+`scripts/deploy.ps1` (PowerShell, by hand) builds + pushes both images to Artifact Registry `europe-central2-docker.pkg.dev/biker-engine-prod/biker`
+and deploys two Cloud Run services in `europe-central2`: `biker-backend` (Cloud SQL `biker-pg` over the `/cloudsql/…` unix socket,
+`DATABASE_URL` without password, `PGPASSWORD` + `ANTHROPIC_API_KEY` as Secret Manager references `db-password` / `anthropic-api-key`,
+service account `biker-run`, 2 vCPU / 2 GiB, timeout 600 s, max 2 instances) and `biker-frontend` (nginx, `BACKEND_URL` = the backend's
+`run.app` URL). The script never touches IAM — public access is a one-time manual binding. Step 2 (not yet done): per-IP rate limit
+with 429, budget alerts, `docs/DEPLOYMENT.md`. Details in `README.md` § Deploy to GCP.
 
 ## Parallel Development (Worktrees)
 

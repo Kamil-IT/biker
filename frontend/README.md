@@ -17,8 +17,12 @@ The SPA has three views, switched by `App.tsx` (no router):
 
 ### Docker
 
-`frontend/Dockerfile` builds the bundle (node 24) and serves it from nginx on port 8080; `nginx.conf` adds the SPA fallback
-and proxies `/v1/*` to `backend:8000` — the same routing Vite does in dev. Used by the root `docker-compose.yml` only.
+`frontend/Dockerfile` builds the bundle (node 24) and serves it from nginx. `nginx.conf.template` is rendered by the image's
+envsubst entrypoint at start (only `PORT` and `BACKEND_URL` are substituted, `NGINX_ENVSUBST_FILTER`): SPA fallback plus
+`/v1/*` proxied to `BACKEND_URL` — the same routing Vite does in dev. The Dockerfile defaults (`PORT=8080`,
+`BACKEND_URL=http://backend:8000`) serve the root `docker-compose.yml`; on Cloud Run `scripts/deploy.ps1` sets `BACKEND_URL`
+to the backend service's https URL. The proxy sends the backend's own hostname as `Host` (Cloud Run routes by it) with SNI
+on, and keeps the 600 s read timeout for `/v1/bike/details`.
 
 ### API integration (all proxied via Vite `/v1` → backend on :8000)
 

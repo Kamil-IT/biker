@@ -52,20 +52,46 @@ Open **http://localhost:5173** in your browser.
 
 ## Run with Docker (whole stack)
 
-`docker-compose.yml` runs Postgres + backend + frontend (TODO-029). Needs `backend/.env` with `ANTHROPIC_API_KEY`.
+`docker-compose.yml` runs backend + frontend against **Cloud SQL on GCP** (`biker-pg`) through a `cloud-sql-proxy`
+sidecar. Needs, all outside git: `backend/.env` with `ANTHROPIC_API_KEY`, `backend/gcp-prod-pgpass.conf` (libpq pgpass line
+with the Cloud SQL password, gitignored) and gcloud Application Default Credentials (`gcloud auth application-default login`,
+once; another file can be given with `GCLOUD_ADC_FILE`).
 
 ```bash
 docker compose up --build -d          # → http://localhost:8080
-# once, to load the existing cache.db into the compose Postgres (published on 5433):
-cd backend && .venv\Scripts\python scripts/copy_sqlite_to_postgres.py --target postgresql+psycopg://biker:biker@localhost:5433/biker
-docker compose down                   # data stays in the pgdata volume; `down -v` wipes it
+docker compose down
+docker compose --profile local-db up -d db   # the old local Postgres (5433, volume pgdata) — no longer used by the backend
 ```
 
 | Service | Image | Port | Notes |
 |---|---|---|---|
-| `db` | `postgres:17` | 5433 → 5432 | named volume `pgdata`; 5433 so it does not clash with `biker-pg` |
-| `backend` | `backend/Dockerfile` | 8000 | Python 3.14 + patchright Chromium, `PLAYWRIGHT_HEADLESS=true`, listens on `$PORT` (Cloud Run), non-root, no secrets baked in |
-| `frontend` | `frontend/Dockerfile` | 8080 | `npm run build` served by nginx, `/v1/*` proxied to `backend:8000` (600 s timeout) |
+| `cloudsql-proxy` | `cloud-sql-proxy:2.25.4` | — | connects to `biker-engine-prod:europe-central2:biker-pg` with the ADC file, serves Postgres on `cloudsql-proxy:5432` inside the compose network |
+| `backend` | `backend/Dockerfile` | 8000 | Python 3.14 + patchright Chromium, `PLAYWRIGHT_HEADLESS=true`, listens on `$PORT` (Cloud Run), non-root, no secrets baked in; the pgpass file is mounted read-only and copied to a `600` file on start |
+| `frontend` | `frontend/Dockerfile` | 8080 | `npm run build` served by nginx; `nginx.conf.template` proxies `/v1/*` to `BACKEND_URL` (default `http://backend:8000`, 600 s timeout) |
+| `db` | `postgres:17` | 5433 → 5432 | profile `local-db` only; named volume `pgdata` |
+
+## Deploy to GCP (Cloud Run)
+
+The same two images run as two Cloud Run services in `europe-central2` (project `biker-engine-prod`): `biker-backend`
+(Cloud SQL `biker-pg` over the `/cloudsql/…` unix socket) and `biker-frontend` (nginx with `BACKEND_URL` set to the
+backend's `run.app` URL, so the browser only ever talks to the frontend origin — no CORS). Secrets never leave Secret
+Manager: `anthropic-api-key` → `ANTHROPIC_API_KEY`, `db-password` → `PGPASSWORD` (libpq reads it; `DATABASE_URL` carries
+no password). This is TODO-030 step 1; the per-IP rate limit, budget alerts and `docs/DEPLOYMENT.md` follow in step 2.
+
+```powershell
+.\scripts\deploy.ps1                 # docker build + push (Artifact Registry repo biker) + gcloud run deploy, both services
+.\scripts\deploy.ps1 -Only backend   # or -Only frontend; -Tag v1 overrides the git-sha image tag
+```
+
+One-time setup the script assumes (done by hand, 2026-09-25): APIs `run`, `artifactregistry`, `secretmanager`, `sqladmin`;
+Artifact Registry repo `biker` (Docker, `europe-central2`); service account `biker-run` with `roles/cloudsql.client` and
+`roles/secretmanager.secretAccessor` on the two secrets; `gcloud auth configure-docker europe-central2-docker.pkg.dev`.
+Who may call the services is a separate, one-time IAM decision made after the first deploy (`roles/run.invoker` for
+`allUsers` on both services — the app is public by design, TODO-030); the script never touches IAM, so that binding survives
+every redeploy and a brand-new service starts closed.
+
+Sizing (cost cap on the Free Trial): backend 2 vCPU / 2 GiB (Chromium), frontend 1 vCPU / 256 MiB, both `min-instances 0`,
+`max-instances 2`, request timeout 600 s (`/v1/bike/details` takes minutes).
 
 ## Other useful commands
 
