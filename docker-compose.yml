@@ -1,8 +1,56 @@
-# Full stack on one machine: Postgres + backend + frontend (TODO-029).
+# Full stack on one machine: backend + frontend, database = Cloud SQL on GCP (TODO-029).
 #   docker compose up --build   →   http://localhost:8080
-# Needs backend/.env with ANTHROPIC_API_KEY. DATABASE_URL is set here and overrides the .env value.
+# Needs (all gitignored / outside the repo):
+#   backend/.env                    ANTHROPIC_API_KEY
+#   backend/gcp-prod-pgpass.conf    libpq pgpass line with the Cloud SQL password for user biker
+#   gcloud ADC                      `gcloud auth application-default login` (used by the proxy)
+# DATABASE_URL / PGPASSFILE are set here and override the .env values.
+# The old local Postgres is kept behind a profile: `docker compose --profile local-db up db`.
 services:
+  cloudsql-proxy:
+    image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.25.4
+    command:
+      - --address=0.0.0.0
+      - --port=5432
+      - --credentials-file=/config/adc.json
+      - --quota-project=biker-engine-prod
+      - biker-engine-prod:europe-central2:biker-pg
+    volumes:
+      - ${GCLOUD_ADC_FILE:-${APPDATA}/gcloud/application_default_credentials.json}:/config/adc.json:ro
+
+  backend:
+    build: ./backend
+    env_file: backend/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://biker@cloudsql-proxy:5432/biker
+      PGPASSFILE: /tmp/pgpass
+      PLAYWRIGHT_HEADLESS: "true"
+    volumes:
+      - ./backend/gcp-prod-pgpass.conf:/run/secrets/pgpass:ro
+    # libpq ignores a pgpass file readable by others (Windows bind mounts are 0777) and matches on
+    # host:port — copy it with mode 600 and wildcard host/port, since the file lists 127.0.0.1:6543.
+    command:
+      - sh
+      - -c
+      - >-
+        umask 077 && sed 's/^[^:]*:[^:]*:/*:*:/' /run/secrets/pgpass > /tmp/pgpass
+        && exec uvicorn app.main:app --host 0.0.0.0 --port $${PORT}
+    depends_on:
+      - cloudsql-proxy
+    restart: on-failure   # the proxy may still be starting when init_db() first connects
+    ports:
+      - "8000:8000"
+    shm_size: "1gb"   # Chromium crashes with Docker's default 64 MB /dev/shm
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:8080"
+
   db:
+    profiles: ["local-db"]   # no longer used by the backend; kept so the old data stays reachable
     image: postgres:17
     environment:
       POSTGRES_USER: biker
@@ -17,26 +65,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-
-  backend:
-    build: ./backend
-    env_file: backend/.env
-    environment:
-      DATABASE_URL: postgresql+psycopg://biker:biker@db:5432/biker
-      PLAYWRIGHT_HEADLESS: "true"
-    depends_on:
-      db:
-        condition: service_healthy
-    ports:
-      - "8000:8000"
-    shm_size: "1gb"   # Chromium crashes with Docker's default 64 MB /dev/shm
-
-  frontend:
-    build: ./frontend
-    depends_on:
-      - backend
-    ports:
-      - "8080:8080"
 
 volumes:
   pgdata:

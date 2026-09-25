@@ -15,3 +15,5 @@ cache.db-shm
 cache.db-wal
 cache.db.bak
 cache.db.bak2
+# GCP Cloud SQL password file (libpq pgpass format, used via PGPASSFILE) — never commit
+gcp-prod-pgpass.conf

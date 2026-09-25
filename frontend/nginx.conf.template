@@ -1,0 +1,27 @@
+# Rendered by the nginx image at start (envsubst; only the PORT and BACKEND_URL variables are substituted).
+# docker compose: PORT=8080, BACKEND_URL=http://backend:8000 (Dockerfile defaults).
+# Cloud Run:      PORT set by Cloud Run, BACKEND_URL=https://<biker-backend>.run.app (scripts/deploy.ps1).
+server {
+    listen ${PORT};
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Same routing Vite does in dev: API calls go to the backend service.
+    location /v1/ {
+        proxy_pass ${BACKEND_URL};
+        proxy_http_version 1.1;
+        # Host must be the backend's own hostname: Cloud Run routes requests by Host header.
+        proxy_set_header Host $proxy_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_ssl_server_name on;   # SNI for the https backend on Cloud Run; no-op for http
+        # /v1/bike/details runs 8 sequential web searches — minutes, not seconds.
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+    }
+
+    # SPA fallback
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
