@@ -109,6 +109,12 @@ mounted by `--add-cloudsql-instances`, still no password — plus `PGPASSWORD` a
 references (`db-password`, `anthropic-api-key`). libpq picks `PGPASSWORD` up exactly like the pgpass file, so nothing in
 `app/` changes between compose and Cloud Run. See the root `README.md` § Deploy to GCP.
 
+Browser launches are capped per process by `BROWSER_MAX_CONCURRENCY` (default 2, `app/browser_config.py` `BROWSER_SLOTS`):
+every scraper (bike/equipment photos, OLX and Allegro images) holds one slot around `sync_playwright()` + `chromium.launch()`.
+One launch costs 0.5–0.9 GiB (node driver + Chromium tree, and Cloud Run's `/tmp` is memory-backed), so two fit in the
+2 GiB instance next to the app; a third request waits for a slot instead of getting the instance OOM-killed. Raise it only
+together with `--memory` in `scripts/deploy.ps1`.
+
 ## Unit tests
 
 ```bash
@@ -116,8 +122,10 @@ cd backend
 pytest -m "not llm"
 ```
 
-`pytest.ini` scopes default collection to `scripts/test_review_aggregation.py`, so a
-bare `pytest` run covers the review-aggregation unit tests. The rest of `scripts/`
+`pytest.ini` scopes default collection to `scripts/test_review_aggregation.py` and
+`scripts/test_browser_slots.py`, so a bare `pytest` run covers the review-aggregation unit tests
+and the browser-launch cap (a fake Playwright proves no scraper exceeds `BROWSER_MAX_CONCURRENCY`
+launches and always returns its slot). The rest of `scripts/`
 stays excluded — those are standalone smoke scripts that hit a live server at import
 time and must not be auto-run. (The category-scoring eval `scripts/test_scoring.py`
 was removed with the category pipeline in TODO-024.)
