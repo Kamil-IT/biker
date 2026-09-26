@@ -1,11 +1,18 @@
-"""Biker Searcher — FastAPI entry point (TODO-031, TODO-032).
+"""Biker Searcher — FastAPI entry point (TODO-031, TODO-032, TODO-033).
 
-Three routes: POST /v1/search/olx (X-Searcher-Key required) runs the OLX
+Four routes: POST /v1/search/olx (X-Searcher-Key required) runs the OLX
 search through the Claude Code CLI, scrapes listing photos with Playwright and
 writes the result into bike_offer / bike_offer_photos; POST /v1/search/decathlon
 (same key) runs the Decathlon search through the CLI — no Playwright — and
-writes bike_offer rows with source 'decathlon.pl'; GET /health is open. Both
-searches share ONE busy slot: one CLI run per instance whatever the source.
+writes bike_offer rows with source 'decathlon.pl'; POST /v1/search/allegro
+(same key) runs the Allegro search through the CLI — no Playwright either,
+allegro.pl answers 403 to browsers — and writes rows with source 'allegro.pl';
+GET /health is open.
+The THREE searches share one semaphore of SEARCHER_MAX_CONCURRENT slots
+(default 2 — the UI fires the Decathlon and Allegro searches together); a slot
+is one CLI run plus, for OLX, one browser. The next request is refused
+with 503, never queued. On Cloud Run each instance still serves one request
+(--concurrency 1); the parallelism there comes from --max-instances 2.
 """
 import asyncio
 import logging
@@ -18,6 +25,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from sqlalchemy import text
 
 from . import config
+from .allegro_finder import ALLEGRO_SOURCE, find_allegro_offers
 from .claude_cli import cli_version
 from .decathlon_finder import DECATHLON_SOURCE, find_decathlon_offers
 from .models import dispose_engine, get_engine, init_db
@@ -34,7 +42,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("searcher.main")
 
-# One CLI process + one browser per slot; later requests wait their turn.
+# SEARCHER_MAX_CONCURRENT slots (default 2) shared by the three search routes:
+# one CLI process (+ one browser for OLX) per slot. Locally / in compose
+# that is two CLI runs (each OLX one with a browser) in this one process; on Cloud Run each
+# instance serves one request (--concurrency 1) and the second search gets its
+# own instance (--max-instances 2). A request that finds no slot free is refused
+# (503), never queued — see _run_search.
 _semaphore: asyncio.Semaphore | None = None
 _cli_version: str | None = None
 
@@ -93,22 +106,25 @@ async def health() -> HealthResponse:
 
 
 async def _run_search(label: str, source: str, finder: Finder, req: SearchRequest) -> SearchResponse:
-    """The body both search routes share: busy check, one finder run under the
-    semaphore, one DB write, the stored rows back.
+    """The body all three search routes share: busy check, one finder run under
+    the semaphore, one DB write, the stored rows back.
 
-    `label` prefixes the log lines ("olx" / "decathlon"), `source` is the
-    bike_offer.source the rows are stored under, `finder(company, model)`
+    `label` prefixes the log lines ("olx" / "decathlon" / "allegro"), `source`
+    is the bike_offer.source the rows are stored under, `finder(company, model)`
     returns (offers, info) or raises SearcherError. 502 with a short
     sanitised detail when the CLI fails (exit code, timeout, no structured
     output); a run that finds nothing is a 200 with offers: []. 500 when the
     DB write fails. 503 "searcher busy" straight away when
-    SEARCHER_MAX_CONCURRENT searches are already running — queueing behind a
-    multi-minute search would outlive the caller's timeout and end in a
-    second paid run for the same bike. The offers returned are exactly the
-    rows now stored under this bike for this source (see repository.save_offers).
+    SEARCHER_MAX_CONCURRENT searches (default 2, counted across the three
+    routes) are already running — queueing behind a multi-minute search would
+    outlive the caller's timeout and end in a second paid run for the same
+    bike. The offers returned are exactly the rows now stored under this bike
+    for this source (see repository.save_offers).
     """
     logger.info("%s search request | company=%r model=%r", label, req.company, req.model)
     assert _semaphore is not None  # set in lifespan
+    # Semaphore.locked() is true only when every slot is taken, so this busy
+    # check is correct for any SEARCHER_MAX_CONCURRENT, not just 1.
     if _semaphore.locked():
         logger.warning("%s search refused: busy | company=%r model=%r", label, req.company, req.model)
         raise HTTPException(status_code=503, detail="searcher busy")
@@ -145,9 +161,24 @@ async def search_olx(req: SearchRequest) -> SearchResponse:
 async def search_decathlon(req: SearchRequest) -> SearchResponse:
     """Search decathlon.pl for the bike (CLI only, no Playwright), store the offers, return them.
 
-    Same status mapping as /v1/search/olx and the SAME semaphore: one CLI run
-    per instance whatever the source, so a Decathlon search answers 503
-    "searcher busy" while an OLX search is running and vice versa. Rows are
+    Same status mapping as /v1/search/olx and the SAME semaphore: the
+    SEARCHER_MAX_CONCURRENT slots (default 2) are counted across the three
+    routes whatever the source, so with both slots taken (e.g. an Allegro and
+    an OLX search) a Decathlon search answers 503 "searcher busy". Rows are
     stored with source 'decathlon.pl', is_new as the shop page says, no photos.
     """
     return await _run_search("decathlon", DECATHLON_SOURCE, find_decathlon_offers, req)
+
+
+@app.post("/v1/search/allegro", response_model=SearchResponse, dependencies=[Depends(require_api_key)])
+async def search_allegro(req: SearchRequest) -> SearchResponse:
+    """Search allegro.pl for the bike (CLI only, no Playwright), store the offers, return them.
+
+    Same status mapping as /v1/search/olx and the SAME semaphore as the other
+    two routes (SEARCHER_MAX_CONCURRENT slots, default 2 — the UI fires this
+    search together with the Decathlon one). Rows are stored with source
+    'allegro.pl', is_new as the listing says (default false: an Allegro
+    listing is used unless the result says new), no photos (allegro.pl
+    answers 403 to every automated fetch, so nothing scrapes it).
+    """
+    return await _run_search("allegro", ALLEGRO_SOURCE, find_allegro_offers, req)

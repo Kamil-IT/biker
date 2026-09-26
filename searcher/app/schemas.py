@@ -5,10 +5,12 @@ from pydantic import BaseModel, Field, field_validator
 class BikeOffer(BaseModel):
     """One stored marketplace offer — the shape the backend serves back from the DB.
 
-    Two sources write it: olx.pl used listings (/v1/search/olx → /v1/bike/used/olx:
-    is_new false, city from the listing, photos scraped) and decathlon.pl new
+    Three sources write it: olx.pl used listings (/v1/search/olx → /v1/bike/used/olx:
+    is_new false, city from the listing, photos scraped), decathlon.pl new
     offers (/v1/search/decathlon → /v1/bike/decathlon: is_new from the shop
-    page, default true, no city, no photos). The defaults are the OLX ones.
+    page, default true, no city, no photos) and allegro.pl offers
+    (/v1/search/allegro → /v1/bike/allegro: is_new from the search result,
+    default false, no city, no photos — allegro.pl answers 403 to browsers). The defaults are the OLX ones.
     """
 
     brand: str

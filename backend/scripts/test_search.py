@@ -12,11 +12,12 @@ it passes on a cold or aged database. Endpoints covered here:
            /v1/bike/missing · /v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
            /v1/bike/decathlon · /v1/bike/decathlon/search (404 + foreign-brand skip always; the
            live house-brand search — the ONE paid searcher run in the suite — only when the searcher is up)
+           /v1/bike/allegro · /v1/bike/allegro/search (404 only — no paid run)
   --ai     /v1/bike/search (free text) · /v1/bike/parse · /v1/bike/ceneo
 
 The other endpoints have their own single-happy-path script: test_details.py
-(/details), test_review.py (/review), test_offer.py (/allegro), test_equipment.py
-(/equipment/details), test_equipment_review.py (/equipment/review).
+(/details), test_review.py (/review), test_equipment.py (/equipment/details),
+test_equipment_review.py (/equipment/review).
 Exit code 0 = every selected case passed (skips do not fail); 1 = a failure.
 """
 import json
@@ -54,6 +55,8 @@ PARSE_URL = f"{BASE}/v1/bike/parse"
 CENEO_URL = f"{BASE}/v1/bike/ceneo"
 DECATHLON_URL = f"{BASE}/v1/bike/decathlon"
 DECATHLON_SEARCH_URL = f"{BASE}/v1/bike/decathlon/search"
+ALLEGRO_URL = f"{BASE}/v1/bike/allegro"
+ALLEGRO_SEARCH_URL = f"{BASE}/v1/bike/allegro/search"
 SEARCHER_URL = os.getenv("SEARCHER_URL", "").strip().rstrip("/")
 
 
@@ -436,6 +439,67 @@ def case_decathlon_search():
         print("  WARNING: the live Decathlon search returned 0 offers — the store/read-back path was not exercised")
 
 
+FIX_ALLEGRO_BRAND, FIX_ALLEGRO_MODEL = "Smoke Fixture", "Allegro Bike"
+# Both keys the old web_search finder ever cached under: the route's own name and
+# the pre-rename /v1/bike/offer it kept using. Neither may be read or written now.
+ALLEGRO_CACHE_KEYS = ("/v1/bike/offer", "/v1/bike/allegro")
+
+
+def case_allegro():
+    """/v1/bike/allegro serves a stored allegro.pl offer from bike_offer (no AI, no cache, no photos; TODO-033)."""
+    _delete_bike(FIX_ALLEGRO_BRAND, FIX_ALLEGRO_MODEL)
+    url = "https://allegro.pl/oferta/smoke-fixture-allegro-ID1"
+    conn = _DB()
+    try:
+        bike_id = conn.execute(
+            "INSERT INTO bike (brand, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (FIX_ALLEGRO_BRAND, FIX_ALLEGRO_MODEL, _now(), _now()),
+        ).lastrowid
+        # Allegro rows never have photos (the searcher does not scrape allegro.pl — it answers 403); the
+        # photo read path is covered by case_used.
+        conn.execute(
+            "INSERT INTO bike_offer (bike_id, price, is_new, url, source, city, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (bike_id, "2 319 zł", True, url, "allegro.pl", None, _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    body = {"company": FIX_ALLEGRO_BRAND, "model": FIX_ALLEGRO_MODEL}
+    key = _norm_key(body)
+    try:
+        for endpoint in ALLEGRO_CACHE_KEYS:
+            _cache_row_delete(endpoint, key)
+        t0 = time.perf_counter()
+        resp = _post(ALLEGRO_URL, body, timeout=10)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        data = resp.json()
+        assert data["info"] == "" and len(data["offers"]) == 1, data
+        offer = data["offers"][0]
+        assert (offer["url"], offer["price"], offer["city"], offer["photos"]) == (url, "2 319 zł", None, []), offer
+        assert offer["is_new"] is True and offer["source"] == "allegro.pl", offer  # is_new comes from the row
+        assert offer["brand"] == FIX_ALLEGRO_BRAND and offer["model"] == FIX_ALLEGRO_MODEL, offer
+        assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
+        for endpoint in ALLEGRO_CACHE_KEYS:
+            assert not _cache_row_exists(endpoint, key), f"/v1/bike/allegro must not write a generic-cache row ({endpoint})"
+        # An unknown bike is a fast, empty 200 — never an error.
+        resp = _post(ALLEGRO_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=10)
+        assert resp.status_code == 200 and resp.json() == {"offers": [], "info": ""}, resp.text[:200]
+    finally:
+        _delete_bike(FIX_ALLEGRO_BRAND, FIX_ALLEGRO_MODEL)
+
+
+def case_allegro_search():
+    """/v1/bike/allegro/search refuses an unknown bike with 404 before touching the searcher.
+
+    Deliberately no live Allegro run here: every searcher run is a paid subscription
+    search (a minute or two of CLI time), and the one live
+    run this suite keeps is case_decathlon_search, which exercises the same proxy
+    code path (searcher_client._search)."""
+    resp = _post(ALLEGRO_SEARCH_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=30)
+    assert resp.status_code == 404, f"Expected 404 for an unknown bike, got {resp.status_code}: {resp.text[:200]}"
+
+
 # ── Cases that call the Anthropic API (--ai) ────────────────────────────────
 
 def case_search_free_text():
@@ -472,6 +536,8 @@ CASES = [
     (case_used_search, False),
     (case_decathlon, False),
     (case_decathlon_search, False),
+    (case_allegro, False),
+    (case_allegro_search, False),
     (case_search_free_text, True),
     (case_parse, True),
     (case_ceneo, True),

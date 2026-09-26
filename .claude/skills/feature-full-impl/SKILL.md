@@ -58,7 +58,6 @@ Run all existing smoke tests against the running server and confirm they all exi
 cd backend
 .venv\Scripts\python.exe scripts/test_search.py
 .venv\Scripts\python.exe scripts/test_review.py
-.venv\Scripts\python.exe scripts/test_offer.py
 .venv\Scripts\python.exe scripts/test_details.py
 ```
 

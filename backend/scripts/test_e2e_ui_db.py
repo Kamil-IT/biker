@@ -17,13 +17,15 @@ Cases
   E5  Expert review         -> endpoint_req_to_body_cache '/v1/bike/review'
                                (only cached when refs/sources exist -> so if the
                                UI shows sources, the row MUST be there)
-  E6  Offers (2 AI sources) -> endpoint_req_to_body_cache offer endpoints (allegro,
-                               ceneo); every cached offer response is non-empty
-                               (empty is never cached) and every stored price
-                               shows on the page. /v1/bike/used/olx (TODO-031) and
-                               /v1/bike/decathlon (TODO-032) are pure bike_offer
-                               reads and never write the generic cache, so they
-                               are not checked here.
+  E6  Offers               -> no generic-cache check any more: every offer endpoint
+                               the UI calls (/v1/bike/allegro since TODO-033,
+                               /v1/bike/used/olx TODO-031, /v1/bike/decathlon
+                               TODO-032) is a pure bike_offer read that never
+                               writes endpoint_req_to_body_cache, and /v1/bike/ceneo
+                               (the one offer endpoint still on the generic cache)
+                               is not called by the UI. OFFER_ENDPOINTS is empty,
+                               so E6 only reports whether an Offers section was
+                               shown; the per-source rows are gone.
 
   E2  DB-first short-circuit -> re-search with the top bike's brand+model+an
       unused year. That MISSES the generic cache (new key) yet must NOT add a new
@@ -44,7 +46,7 @@ Run
   .venv/Scripts/python scripts/test_e2e_ui_db.py --skip-cascade # keep test data
 
 NOTE: a cold run hits the live Anthropic API (search scoring + 8 detail web
-searches + review + 2 offer searches) — minutes of wall-clock and real spend. A
+searches + review) — minutes of wall-clock and real spend. A
 warm cache.db serves most of it instantly; the assertions validate UI<->DB
 consistency either way.
 """
@@ -61,8 +63,11 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent / "cache.db"
 
-# generic-cache keys (not routes): /v1/bike/allegro still caches under its old name
-OFFER_ENDPOINTS = ("/v1/bike/offer",)
+# Generic-cache keys of offer endpoints the UI calls. Empty since TODO-033: no
+# offer endpoint writes the generic cache any more (Allegro moved to bike_offer
+# rows like OLX and Decathlon; Ceneo still caches but the UI never calls it).
+# Kept as a tuple so E6 below keeps working unchanged if a source comes back.
+OFFER_ENDPOINTS: tuple[str, ...] = ()
 
 # card / details / component selectors (verified against the frontend source)
 SEL_CARD = "button[aria-label^='View specifications for']"
