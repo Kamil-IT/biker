@@ -247,8 +247,10 @@ class BikeOffer(BaseModel):
 
 
 class BikeOfferRequest(BaseModel):
-    company: str
-    model: str
+    # Bounded to the bike.brand / bike.model column width: /v1/bike/decathlon/search
+    # forwards both into the searcher's CLI prompt and its bike row (TODO-032).
+    company: str = Field(max_length=255)
+    model: str = Field(max_length=255)
 
     @field_validator("company", "model")
     @classmethod

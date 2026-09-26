@@ -26,7 +26,6 @@ from .bike_photos_finder import find_bike_photos  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_finder import find_bike_offers  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
-from .bike_offer_decathlon_finder import find_decathlon_offers  # noqa: E402
 from .equipment_details_finder import find_equipment_details  # noqa: E402
 from .equipment_description_finder import find_equipment_description  # noqa: E402
 from .equipment_photos_finder import find_equipment_photos  # noqa: E402
@@ -41,12 +40,14 @@ from .store import (  # noqa: E402
 from .repository import (  # noqa: E402
     save_bike_details, get_bike_details, find_bikes_by_details, record_missing_request,
 )
-from .offers_repository import get_used_offers, bike_exists  # noqa: E402
-# OLX used-bike search lives in the separate searcher service (TODO-031); the
-# backend reads bike_offer and proxies the on-demand search to it.
+from .offers_repository import get_used_offers, get_decathlon_offers, bike_exists  # noqa: E402
+# The OLX used-bike search (TODO-031) and the Decathlon search (TODO-032) live in
+# the separate searcher service; the backend reads bike_offer and proxies the
+# on-demand searches to it.
 from .searcher_client import (  # noqa: E402
-    search_olx, SearcherNotConfigured, SearcherUnavailable, SearcherBusy, SearcherFailed,
+    search_olx, search_decathlon, SearcherNotConfigured, SearcherUnavailable, SearcherBusy, SearcherFailed,
 )
+from .decathlon_brands import is_decathlon_brand, not_sold_info  # noqa: E402
 from .models import init_db  # noqa: E402
 
 logging.basicConfig(
@@ -307,18 +308,58 @@ async def bike_ceneo(req: BikeOfferRequest) -> BikeOfferResponse:
 
 @app.post("/v1/bike/decathlon", response_model=BikeOfferResponse)
 async def bike_decathlon(req: BikeOfferRequest) -> BikeOfferResponse:
-    logger.info("decathlon request | company=%r model=%r", req.company, req.model)
-    _fields = {"company": req.company, "model": req.model}
-    cached = get_cached("/v1/bike/decathlon", _fields, BikeOfferResponse)
-    if cached is not None:
-        return cached
+    """Stored decathlon.pl offers for the bike — a pure DB read (TODO-032).
 
+    No AI call and no generic cache: the bike's 'decathlon.pl' rows in
+    bike_offer are filled only by the searcher service, triggered through
+    /v1/bike/decathlon/search. Nothing stored → 200 with an empty list.
+    """
+    logger.info("decathlon request | company=%r model=%r", req.company, req.model)
     t_start = time.perf_counter()
-    result = await find_decathlon_offers(req.company, req.model)
+    result = get_decathlon_offers(req.company, req.model)
     elapsed = time.perf_counter() - t_start
-    logger.info("decathlon complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
-    if result.offers:
-        set_cached("/v1/bike/decathlon", _fields, result)
+    logger.info("decathlon served from DB | offers=%d elapsed=%.3fs", len(result.offers), elapsed)
+    return result
+
+
+@app.post("/v1/bike/decathlon/search", response_model=BikeOfferResponse)
+async def bike_decathlon_search(req: BikeOfferRequest) -> BikeOfferResponse:
+    """Run the Decathlon search on demand through the searcher service (TODO-032).
+
+    Proxies to {SEARCHER_URL}/v1/search/decathlon and waits for it
+    (SEARCHER_TIMEOUT, default 600 s). The searcher writes the offers to the
+    DB, so a later /v1/bike/decathlon returns them. Decathlon sells only its
+    house brands, so a foreign brand gets a 200 with an empty list and an
+    explanatory `info` straight away — no searcher run (closes
+    TODO_ISSUE_010). 503 when the searcher is not configured, unreachable or
+    busy, 502 (its detail passed through) when it fails. Never cached.
+    """
+    logger.info("decathlon search request | company=%r model=%r", req.company, req.model)
+    # Same guard as /v1/bike/used/search: only bikes the app already knows, or
+    # anonymous traffic could mint `bike` rows and spend subscription runs.
+    if not bike_exists(req.company, req.model):
+        logger.warning("decathlon search refused: unknown bike | company=%r model=%r", req.company, req.model)
+        raise HTTPException(status_code=404, detail="Bike not found")
+    if not is_decathlon_brand(req.company):
+        logger.info("decathlon search skipped: not a Decathlon house brand | company=%r model=%r", req.company, req.model)
+        return BikeOfferResponse(offers=[], info=not_sold_info(req.company))
+    t_start = time.perf_counter()
+    try:
+        result = await search_decathlon(req.company, req.model)
+    except SearcherNotConfigured as exc:
+        logger.error("decathlon search: searcher not configured | %s", exc)
+        raise HTTPException(status_code=503, detail="Decathlon searcher is not configured") from exc
+    except SearcherUnavailable as exc:
+        logger.error("decathlon search: searcher unavailable | %s", exc)
+        raise HTTPException(status_code=503, detail="Decathlon searcher unavailable") from exc
+    except SearcherBusy as exc:
+        logger.warning("decathlon search: searcher busy | %s", exc)
+        raise HTTPException(status_code=503, detail="Decathlon searcher is busy — try again in a moment") from exc
+    except SearcherFailed as exc:
+        logger.error("decathlon search failed | status=%d detail=%r", exc.status, exc.detail)
+        raise HTTPException(status_code=502, detail=exc.detail) from exc
+    elapsed = time.perf_counter() - t_start
+    logger.info("decathlon search complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     return result
 
 

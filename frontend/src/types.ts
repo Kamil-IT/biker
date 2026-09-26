@@ -71,6 +71,8 @@ export interface BikeOffer {
   city?: string
 }
 
+// Returned by POST /v1/bike/offer and /v1/bike/ceneo (AI-backed), and by
+// POST /v1/bike/decathlon (DB read) / /v1/bike/decathlon/search (on-demand Decathlon searcher, TODO-032).
 export interface BikeOfferResponse {
   offers: BikeOffer[]
   info: string

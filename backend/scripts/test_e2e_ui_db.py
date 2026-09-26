@@ -17,12 +17,13 @@ Cases
   E5  Expert review         -> endpoint_req_to_body_cache '/v1/bike/review'
                                (only cached when refs/sources exist -> so if the
                                UI shows sources, the row MUST be there)
-  E6  Offers (3 AI sources) -> endpoint_req_to_body_cache offer endpoints (allegro,
-                               ceneo, decathlon); every cached offer response is
-                               non-empty (empty is never cached) and every stored
-                               price shows on the page. /v1/bike/used is a pure
-                               bike_offer read since TODO-031 and never writes the
-                               generic cache, so it is not checked here.
+  E6  Offers (2 AI sources) -> endpoint_req_to_body_cache offer endpoints (allegro,
+                               ceneo); every cached offer response is non-empty
+                               (empty is never cached) and every stored price
+                               shows on the page. /v1/bike/used (TODO-031) and
+                               /v1/bike/decathlon (TODO-032) are pure bike_offer
+                               reads and never write the generic cache, so they
+                               are not checked here.
 
   E2  DB-first short-circuit -> re-search with the top bike's brand+model+an
       unused year. That MISSES the generic cache (new key) yet must NOT add a new
@@ -43,7 +44,7 @@ Run
   .venv/Scripts/python scripts/test_e2e_ui_db.py --skip-cascade # keep test data
 
 NOTE: a cold run hits the live Anthropic API (search scoring + 8 detail web
-searches + review + 4 offer searches) — minutes of wall-clock and real spend. A
+searches + review + 2 offer searches) — minutes of wall-clock and real spend. A
 warm cache.db serves most of it instantly; the assertions validate UI<->DB
 consistency either way.
 """
@@ -60,7 +61,7 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent / "cache.db"
 
-OFFER_ENDPOINTS = ("/v1/bike/offer", "/v1/bike/ceneo", "/v1/bike/decathlon")
+OFFER_ENDPOINTS = ("/v1/bike/offer", "/v1/bike/ceneo")
 
 # card / details / component selectors (verified against the frontend source)
 SEL_CARD = "button[aria-label^='View specifications for']"

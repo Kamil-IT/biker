@@ -46,8 +46,9 @@ export default function App() {
   // Details state
   const [view, setView]                         = useState<AppView>('search')
   const [selectedBike, setSelectedBike]         = useState<Bike | null>(null)
-  // Mirrors selectedBike for the slow used-bike calls: a result that lands after
-  // the user has opened another bike must not overwrite that bike's card (TODO-031).
+  // Mirrors selectedBike for the slow on-demand searches (OLX, Decathlon): a result
+  // that lands after the user has opened another bike must not overwrite that
+  // bike's card (TODO-031 / TODO-032).
   const selectedBikeRef                         = useRef<Bike | null>(null)
   const [detailsState, setDetailsState]         = useState<DetailsState>('loading')
   const [bikeCategories, setBikeCategories]     = useState<BikeCategory[] | null>(null)
@@ -247,12 +248,15 @@ export default function App() {
     }
   }
 
-  // On-demand OLX search (TODO-031) behind the Used card's "Poproś o dane" button.
-  // usedBikeState is deliberately not set to 'loading': the button shows its own
-  // spinner, and 'loading' would restart the 5 s skeleton grace in the offers section.
-  // Throws on failure so the button can return to clickable.
-  const searchUsedBikes = async (bike: Bike) => {
-    const res = await fetch('/v1/bike/used/search', {
+  // On-demand searches behind the offer cards' "Poproś o dane" buttons: OLX in the
+  // Used card (TODO-031), Decathlon in the New card (TODO-032). The card's state is
+  // deliberately not set to 'loading': the button shows its own spinner, and 'loading'
+  // would restart the 5 s skeleton grace in the offers section. Throws on failure
+  // (with the backend's `detail`) so the button can return to clickable. A search can
+  // take minutes; if another bike is open by then the result is dropped — it is stored
+  // in the DB anyway and shows when this bike is opened again.
+  const postOnDemandSearch = async <T,>(path: string, bike: Bike): Promise<T | null> => {
+    const res = await fetch(path, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ company: bike.brand, model: bike.model }),
@@ -261,12 +265,23 @@ export default function App() {
       const data = await res.json().catch(() => ({}))
       throw new Error((data as { detail?: string }).detail ?? `Błąd serwera ${res.status}`)
     }
-    const data: UsedBikeResponse = await res.json()
-    // A search can take minutes; if another bike is open by now, drop the result
-    // (it is stored in the DB anyway and shows when this bike is opened again).
-    if (selectedBikeRef.current !== bike) return
+    const data: T = await res.json()
+    return selectedBikeRef.current === bike ? data : null
+  }
+
+  const searchUsedBikes = async (bike: Bike) => {
+    const data = await postOnDemandSearch<UsedBikeResponse>('/v1/bike/used/search', bike)
+    if (!data) return
     setUsedBikes(data)
     setUsedBikeState('loaded')
+  }
+
+  // For a non-Decathlon brand the backend answers at once with no offers (no searcher run).
+  const searchDecathlon = async (bike: Bike) => {
+    const data = await postOnDemandSearch<BikeOfferResponse>('/v1/bike/decathlon/search', bike)
+    if (!data) return
+    setDecathlonOffers(data)
+    setDecathlonState('loaded')
   }
 
   const fetchCeneo = async (bike: Bike) => {
@@ -620,6 +635,7 @@ export default function App() {
             onRetry={() => fetchDetails(selectedBike)}
             onEquipmentSelect={handleEquipmentSelect}
             onSearchUsed={() => searchUsedBikes(selectedBike)}
+            onSearchNew={() => searchDecathlon(selectedBike)}
           />
         )}
 

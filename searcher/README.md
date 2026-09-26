@@ -1,10 +1,12 @@
 # Biker Searcher
 
-The on-demand OLX used-bike search (TODO-031). A small FastAPI service that runs **only when asked**: it searches
-olx.pl for a bike, scrapes each listing's photos with Playwright and writes the result into the shared bike database
-(`bike_offer` + `bike_offer_photos`, `source = 'olx.pl'`). The backend never searches OLX itself — `POST /v1/bike/used`
-is a pure DB read, and `POST /v1/bike/used/search` proxies here when the user clicks **Poproś o dane** in the
-"Używane" card.
+The on-demand marketplace search (TODO-031 OLX, TODO-032 Decathlon). A small FastAPI service that runs **only when
+asked**: `POST /v1/search/olx` searches olx.pl for a bike, scrapes each listing's photos with Playwright and writes the
+result into the shared bike database (`bike_offer` + `bike_offer_photos`, `source = 'olx.pl'`); `POST /v1/search/decathlon`
+searches decathlon.pl the same way (one CLI run, no Playwright) and writes `bike_offer` rows with `source = 'decathlon.pl'`.
+The backend never searches either shop itself — `POST /v1/bike/used` and `POST /v1/bike/decathlon` are pure DB reads,
+and `POST /v1/bike/used/search` / `POST /v1/bike/decathlon/search` proxy here when the user clicks **Poproś o dane** in
+the "Używane" / "Nowe" card. One busy slot is shared by both searches: one CLI run at a time per instance.
 
 ## Why the Claude Code CLI
 
@@ -28,14 +30,15 @@ Probe on 2026-09-25: Trek Marlin 5 → 5 real listings in 34 s.
 
 | File | Responsibility |
 |------|----------------|
-| `app/main.py` | FastAPI app: `GET /health` (open) · `POST /v1/search/olx` (`X-Searcher-Key`); one `asyncio.Semaphore(SEARCHER_MAX_CONCURRENT)` around the whole search |
+| `app/main.py` | FastAPI app: `GET /health` (open) · `POST /v1/search/olx` · `POST /v1/search/decathlon` (both `X-Searcher-Key`); one `asyncio.Semaphore(SEARCHER_MAX_CONCURRENT)` shared by both routes around the whole search (`_run_search` is the common body) |
 | `app/config.py` | Env vars (see below), loads `searcher/.env`; `DATABASE_URL` is required — no SQLite fallback |
 | `app/claude_cli.py` | `run_structured()` — the `claude -p` subprocess wrapper (argv list, `stdin=DEVNULL`, timeout, sanitised errors); `cli_version()` |
-| `app/olx_finder.py` | The moved `find_used_bikes`: prompt → CLI → ≤ 5 offers (`is_new=false`, `source=olx.pl`) → photo scrape |
+| `app/olx_finder.py` | The moved `find_used_bikes`: prompt → CLI → ≤ 5 offers (`is_new=false`, `source=olx.pl`) → photo scrape. Also home of `SearcherError`, the `{info, offers[]}` CLI schema and the `bike_offer` column widths the Decathlon finder reuses |
+| `app/decathlon_finder.py` | The moved `find_decathlon_offers` (TODO-032): prompt → CLI → ≤ 3 offers (`url` on `https://www.decathlon.pl/`, `is_new` from the page — default true, `source=decathlon.pl`, `photos=[]`, `city=null`). No Playwright |
 | `app/olx_image_fetcher.py` · `app/browser_config.py` | Playwright scrape of ≤ 4 `apollo.olxcdn.com` images per listing (copied from the backend) |
-| `app/models.py` · `app/repository.py` | SQLAlchemy over `bike` / `bike_offer` / `bike_offer_photos` (DDL identical to `backend/app/models.py`; `init_db()` only checks they exist); `save_used_offers()` upserts on `url` within this bike, never re-parents a listing, deletes the bike's stale OLX rows only when something new was stored |
-| `app/prompts/bike_offer_olx.md` | The OLX system prompt (byte-for-byte the backend's former prompt) |
-| `scripts/test_searcher.py` | Smoke test: health, 401 ×2, 422, one real search, DB rows |
+| `app/models.py` · `app/repository.py` | SQLAlchemy over `bike` / `bike_offer` / `bike_offer_photos` (DDL identical to `backend/app/models.py`; `init_db()` only checks they exist); `save_offers(company, model, offers, source)` upserts on `url` within this bike **and** source, takes `is_new` from each offer, never re-parents a listing, deletes the bike's stale rows of that source only when something new was stored |
+| `app/prompts/bike_offer_olx.md` · `app/prompts/bike_offer_decathlon.md` | The system prompts (byte-for-byte the backend's former prompts) |
+| `scripts/test_searcher.py` | Smoke test: health, 401 ×2, 422, one real OLX search + its DB rows (TC-1–6), 401 + one real Decathlon search + its DB rows (TC-7–9) |
 
 ## Run locally
 
@@ -66,13 +69,13 @@ The backend picks it up through `SEARCHER_URL=http://localhost:8100` + `SEARCHER
 
 | Variable | Required | Meaning |
 |----------|----------|---------|
-| `SEARCHER_API_KEY` | yes | Shared secret; every `POST /v1/search/olx` must send it as `X-Searcher-Key`. Unset = 401 for everyone (fail closed) |
+| `SEARCHER_API_KEY` | yes | Shared secret; every `POST /v1/search/*` must send it as `X-Searcher-Key`. Unset = 401 for everyone (fail closed) |
 | `DATABASE_URL` | yes | SQLAlchemy URL of the bike DB, e.g. `postgresql+psycopg://biker:biker@localhost:5432/biker`. SQLite URLs work too (tests), but there is no default |
 | `CLAUDE_CODE_OAUTH_TOKEN` | server | Subscription token for the CLI (`claude setup-token`). Locally the CLI login is used instead |
 | `CLAUDE_BIN` | no | Path to the CLI when it is not on `PATH` |
 | `SEARCHER_CLAUDE_MODEL` | no | Default `claude-haiku-4-5-20251001` |
 | `SEARCHER_CLI_TIMEOUT` | no | Seconds before a CLI run is killed (default 300) |
-| `SEARCHER_MAX_CONCURRENT` | no | CLI runs + browsers allowed at once; further requests get 503 "searcher busy" (default 1) |
+| `SEARCHER_MAX_CONCURRENT` | no | CLI runs + browsers allowed at once, counted across **both** search routes; further requests get 503 "searcher busy" (default 1) |
 | `SEARCHER_CREATE_TABLES` | no | `true` = `create_all()` on startup for a database the backend never touches (scratch tests). Default: refuse to start until `bike` / `bike_offer` / `bike_offer_photos` exist — the backend creates them, and two `create_all()`s on one fresh database race |
 | `PLAYWRIGHT_HEADLESS` | no | `true` on servers / in Docker; unset = visible browser for debugging |
 
@@ -116,6 +119,55 @@ IP — is logged and skipped) and takes ≤ 4 `apollo.olxcdn.com` image URLs →
 prompt's cascade returns model-family listings, so a URL already stored under another bike stays there and is not
 reported as saved), its photos rewritten in `display_order`, then — only when at least one offer was stored — every
 `olx.pl` row of that bike not in the new set deleted.
+
+### `POST /v1/search/decathlon`
+
+```http
+POST http://localhost:8100/v1/search/decathlon
+Content-Type: application/json
+X-Searcher-Key: dev-local-searcher-key
+
+{"company": "Rockrider", "model": "ST 100"}
+```
+
+```bash
+curl -s -X POST http://localhost:8100/v1/search/decathlon \
+  -H "Content-Type: application/json" -H "X-Searcher-Key: dev-local-searcher-key" \
+  -d '{"company":"Rockrider","model":"ST 100"}'
+```
+
+```json
+{
+  "offers": [
+    {"brand": "Rockrider", "model": "ST 100", "price": "1249 zł", "is_new": true,
+     "url": "https://www.decathlon.pl/p/rower-gorski-mtb-27-5-cala-rockrider-st-100/_/R-p-192872",
+     "photos": [], "source": "decathlon.pl", "city": null}
+  ],
+  "info": "",
+  "bike_id": 42,
+  "saved": 1
+}
+```
+
+- `200` → the same `{offers, info, bike_id, saved}` shape as `/v1/search/olx`; each `BikeOffer` has `url` on
+  `https://www.decathlon.pl/`, `source: "decathlon.pl"`, `is_new` as the shop page says (true unless it is an outlet /
+  refurbished item), `photos: []` and `city: null`. At most 3 offers. `offers` are exactly the rows now stored under
+  this bike for `source = 'decathlon.pl'` (`saved == len(offers)`); nothing found is a 200 with `offers: []` and the
+  bike's previously stored Decathlon rows are **kept**
+- `401` / `422` / `502` / `500` exactly as for `/v1/search/olx`
+- `503` `{"detail": "searcher busy"}` — the busy slot is **shared** with `/v1/search/olx`: one CLI run per instance
+  whatever the source, so a Decathlon search is refused while an OLX search is running and vice versa (nothing queues)
+
+The backend only calls this for Decathlon house brands (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus,
+Tilt, Decathlon) — for any other brand it answers its own `/v1/bike/decathlon/search` without a searcher run.
+
+**Flow**: (1) `claude -p` once with `app/prompts/bike_offer_decathlon.md` (`--tools WebSearch,WebFetch`, the CLI does the
+decathlon.pl search/fetch; message `Find current offers on decathlon.pl for: {company} {model}`) — **no Playwright**,
+Decathlon offers carry no photos →
+(2) one DB transaction: bike looked up by normalised brand/model (created with the caller's casing if missing),
+`INSERT … ON CONFLICT (url) DO UPDATE` per offer **limited to this bike's `decathlon.pl` rows** (a URL already stored
+under another bike or source stays there and is not reported as saved), then — only when at least one offer was
+stored — every `decathlon.pl` row of that bike not in the new set deleted. `bike_offer_photos` is never written.
 
 ### `GET /health`
 

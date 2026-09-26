@@ -276,42 +276,8 @@ fallback_data = resp_ceneo_fake.json()
 assert isinstance(fallback_data["offers"], list), "Fallback offers must be a list"
 print(f"OK — ceneo fallback returned {len(fallback_data['offers'])} offers (expected 0 or empty)")
 
-# ── Decathlon offer endpoint ──
-print("\n── Decathlon: find offers on decathlon.pl ──")
-DECATHLON_URL = "http://localhost:8000/v1/bike/decathlon"
-decathlon_payload = {"company": "Rockrider", "model": "ST 100"}
-resp_decathlon = httpx.post(DECATHLON_URL, json=decathlon_payload, timeout=120)
-assert resp_decathlon.status_code == 200, f"Expected 200, got {resp_decathlon.status_code}"
-decathlon_data = resp_decathlon.json()
-assert isinstance(decathlon_data["offers"], list), "Expected offers to be a list"
-assert isinstance(decathlon_data["info"], str), "Expected info to be a string"
-for offer in decathlon_data["offers"]:
-    assert offer["brand"], "offer.brand must be non-empty"
-    assert offer["model"], "offer.model must be non-empty"
-    assert offer["price"], "offer.price must be non-empty"
-    assert isinstance(offer["is_new"], bool), "offer.is_new must be bool"
-    assert offer["url"], "offer.url must be non-empty"
-    assert isinstance(offer["photos"], list), "offer.photos must be a list"
-    assert offer["source"] == "decathlon.pl", f"Expected source 'decathlon.pl', got {offer['source']!r}"
-print(f"OK — decathlon returned {len(decathlon_data['offers'])} offer(s)")
-
-# ── Decathlon: cache hit ──
-print("\n── Decathlon: cache hit ──")
-t0 = _time.perf_counter()
-resp_decathlon2 = httpx.post(DECATHLON_URL, json=decathlon_payload, timeout=10)
-elapsed_decathlon2 = _time.perf_counter() - t0
-assert resp_decathlon2.status_code == 200, f"Expected 200 on cached decathlon call, got {resp_decathlon2.status_code}"
-assert resp_decathlon2.json() == decathlon_data, "Cached decathlon response differs from original"
-assert elapsed_decathlon2 < 5.0, f"Decathlon cache hit took {elapsed_decathlon2:.2f}s — expected < 5s"
-print(f"OK — decathlon cache hit in {elapsed_decathlon2:.3f}s")
-
-# ── Decathlon: fallback for unknown bike ──
-print("\n── Decathlon: fallback for unknown bike ──")
-resp_decathlon_fake = httpx.post(DECATHLON_URL, json={"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=120)
-assert resp_decathlon_fake.status_code == 200, f"Expected 200 for fallback, got {resp_decathlon_fake.status_code}"
-fallback_data = resp_decathlon_fake.json()
-assert isinstance(fallback_data["offers"], list), "Fallback offers must be a list"
-print(f"OK — decathlon fallback returned {len(fallback_data['offers'])} offers (expected 0 or empty)")
+# /v1/bike/decathlon is a pure DB read since TODO-032 — its tests (TC-33 – TC-35)
+# live at the end of this file with a seeded bike_offer fixture.
 
 # ── [TC-10] Search response schema shape ──
 print("\n── [TC-10] Search response schema: bikes have required fields ──")
@@ -1070,6 +1036,216 @@ else:
     assert resp_tc32.status_code == 503, f"Expected 503 without a searcher, got {resp_tc32.status_code}"
     assert "searcher" in str(data_tc32.get("detail", "")).lower(), f"detail should name the searcher: {data_tc32}"
     print("OK — 503 when the searcher is not configured / unreachable")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TODO_032 — POST /v1/bike/decathlon is a pure DB read of bike_offer (source
+# 'decathlon.pl'); the Decathlon search runs on demand in the searcher service
+# via POST /v1/bike/decathlon/search — and only for Decathlon's own brands: a
+# foreign brand is answered without any searcher call (closes TODO_ISSUE_010).
+#
+# TC-33 seeds its own namespaced bike + bike_offer row and deletes them on the
+# way out. TC-35 talks to the searcher only when it is actually reachable (same
+# probe as TC-32); otherwise the route must answer 503 and the live part is
+# skipped.
+# ══════════════════════════════════════════════════════════════════════════
+DECATHLON_URL = "http://localhost:8000/v1/bike/decathlon"
+DECATHLON_SEARCH_URL = "http://localhost:8000/v1/bike/decathlon/search"
+FIX_DEC_BRAND, FIX_DEC_MODEL = "TODO-032 Fixture", "Decathlon Bike"
+FIX_DEC_OFFER = {"url": "https://www.decathlon.pl/p/todo-032-fixture/_/R-p-000032", "price": "1 249 zł"}
+
+
+def _drop_decathlon_fixture() -> None:
+    conn = _db()
+    try:
+        conn.execute(
+            "DELETE FROM bike_offer_photos WHERE bike_offer_id IN (SELECT id FROM bike_offer WHERE bike_id IN "
+            "(SELECT id FROM bike WHERE brand = ? AND model = ?))", (FIX_DEC_BRAND, FIX_DEC_MODEL),
+        )
+        conn.execute(
+            "DELETE FROM bike_offer WHERE bike_id IN (SELECT id FROM bike WHERE brand = ? AND model = ?)",
+            (FIX_DEC_BRAND, FIX_DEC_MODEL),
+        )
+        conn.execute("DELETE FROM bike WHERE brand = ? AND model = ?", (FIX_DEC_BRAND, FIX_DEC_MODEL))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _seed_decathlon_fixture() -> int:
+    """bike + ONE decathlon.pl bike_offer row: is_new TRUE, city NULL, no photos."""
+    _drop_decathlon_fixture()
+    conn = _db()
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        bike_id = conn.execute(
+            "INSERT INTO bike (brand, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (FIX_DEC_BRAND, FIX_DEC_MODEL, now, now),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO bike_offer (bike_id, price, is_new, url, source, city, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (bike_id, FIX_DEC_OFFER["price"], True, FIX_DEC_OFFER["url"], "decathlon.pl", None, now),
+        )
+        conn.commit()
+        return bike_id
+    finally:
+        conn.close()
+
+
+# ── [TC-33] Stored decathlon.pl offer served from bike_offer: is_new from the row, no AI, no cache ──
+print("\n── [TC-33] POST /v1/bike/decathlon — stored decathlon.pl offer served from bike_offer (no AI, no cache) ──")
+_seed_decathlon_fixture()
+try:
+    tc33_body = {"company": " todo-032 fixture ", "model": "DECATHLON BIKE"}  # lookup is normalised
+    tc33_key = _norm_key(tc33_body)
+    _cache_row_delete("/v1/bike/decathlon", tc33_key)  # so the "no row written" check below is meaningful
+    t0 = _time.perf_counter()
+    resp_tc33 = httpx.post(DECATHLON_URL, json=tc33_body, timeout=10)
+    elapsed_tc33 = _time.perf_counter() - t0
+    data_tc33 = _show("[TC-33]", tc33_body, resp_tc33)
+    assert resp_tc33.status_code == 200, f"Expected 200, got {resp_tc33.status_code}"
+    assert data_tc33["info"] == "", f"info must be empty for a DB read, got {data_tc33['info']!r}"
+    assert len(data_tc33["offers"]) == 1, f"Expected exactly the 1 seeded offer, got {len(data_tc33['offers'])}"
+    got = data_tc33["offers"][0]
+    assert got["url"] == FIX_DEC_OFFER["url"], f"url mismatch: {got['url']!r}"
+    assert got["price"] == FIX_DEC_OFFER["price"], f"price mismatch: {got['price']!r} != {FIX_DEC_OFFER['price']!r}"
+    assert got["is_new"] is True, "is_new must come from the row (seeded TRUE), not be hard-coded"
+    assert got["city"] is None, f"city must be null for a Decathlon offer, got {got['city']!r}"
+    assert got["photos"] == [], f"Decathlon offers carry no photos, got {got['photos']}"
+    assert got["source"] == "decathlon.pl", f"source must be decathlon.pl, got {got['source']!r}"
+    assert got["brand"] == FIX_DEC_BRAND and got["model"] == FIX_DEC_MODEL, \
+        f"brand/model must be the bike row's casing, got {got['brand']!r} {got['model']!r}"
+    # 5 s for the same reason as TC-30 (Windows refusing `localhost` as ::1 first).
+    assert elapsed_tc33 < 5.0, f"DB read took {elapsed_tc33:.2f}s — expected < 5s (AI/searcher ran?)"
+    assert not _cache_row_exists("/v1/bike/decathlon", tc33_key), \
+        "/v1/bike/decathlon must not write a generic-cache row"
+    print(f"OK — 1 stored offer in {elapsed_tc33:.3f}s, is_new from the row, no photos, no cache row")
+finally:
+    _drop_decathlon_fixture()
+
+
+# ── [TC-34] Unknown bike → fast 200 with no offers ──
+print("\n── [TC-34] POST /v1/bike/decathlon — unknown bike is a fast 200 with no offers ──")
+tc34_body = {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}
+t0 = _time.perf_counter()
+resp_tc34 = httpx.post(DECATHLON_URL, json=tc34_body, timeout=10)
+elapsed_tc34 = _time.perf_counter() - t0
+data_tc34 = _show("[TC-34]", tc34_body, resp_tc34)
+assert resp_tc34.status_code == 200, f"Expected 200, got {resp_tc34.status_code}"
+assert data_tc34 == {"offers": [], "info": ""}, data_tc34
+assert elapsed_tc34 < 5.0, f"Unknown bike took {elapsed_tc34:.2f}s — expected < 5s (no AI, no searcher; see TC-30)"
+print(f"OK — unknown bike: empty offers in {elapsed_tc34:.3f}s")
+
+
+# ── [TC-35] /v1/bike/decathlon/search — foreign brands skipped, house brands proxied to the searcher ──
+print("\n── [TC-35] POST /v1/bike/decathlon/search — searcher proxy ──")
+
+# (a) An unknown bike is refused before any searcher call — whatever the searcher's state.
+tc35_unknown = {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}
+resp_tc35_404 = httpx.post(DECATHLON_SEARCH_URL, json=tc35_unknown, timeout=30)
+_show("[TC-35] unknown bike", tc35_unknown, resp_tc35_404)
+assert resp_tc35_404.status_code == 404, f"Expected 404 for an unknown bike, got {resp_tc35_404.status_code}"
+print("OK — unknown bike → 404, no searcher call")
+
+# (b) TODO_ISSUE_010 acceptance: a known bike of a foreign brand is answered at
+# once — empty list plus a Polish `info` naming Decathlon — without any searcher
+# call, so it is fast whether or not a searcher is configured. Trek Marlin 5 is
+# in `bike` since TC-20 (dropping the search-row fixture keeps its bike row),
+# exactly as TC-32 already relies on.
+tc35_foreign = {"company": "Trek", "model": "Marlin 5"}
+tc35_foreign_key = _norm_key(tc35_foreign)
+t0 = _time.perf_counter()
+resp_tc35_foreign = httpx.post(DECATHLON_SEARCH_URL, json=tc35_foreign, timeout=30)
+elapsed_tc35_foreign = _time.perf_counter() - t0
+data_tc35_foreign = _show("[TC-35] foreign brand", tc35_foreign, resp_tc35_foreign)
+assert resp_tc35_foreign.status_code == 200, f"Expected 200 for a foreign brand, got {resp_tc35_foreign.status_code}"
+assert data_tc35_foreign["offers"] == [], f"A foreign brand must return no offers, got {data_tc35_foreign['offers']}"
+assert "Decathlon" in data_tc35_foreign["info"], f"info must explain that Decathlon does not sell the brand: {data_tc35_foreign}"
+assert elapsed_tc35_foreign < 5.0, \
+    f"Foreign brand took {elapsed_tc35_foreign:.2f}s — expected < 5s (the searcher must not be called)"
+assert not _cache_row_exists("/v1/bike/decathlon/search", tc35_foreign_key), \
+    "/v1/bike/decathlon/search must never write a generic-cache row"
+print(f"OK — foreign brand skipped in {elapsed_tc35_foreign:.3f}s: {data_tc35_foreign['info']!r}")
+
+# (c) A Decathlon house brand goes to the searcher. The identity is the one the
+# DB-first search already carries for this bike (`Decathlon` / `Rockrider ST 100`,
+# the way the frontend sends it) — NOT a fresh `Rockrider` / `ST 100` row: a
+# decathlon.pl product URL is globally unique in bike_offer, so a duplicate
+# identity would capture it and starve the bike the UI actually opens. The row is
+# created here only when missing and deliberately kept — both the live search
+# (200) and the no-searcher branch (503) need it to exist, or the route would
+# answer 404 before either path is reached.
+tc35_body = {"company": "Decathlon", "model": "Rockrider ST 100"}
+tc35_key = _norm_key(tc35_body)
+_conn = _db()
+try:
+    _hit = _conn.execute(
+        "SELECT id FROM bike WHERE LOWER(brand) = ? AND LOWER(model) = ?",
+        (tc35_body["company"].lower(), tc35_body["model"].lower()),
+    ).fetchone()
+    if _hit is None:
+        _now = datetime.now(timezone.utc).isoformat()
+        _conn.execute(
+            "INSERT INTO bike (brand, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (tc35_body["company"], tc35_body["model"], _now, _now),
+        )
+        _conn.commit()
+        print("seeded the Decathlon / Rockrider ST 100 bike row (kept — it is a real bike)")
+finally:
+    _conn.close()
+
+if _searcher_reachable():
+    print(f"searcher reachable at {SEARCHER_URL} — running the live Decathlon search (up to 600 s)")
+    t0 = _time.perf_counter()
+    resp_tc35 = httpx.post(DECATHLON_SEARCH_URL, json=tc35_body, timeout=600)
+    elapsed_tc35 = _time.perf_counter() - t0
+    data_tc35 = _show("[TC-35]", tc35_body, resp_tc35)
+    assert resp_tc35.status_code == 200, f"Expected 200, got {resp_tc35.status_code}: {resp_tc35.text}"
+    assert isinstance(data_tc35["offers"], list), "offers must be a list"
+    assert isinstance(data_tc35["info"], str), "info must be a string"
+    assert set(data_tc35) == {"offers", "info"}, f"bike_id/saved must be dropped, got keys {sorted(data_tc35)}"
+    for o in data_tc35["offers"]:
+        assert o["url"].startswith("https://www.decathlon.pl/"), f"offer url must be on decathlon.pl: {o['url']!r}"
+        assert o["source"] == "decathlon.pl", f"source must be decathlon.pl, got {o['source']!r}"
+        assert o["photos"] == [], f"Decathlon offers carry no photos, got {o['photos']}"
+    assert not _cache_row_exists("/v1/bike/decathlon/search", tc35_key), \
+        "/v1/bike/decathlon/search must never write a generic-cache row"
+    # DB round-trip: what the searcher returned is what /v1/bike/decathlon now reads back.
+    resp_rt = httpx.post(DECATHLON_URL, json=tc35_body, timeout=10)
+    data_rt = _show("[TC-35] round-trip", tc35_body, resp_rt)
+    assert resp_rt.status_code == 200, f"Expected 200 from /v1/bike/decathlon, got {resp_rt.status_code}"
+    if data_tc35["offers"]:
+        assert {(o["url"], o["price"]) for o in data_rt["offers"]} == \
+            {(o["url"], o["price"]) for o in data_tc35["offers"]}, \
+            "/v1/bike/decathlon must return the offers the searcher just stored (url, price)"
+    else:
+        # An empty result keeps whatever was stored before (decision 6), so the
+        # read-back may legitimately hold older rows — only its shape is checked.
+        assert isinstance(data_rt["offers"], list), "round-trip offers must be a list"
+        print("WARNING: the live Decathlon search returned 0 offers — the store → read-back path was NOT exercised; "
+              "check the searcher log (CLI found nothing, or the URL is already stored under another bike identity)")
+    print(f"OK — live search returned {len(data_tc35['offers'])} offer(s) in {elapsed_tc35:.1f}s "
+          f"and /v1/bike/decathlon reads the same rows back")
+else:
+    print(f"SKIP — searcher not reachable (SEARCHER_URL={SEARCHER_URL or 'unset'}); expecting 503 from the proxy")
+    resp_tc35 = httpx.post(DECATHLON_SEARCH_URL, json=tc35_body, timeout=30)
+    data_tc35 = _show("[TC-35]", tc35_body, resp_tc35)
+    assert resp_tc35.status_code == 503, f"Expected 503 without a searcher, got {resp_tc35.status_code}"
+    assert "searcher" in str(data_tc35.get("detail", "")).lower(), f"detail should name the searcher: {data_tc35}"
+    print("OK — 503 when the searcher is not configured / unreachable")
+
+
+# ── TODO_032 fixture hygiene ──
+_conn = _db()
+try:
+    _left = _conn.execute(
+        "SELECT COUNT(*) FROM bike WHERE brand = ? AND model = ?", (FIX_DEC_BRAND, FIX_DEC_MODEL)
+    ).fetchone()[0]
+finally:
+    _conn.close()
+assert _left == 0, f"{_left} TODO-032 fixture bike row(s) left behind"
+print("OK — no TODO-032 fixture rows left behind")
 
 
 # ── TODO_031 fixture hygiene ──

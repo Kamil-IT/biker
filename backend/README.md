@@ -81,15 +81,15 @@ uvicorn app.main:app --reload --port 8000
 > The same script also repairs placeholder (all-lowercase) brand casing left by earlier builds, on
 > **every** run — no `--force` needed — as long as `search_cache` still exists.
 
-`SEARCHER_URL` / `SEARCHER_API_KEY` (TODO-031) point `POST /v1/bike/used/search` at the on-demand OLX searcher
-(top-level `searcher/`, `http://localhost:8100` locally; the key is sent as `X-Searcher-Key` and must equal the
-searcher's own `SEARCHER_API_KEY`). `SEARCHER_TIMEOUT` (seconds, default 600) bounds one search. Leave `SEARCHER_URL`
-unset to run without the searcher — that route then answers 503, while `POST /v1/bike/used` keeps serving whatever is
-stored in `bike_offer`.
+`SEARCHER_URL` / `SEARCHER_API_KEY` (TODO-031/032) point `POST /v1/bike/used/search` and `POST /v1/bike/decathlon/search`
+at the on-demand searcher (top-level `searcher/`, `http://localhost:8100` locally; the key is sent as `X-Searcher-Key` and
+must equal the searcher's own `SEARCHER_API_KEY`). `SEARCHER_TIMEOUT` (seconds, default 600) bounds one search. Leave
+`SEARCHER_URL` unset to run without the searcher — both routes then answer 503, while `POST /v1/bike/used` and
+`POST /v1/bike/decathlon` keep serving whatever is stored in `bike_offer`.
 
 ```bash
 # In a second terminal:
-python scripts/test_search.py   # smoke-test POST /v1/bike/search (+ the DB-only routes: search-cache, missing, used — TC-20 – TC-32)
+python scripts/test_search.py   # smoke-test POST /v1/bike/search (+ the DB-only routes: search-cache, missing, used, decathlon — TC-20 – TC-35)
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
 python scripts/test_review.py   # smoke-test POST /v1/bike/review
 python scripts/test_offer.py    # smoke-test POST /v1/bike/offer
@@ -581,7 +581,7 @@ Content-Type: application/json
 
 ### `POST /v1/bike/decathlon`
 
-Return the current buying offer from decathlon.pl for a specific bike model.
+Return the decathlon.pl offers **stored in the database** for a specific bike model — a pure read of `bike_offer` (TODO-032, the same move `/v1/bike/used` made in TODO-031). **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/bike/decathlon/search`](#post-v1bikedecathlonsearch)); nothing stored → 200 with an empty list.
 
 ```http
 POST http://localhost:8000/v1/bike/decathlon
@@ -600,19 +600,55 @@ Content-Type: application/json
     {
       "brand": "Rockrider",
       "model": "ST 100",
-      "price": "1199 zł",
+      "price": "1249 zł",
       "is_new": true,
-      "url": "https://www.decathlon.pl/p/rockrider-st-100",
+      "url": "https://www.decathlon.pl/p/rower-gorski-mtb-27-5-cala-rockrider-st-100/_/R-p-192872",
       "photos": [],
-      "source": "decathlon.pl"
+      "source": "decathlon.pl",
+      "city": null
     }
   ],
   "info": ""
 }
 ```
 
+- The bike is looked up in `bike` by `company` + `model` normalised in Python (`strip().lower()`, never SQL `lower()`) and is never created; `brand`/`model` on every offer are the bike row's stored casing.
+- Offers are the bike's `bike_offer` rows with `source = 'decathlon.pl'` in `id` order (insertion order), `is_new` from the row (the searcher stores what the model reported, default `true`), `photos` always `[]` (no Playwright scrape for Decathlon) and `city` `null`. `info` is always `""`.
+- Unknown bike, no rows, or a DB error → `{ "offers": [], "info": "" }` (logged, never a 5xx) so the details view keeps rendering.
+- `company` / `model` must be non-empty and at most 255 characters (422).
+
+**Flow:** none — pure DB read of `bike_offer` / `bike_offer_photos`, no outbound call.
+
+**Tests:** `scripts/test_search.py` TC-33 (seeded fixture bike with 1 `decathlon.pl` offer, `is_new` true, `city` null → exactly that offer with `photos: []`, < 5 s, no generic-cache row) and TC-34 (unknown bike → 200 `{ "offers": [], "info": "" }` in < 5 s).
+
+---
+
+### `POST /v1/bike/decathlon/search`
+
+Run the Decathlon search **on demand** through the separate searcher service (`searcher/`, TODO-032) and wait for it. The searcher runs the Claude Code CLI (subscription OAuth token — no Anthropic API key) with `bike_offer_decathlon.md` (moved there byte-identical from the backend) and **replaces** the bike's `decathlon.pl` rows in `bike_offer` (≤ 3 offers, no photos) — so the next `POST /v1/bike/decathlon` returns them. Triggered by the frontend's **Poproś o dane** button in the "Nowe" card (alongside `POST /v1/bike/missing`); also usable from `curl`. Never cached.
+
+```http
+POST http://localhost:8000/v1/bike/decathlon/search
+Content-Type: application/json
+
+{
+  "company": "Rockrider",
+  "model": "ST 100"
+}
+```
+
+**Response:** the searcher's `{ offers, info }` — the same shape as `POST /v1/bike/decathlon` (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `offers: []`.
+
+- **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/used/search`) — checked **before** any searcher call, so anonymous traffic can neither mint `bike` rows nor spend a subscription run.
+- **200** `{ "offers": [], "info": "Decathlon nie sprzedaje marki Trek — w sklepie są tylko marki własne (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt)." }` **immediately, with no searcher call**, when `company` is not a Decathlon house brand (`app/decathlon_brands.py`: `rockrider`, `btwin`, `triban`, `vanrysel`, `elops`, `riverside`, `stilus`, `tilt`, `decathlon`, compared lower-cased with apostrophes, hyphens, dots and whitespace removed, so `B'Twin` / `b-twin` / `VAN RYSEL` all match). Decathlon sells only its own brands, so this is what closes `TODO_ISSUE_010` (Decathlon offers always empty for foreign brands).
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Decathlon searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Decathlon searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"Decathlon searcher is busy — try again in a moment"`): the `SEARCHER_MAX_INFLIGHT` slot (default 1) is **shared with the OLX search** — the searcher has one CLI slot — and the searcher answers 503 itself when it is taken; nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **502** when the searcher answers with a non-200/503 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
+- `company` / `model` must be non-empty and at most 255 characters (422) — they reach the searcher's CLI prompt and its `bike` row.
+
 **Flow:**
-1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches decathlon.pl; returns 1 new offer with price and direct link (no photos — pages require JS rendering)
+1. `POST {SEARCHER_URL}/v1/search/decathlon` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), which runs the `claude` CLI once (`WebSearch`/`WebFetch`, no Playwright) and writes the rows. The backend itself makes no Anthropic call. — **or none** when the brand is not a Decathlon house brand (answered from the allowlist).
+
+**Tests:** `scripts/test_search.py` TC-35 — an unknown bike is a **404** whatever the searcher's state; `Trek Marlin 5` (a known bike of a foreign brand) is a 200 with `offers: []` and an `info` naming Decathlon in < 5 s with no searcher call; then it probes `GET {SEARCHER_URL}/health` (3 s) and, when reachable, runs a live `Decathlon` / `Rockrider ST 100` search — the identity the DB-first search already carries, not a fresh `Rockrider` / `ST 100` row, because a decathlon.pl product URL is globally unique in `bike_offer` and a duplicate identity would capture it (the `bike` row is seeded if missing and kept; 200, every `url` on `https://www.decathlon.pl/`, `source = "decathlon.pl"`, `photos: []`, no generic-cache row) and, when at least one offer came back, checks that `POST /v1/bike/decathlon` then returns the same `(url, price)` set (DB round-trip; 0 offers prints a WARNING — the stored rows are kept, so only their shape is checked); otherwise expects **503** and prints SKIP for the live part.
 
 ---
 
