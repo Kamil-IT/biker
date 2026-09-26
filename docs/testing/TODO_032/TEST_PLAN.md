@@ -135,4 +135,23 @@ Side effects left in the local database (real, paid searches — kept on purpose
 `Decathlon / Rockrider ST 100` (id 28), `Riverside / Riverside 500` (34), `Decathlon / Van Rysel GRVL GRX AF` (621);
 refreshed OLX rows for Trek Marlin 5; `bike_missing_request` `offers_new` counters for the bikes clicked above.
 
+## Cloud Run (2026-09-26, after PR #99 was opened)
+
+`scripts/deploy.ps1 -Tag 3334dc2` rebuilt and deployed all three services (searcher `biker-searcher-00002-q99`, backend
+`biker-backend-00004-2vf`, frontend `biker-frontend-00003-hc8`); no new secrets or IAM bindings were needed — the
+existing `biker-searcher` service, `searcher-api-key` / `claude-code-oauth-token` / `db-password` and Cloud SQL `biker-pg`.
+Checked on the public URLs (scratchpad `verify_prod_032.sh`):
+
+| Check | Result |
+|---|---|
+| frontend `GET /` | 200 |
+| searcher `GET /health` (anonymous) | 200 `{"status":"ok","claude_cli":"2.1.283 (Claude Code)","database":true}` |
+| searcher `POST /v1/search/decathlon` without `X-Searcher-Key` | 401 |
+| backend `POST /v1/bike/decathlon` Riverside / Riverside 500 before any search | 200 `{"offers":[],"info":""}` |
+| backend `POST /v1/bike/decathlon/search` unknown bike | 404 `Bike not found` |
+| backend `POST /v1/bike/decathlon/search` Trek / Marlin 5 | 200 `offers: []`, `info: "Decathlon nie sprzedaje marki Trek — …"`, instant, no searcher run |
+| backend `POST /v1/bike/decathlon/search` Riverside / Riverside 500 | 200, 1 real offer — `1599 zł`, `…/rower-crossowy-riverside-500-z-hamulcami-tarczowymi/_/R-p-300777`, `is_new: true`, `photos: []` (CLI run on the subscription, on Cloud Run) |
+| backend `POST /v1/bike/decathlon` Riverside / Riverside 500 afterwards | the same row from Cloud SQL (`brand`/`model` from the `bike` row, `info: ""`) |
+| regression: backend `POST /v1/bike/used` Trek / Marlin 5 | 200 with the stored OLX rows and photos |
+
 The task is ready to move to `backlog/done/` once its PR merges (merged is the bar); `TODO_ISSUE_010` moves with it.

@@ -117,5 +117,7 @@ triggered only by the user clicking **Poproś o dane** in the **"Nowe"** offers 
 - [x] Smoke tests in `backend/scripts/test_search.py` (TC-33–35) and `searcher/scripts/test_searcher.py` (TC-7–9) pass.
 - [x] `/manual-tester` run locally is green (`docs/testing/TODO_032/TEST_PLAN.md`, 8/8).
 - [x] Docs updated (see Contract). `TODO_ISSUE_010` → `DONE_ISSUE_010` in `backlog/done/` when the PR merges.
-- [ ] Deployed only after the user's explicit go-ahead: `biker-searcher` new image, backend + frontend redeployed,
-      end-to-end verified on the public URLs.
+- [x] Deployed only after the user's explicit go-ahead: `biker-searcher` new image, backend + frontend redeployed
+      (`scripts/deploy.ps1 -Tag 3334dc2`, 2026-09-26), end-to-end verified on the public URLs
+      (`docs/testing/TODO_032/TEST_PLAN.md` § Cloud Run: Riverside 500 empty → real decathlon.pl offer → read back from
+      Cloud SQL; Trek skipped without a run). PR: https://github.com/Kamil-IT/biker/pull/99
