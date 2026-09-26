@@ -1,6 +1,6 @@
 # Test plan — TODO-031 On-demand OLX searcher
 
-Branch `feature/031-searcher-olx` · task `backlog/TODO_031_SEARCHER_OLX_ON_DEMAND.md` · executed 2026-09-26.
+Branch `feature/031-searcher-olx` · task `backlog/done/DONE_031_SEARCHER_OLX_ON_DEMAND.md` · executed 2026-09-26.
 
 ## Scope
 

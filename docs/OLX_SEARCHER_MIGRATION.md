@@ -2,7 +2,7 @@
 
 Zapis całego procesu — od stanu wyjściowego, przez decyzje, implementację, testy, aż po wdrożenie na Cloud Run —
 z datą 2026-09-25/26. Branch `feature/031-searcher-olx`, PR [#97](https://github.com/Kamil-IT/biker/pull/97),
-zadanie `backlog/TODO_031_SEARCHER_OLX_ON_DEMAND.md`, plan i wyniki testów `docs/testing/TODO_031/TEST_PLAN.md`.
+zadanie `backlog/done/DONE_031_SEARCHER_OLX_ON_DEMAND.md`, plan i wyniki testów `docs/testing/TODO_031/TEST_PLAN.md`.
 
 ## 1. Punkt wyjścia
 
