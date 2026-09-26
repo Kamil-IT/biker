@@ -38,7 +38,7 @@ Probe on 2026-09-25: Trek Marlin 5 → 5 real listings in 34 s.
 | `app/olx_image_fetcher.py` · `app/browser_config.py` | Playwright scrape of ≤ 4 `apollo.olxcdn.com` images per listing (copied from the backend) |
 | `app/models.py` · `app/repository.py` | SQLAlchemy over `bike` / `bike_offer` / `bike_offer_photos` (DDL identical to `backend/app/models.py`; `init_db()` only checks they exist); `save_offers(company, model, offers, source)` upserts on `url` within this bike **and** source, takes `is_new` from each offer, never re-parents a listing, deletes the bike's stale rows of that source only when something new was stored |
 | `app/prompts/bike_offer_olx.md` · `app/prompts/bike_offer_decathlon.md` | The system prompts (byte-for-byte the backend's former prompts) |
-| `scripts/test_searcher.py` | Smoke test: health, 401 ×2, 422, one real OLX search + its DB rows (TC-1–6), 401 + one real Decathlon search + its DB rows (TC-7–9) |
+| `scripts/test_searcher.py` | Smoke test, free: health, 401 ×2 + 422 on `/v1/search/olx` (TC-1–4), 401 + 422 on `/v1/search/decathlon` (TC-5–6). No `claude -p` run — the one paid live search of the test set is `backend/scripts/test_search.py` `case_decathlon_search` |
 
 ## Run locally
 

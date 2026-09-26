@@ -538,7 +538,7 @@ Content-Type: application/json
 **Flow:**
 1. `POST {SEARCHER_URL}/v1/search/olx` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), which runs the `claude` CLI once (`WebSearch`/`WebFetch`, `claude-haiku-4-5-20251001`) and Playwright once per listing, then writes the rows. The backend itself makes no Anthropic call.
 
-**Tests:** `scripts/test_search.py` `case_used_search` — SKIP unless `GET {SEARCHER_URL}/health` answers; then one live search for the first bike in `bike` (200, `{offers, info}` only, every offer `source = "olx.pl"` and `is_new` false).
+**Tests:** `scripts/test_search.py` `case_used_search` — an unknown bike is a **404** before any searcher call. Deliberately no live OLX run (every searcher run is a paid subscription search); the one live run kept in the suite is `case_decathlon_search`, which goes through the same proxy code path.
 
 ---
 
