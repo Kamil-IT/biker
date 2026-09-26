@@ -10,7 +10,9 @@ it passes on a cold or aged database. Endpoints covered here:
 
   no API   /v1/bike/search (DB hit) · /v1/bike/search-cache · /v1/bike/details-cache
            /v1/bike/missing · /v1/bike/used · /v1/bike/used/search (only when the searcher is up)
-  --ai     /v1/bike/search (free text) · /v1/bike/parse · /v1/bike/ceneo · /v1/bike/decathlon
+           /v1/bike/decathlon · /v1/bike/decathlon/search (404 + foreign-brand skip always; the
+           live house-brand search only when the searcher is up)
+  --ai     /v1/bike/search (free text) · /v1/bike/parse · /v1/bike/ceneo
 
 The other endpoints have their own single-happy-path script: test_details.py
 (/details), test_review.py (/review), test_offer.py (/offer), test_equipment.py
@@ -51,6 +53,7 @@ USED_SEARCH_URL = f"{BASE}/v1/bike/used/search"
 PARSE_URL = f"{BASE}/v1/bike/parse"
 CENEO_URL = f"{BASE}/v1/bike/ceneo"
 DECATHLON_URL = f"{BASE}/v1/bike/decathlon"
+DECATHLON_SEARCH_URL = f"{BASE}/v1/bike/decathlon/search"
 SEARCHER_URL = os.getenv("SEARCHER_URL", "").strip().rstrip("/")
 
 
@@ -311,14 +314,18 @@ def case_used():
         _delete_bike(FIX_USED_BRAND, FIX_USED_MODEL)
 
 
-def case_used_search():
-    """/v1/bike/used/search proxies to the live searcher (skipped when the searcher is not running)."""
+def _require_searcher() -> None:
     try:
         up = bool(SEARCHER_URL) and httpx.get(f"{SEARCHER_URL}/health", timeout=3).json().get("status") == "ok"
     except Exception:  # noqa: BLE001 — not running / refused / timed out
         up = False
     if not up:
         raise Skip(f"searcher not reachable (SEARCHER_URL={SEARCHER_URL or 'unset'})")
+
+
+def case_used_search():
+    """/v1/bike/used/search proxies to the live searcher (skipped when the searcher is not running)."""
+    _require_searcher()
     # The route refuses bikes that are not in `bike`, so search for one that is.
     conn = _DB()
     try:
@@ -333,6 +340,109 @@ def case_used_search():
     assert set(data) == {"offers", "info"} and isinstance(data["offers"], list), data
     for o in data["offers"]:
         assert o["source"] == "olx.pl" and o["is_new"] is False, o
+
+
+FIX_DEC_BRAND, FIX_DEC_MODEL = "Smoke Fixture", "Decathlon Bike"
+
+
+def case_decathlon():
+    """/v1/bike/decathlon serves a stored decathlon.pl offer from bike_offer (no AI, no cache; TODO-032)."""
+    _delete_bike(FIX_DEC_BRAND, FIX_DEC_MODEL)
+    url = "https://www.decathlon.pl/p/smoke-fixture/_/R-p-000032"
+    conn = _DB()
+    try:
+        bike_id = conn.execute(
+            "INSERT INTO bike (brand, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (FIX_DEC_BRAND, FIX_DEC_MODEL, _now(), _now()),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO bike_offer (bike_id, price, is_new, url, source, city, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (bike_id, "1 249 zł", True, url, "decathlon.pl", None, _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    body = {"company": FIX_DEC_BRAND, "model": FIX_DEC_MODEL}
+    key = _norm_key(body)
+    try:
+        _cache_row_delete("/v1/bike/decathlon", key)
+        t0 = time.perf_counter()
+        resp = _post(DECATHLON_URL, body, timeout=10)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        data = resp.json()
+        assert data["info"] == "" and len(data["offers"]) == 1, data
+        offer = data["offers"][0]
+        assert (offer["url"], offer["price"], offer["city"], offer["photos"]) == (url, "1 249 zł", None, []), offer
+        assert offer["is_new"] is True and offer["source"] == "decathlon.pl", offer  # is_new comes from the row
+        assert offer["brand"] == FIX_DEC_BRAND and offer["model"] == FIX_DEC_MODEL, offer
+        assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
+        assert not _cache_row_exists("/v1/bike/decathlon", key), "/v1/bike/decathlon must not write a generic-cache row"
+        # An unknown bike is a fast, empty 200 — never an error.
+        resp = _post(DECATHLON_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=10)
+        assert resp.status_code == 200 and resp.json() == {"offers": [], "info": ""}, resp.text[:200]
+    finally:
+        _delete_bike(FIX_DEC_BRAND, FIX_DEC_MODEL)
+
+
+FIX_FOREIGN_BRAND, FIX_FOREIGN_MODEL = "Smoke Fixture", "Foreign Brand Bike"
+LIVE_DEC_BRAND, LIVE_DEC_MODEL = "Decathlon", "Rockrider ST 100"
+
+
+def case_decathlon_search():
+    """/v1/bike/decathlon/search: 404 for an unknown bike, an instant empty 200 for a non-Decathlon
+    brand (no searcher run — TODO_ISSUE_010), and the live house-brand search when the searcher is up."""
+    resp = _post(DECATHLON_SEARCH_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=30)
+    assert resp.status_code == 404, f"Expected 404 for an unknown bike, got {resp.status_code}: {resp.text[:200]}"
+
+    _delete_bike(FIX_FOREIGN_BRAND, FIX_FOREIGN_MODEL)
+    _insert_bike(FIX_FOREIGN_BRAND, FIX_FOREIGN_MODEL)
+    body = {"company": FIX_FOREIGN_BRAND, "model": FIX_FOREIGN_MODEL}
+    try:
+        t0 = time.perf_counter()
+        resp = _post(DECATHLON_SEARCH_URL, body, timeout=30)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        data = resp.json()
+        assert data["offers"] == [] and "Decathlon" in data["info"], data
+        assert elapsed < 5.0, f"foreign-brand skip took {elapsed:.2f}s — expected < 5s (searcher ran?)"
+        assert not _cache_row_exists("/v1/bike/decathlon/search", _norm_key(body)), "must never write a generic-cache row"
+    finally:
+        _delete_bike(FIX_FOREIGN_BRAND, FIX_FOREIGN_MODEL)
+
+    _require_searcher()
+    # A real Decathlon house brand goes to the searcher. The identity is the one the
+    # DB-first search already carries for this bike (`Decathlon` / `Rockrider ST 100`,
+    # the way the frontend sends it), not a fresh `Rockrider` / `ST 100` row: a
+    # decathlon.pl product URL is globally unique in bike_offer, so a duplicate
+    # identity would capture it and starve the bike the UI opens. Created only when
+    # missing and kept — it is a real bike.
+    conn = _DB()
+    try:
+        hit = conn.execute(
+            "SELECT id FROM bike WHERE LOWER(brand) = ? AND LOWER(model) = ?",
+            (LIVE_DEC_BRAND.lower(), LIVE_DEC_MODEL.lower()),
+        ).fetchone()
+    finally:
+        conn.close()
+    if hit is None:
+        _insert_bike(LIVE_DEC_BRAND, LIVE_DEC_MODEL)
+    body = {"company": LIVE_DEC_BRAND, "model": LIVE_DEC_MODEL}
+    resp = _post(DECATHLON_SEARCH_URL, body, timeout=600)
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:300]}"
+    data = resp.json()
+    assert set(data) == {"offers", "info"} and isinstance(data["offers"], list), data
+    for o in data["offers"]:
+        assert o["url"].startswith("https://www.decathlon.pl/") and o["source"] == "decathlon.pl", o
+        assert o["photos"] == [], o
+    assert not _cache_row_exists("/v1/bike/decathlon/search", _norm_key(body)), "must never write a generic-cache row"
+    # Round-trip: what the searcher stored is what /v1/bike/decathlon now reads back
+    # (checked only when something came back — an empty run keeps the older rows).
+    if data["offers"]:
+        back = _post(DECATHLON_URL, body, timeout=10).json()
+        assert {(o["url"], o["price"]) for o in back["offers"]} == {(o["url"], o["price"]) for o in data["offers"]}, back
+    else:
+        print("  WARNING: the live Decathlon search returned 0 offers — the store/read-back path was not exercised")
 
 
 # ── Cases that call the Anthropic API (--ai) ────────────────────────────────
@@ -363,23 +473,17 @@ def case_ceneo():
     _assert_offers(resp.json()["offers"], "ceneo.pl")
 
 
-def case_decathlon():
-    """/v1/bike/decathlon finds an offer on decathlon.pl — one web_search call."""
-    resp = _post(DECATHLON_URL, {"company": "Rockrider", "model": "ST 100"}, timeout=180)
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
-    _assert_offers(resp.json()["offers"], "decathlon.pl")
-
-
 CASES = [
     (case_search_db_hit_and_search_cache, False),
     (case_details_cache, False),
     (case_missing, False),
     (case_used, False),
     (case_used_search, False),
+    (case_decathlon, False),
+    (case_decathlon_search, False),
     (case_search_free_text, True),
     (case_parse, True),
     (case_ceneo, True),
-    (case_decathlon, True),
 ]
 
 

@@ -22,7 +22,7 @@
   .\scripts\deploy.ps1                     # build + push + deploy both services
   .\scripts\deploy.ps1 -Only backend       # backend only (frontend keeps its BACKEND_URL)
   .\scripts\deploy.ps1 -Only frontend      # frontend only, pointed at the deployed backend
-  .\scripts\deploy.ps1 -Only searcher      # the OLX searcher only (the backend keeps its SEARCHER_URL)
+  .\scripts\deploy.ps1 -Only searcher      # the OLX/Decathlon searcher only (the backend keeps its SEARCHER_URL)
   .\scripts\deploy.ps1 -Tag v1             # explicit image tag instead of the git short sha
 #>
 [CmdletBinding()]

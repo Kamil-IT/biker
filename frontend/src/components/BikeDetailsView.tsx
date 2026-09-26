@@ -50,6 +50,8 @@ interface BikeDetailsViewProps {
   onEquipmentSelect: (name: string) => void
   // On-demand OLX search behind the Used card's "Request data" button (TODO-031).
   onSearchUsed: () => Promise<void>
+  // On-demand Decathlon search behind the New card's "Request data" button (TODO-032).
+  onSearchNew: () => Promise<void>
 }
 
 export default function BikeDetailsView({
@@ -73,6 +75,7 @@ export default function BikeDetailsView({
   onRetry,
   onEquipmentSelect,
   onSearchUsed,
+  onSearchNew,
 }: BikeDetailsViewProps) {
   const { brand, model, accessories, match_score } = bike
   const scoreDisplay = match_score === 10 ? '10' : match_score.toFixed(1)
@@ -176,6 +179,7 @@ export default function BikeDetailsView({
           usedBikes={usedBikes}
           usedBikeState={usedBikeState}
           onSearchUsed={onSearchUsed}
+          onSearchNew={onSearchNew}
         />
 
         {/* Review */}
@@ -264,6 +268,7 @@ interface MergedOffersSectionProps {
   usedBikes: UsedBikeResponse | null
   usedBikeState: OfferState
   onSearchUsed: () => Promise<void>
+  onSearchNew: () => Promise<void>
 }
 
 function MergedOffersSection({
@@ -278,6 +283,7 @@ function MergedOffersSection({
   usedBikes,
   usedBikeState,
   onSearchUsed,
+  onSearchNew,
 }: MergedOffersSectionProps) {
   // Pool every offer from all four sources, then split purely on the is_new flag.
   const allOffers: BikeOffer[] = [
@@ -293,9 +299,13 @@ function MergedOffersSection({
 
   // A late source can still add rows to either category, so both cards show their
   // skeleton for the first 5 s while any source is loading; after that each card
-  // shows whatever rows it has, or its own "Request data" button (TODO-027). In the
-  // Used card that button also runs the on-demand OLX search (TODO-031); the rows
-  // it returns land in `usedBikes` and take the button's place.
+  // shows whatever rows it has, or its own "Request data" button (TODO-027). In both
+  // cards that button also runs an on-demand search: OLX in the Used card (TODO-031),
+  // Decathlon in the New card (TODO-032); the rows it returns land in `usedBikes` /
+  // `decathlonOffers` and take the button's place. The New card offers the Decathlon
+  // search only while no decathlon.pl row is stored: an outlet row (`is_new: false`)
+  // sits in the Used card, and re-searching would cost a paid run per click for nothing.
+  const hasDecathlonRows = (decathlonOffers?.offers.length ?? 0) > 0
   const anyLoading =
     offerState === 'loading' ||
     ceneoState === 'loading' ||
@@ -328,6 +338,8 @@ function MergedOffersSection({
           company={company}
           model={model}
           missingType={MissingType.OffersNew}
+          onRequested={hasDecathlonRows ? undefined : onSearchNew}
+          pendingLabel={hasDecathlonRows ? undefined : 'Szukam na Decathlon…'}
         />
       </div>
     </div>
@@ -341,7 +353,7 @@ interface OfferCategoryCardProps {
   company: string
   model: string
   missingType: MissingType
-  // Used card only (TODO-031): the search the button runs after recording the click.
+  // Used: OLX (TODO-031), New: Decathlon (TODO-032) — the search the button runs after the click + its label.
   onRequested?: () => Promise<void>
   pendingLabel?: string
 }

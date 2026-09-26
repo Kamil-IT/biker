@@ -3,7 +3,13 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class BikeOffer(BaseModel):
-    """One OLX listing — the same shape the backend serves from /v1/bike/used."""
+    """One stored marketplace offer — the shape the backend serves back from the DB.
+
+    Two sources write it: olx.pl used listings (/v1/search/olx → /v1/bike/used:
+    is_new false, city from the listing, photos scraped) and decathlon.pl new
+    offers (/v1/search/decathlon → /v1/bike/decathlon: is_new from the shop
+    page, default true, no city, no photos). The defaults are the OLX ones.
+    """
 
     brand: str
     model: str
