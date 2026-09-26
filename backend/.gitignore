@@ -17,3 +17,6 @@ cache.db.bak
 cache.db.bak2
 # GCP Cloud SQL password file (libpq pgpass format, used via PGPASSFILE) — never commit
 gcp-prod-pgpass.conf
+
+# Claude Code subscription token for the searcher container (output of `claude setup-token`) — never commit
+claude.token
