@@ -1,3 +1,4 @@
+"""Happy-path smoke test for POST /v1/bike/offer (allegro.pl; calls the Anthropic API when uncached)."""
 import json
 import httpx
 

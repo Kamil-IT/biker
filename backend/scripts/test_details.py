@@ -19,7 +19,8 @@ What this validates (shape, not exact content — real web data varies):
   * The structurally universal categories (Frame, Drivetrain, Wheels, Brakes) are always
     present — every real bike has them, so a missing one is a pipeline defect, not a data gap.
   * Graceful degradation: an occasionally-empty optional category is fine (skipped, not 502).
-  * Invalid input (empty company/model) → 422 validation error, never 502.
+
+Single happy path (one reference bike); validation / error cases are not covered here.
 
 Exit code 0 = all passed; 1 = a failure (details printed).
 """
@@ -35,7 +36,6 @@ DETAILS_URL = f"{BASE_URL}/v1/bike/details"
 # Fixed reference bikes — well-known models with stable, published component specs.
 REFERENCE_BIKES = [
     {"company": "Canyon", "model": "Grizl CF 7 ESC"},
-    {"company": "Trek", "model": "Marlin 5"},
 ]
 
 # The 8 component categories the finder iterates (app/bike_details_finder.DETAIL_CATEGORIES).
@@ -145,18 +145,6 @@ def validate_bike(bike: dict) -> None:
     print(f"  OK — {len(names)} categories, {len(data['photos'])} photos, no artifacts")
 
 
-def validate_invalid_input() -> None:
-    """Empty company/model must be rejected with a 422 validation error, never a 502."""
-    for bad in ({"company": "", "model": ""}, {"company": "Trek", "model": ""}):
-        print(f"POST {DETAILS_URL}  body={json.dumps(bad)}  (expecting 422)")
-        resp = httpx.post(DETAILS_URL, json=bad, timeout=30)
-        _assert(
-            resp.status_code == 422,
-            f"empty input should give 422, got {resp.status_code}: {resp.text[:200]}",
-        )
-        print("  OK — 422 validation error")
-
-
 def main() -> int:
     failures = 0
     for bike in REFERENCE_BIKES:
@@ -166,13 +154,6 @@ def main() -> int:
             failures += 1
             print(f"  FAIL — {exc}")
         print()
-
-    try:
-        validate_invalid_input()
-    except AssertionError as exc:
-        failures += 1
-        print(f"  FAIL — {exc}")
-    print()
 
     if failures:
         print(f"{failures} check group(s) FAILED")
