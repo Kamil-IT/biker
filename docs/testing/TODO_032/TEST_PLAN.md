@@ -1,6 +1,6 @@
 # Test plan — TODO-032 On-demand Decathlon search in the searcher
 
-Branch `feature/032-searcher-decathlon` · task `backlog/TODO_032_SEARCHER_DECATHLON_ON_DEMAND.md` · executed 2026-09-26.
+Branch `feature/032-searcher-decathlon` · task `backlog/done/DONE_032_SEARCHER_DECATHLON_ON_DEMAND.md` · executed 2026-09-26.
 
 ## Scope
 

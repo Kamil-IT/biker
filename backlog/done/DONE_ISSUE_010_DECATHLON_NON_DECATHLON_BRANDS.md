@@ -25,7 +25,18 @@ Pick one:
 - Or both: skip the backend call AND hide the empty section.
 
 ## Acceptance criteria
-- [ ] Searching a non-Decathlon brand no longer wastes a `web_search` call (if skip approach chosen).
-- [ ] The UI does not show an empty/confusing Decathlon block for unsupported brands.
-- [ ] Decathlon house brands (e.g. Rockrider ST 100) still return offers as before.
-- [ ] Smoke test in `backend/scripts/test_offer.py` (or equivalent) covers both a house brand and a non-Decathlon brand.
+- [x] Searching a non-Decathlon brand no longer wastes a `web_search` call (if skip approach chosen).
+- [x] The UI does not show an empty/confusing Decathlon block for unsupported brands.
+- [x] Decathlon house brands (e.g. Rockrider ST 100) still return offers as before.
+- [x] Smoke test in `backend/scripts/test_offer.py` (or equivalent) covers both a house brand and a non-Decathlon brand.
+
+## Resolution (TODO-032, PR [#99](https://github.com/Kamil-IT/biker/pull/99), 2026-09-26)
+
+Closed by the **skip** approach as part of the on-demand Decathlon searcher: `/v1/bike/decathlon` no longer calls the
+API at all (DB read of `bike_offer`), and the on-demand `POST /v1/bike/decathlon/search` answers a non-Decathlon
+brand immediately with `{offers: [], info: "Decathlon nie sprzedaje marki <X> — …"}` from the house-brand allowlist
+in `backend/app/decathlon_brands.py` (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt, Decathlon;
+normalised compare) — no searcher run, no subscription search spent. The UI side: the "Nowe" offers card shows the
+shared Request-data button, which for such a brand goes straight to "Nie znaleziono ofert". Covered by
+`backend/scripts/test_search.py` `case_decathlon_search` (foreign-brand fixture → instant empty 200; `Decathlon /
+Rockrider ST 100` → live offer) and the manual plan `docs/testing/TODO_032/TEST_PLAN.md` TC-032-04.
