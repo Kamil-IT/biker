@@ -5,11 +5,12 @@ search through the Claude Code CLI, scrapes listing photos with Playwright and
 writes the result into bike_offer / bike_offer_photos; POST /v1/search/decathlon
 (same key) runs the Decathlon search through the CLI — no Playwright — and
 writes bike_offer rows with source 'decathlon.pl'; POST /v1/search/allegro
-(same key) runs the Allegro search through the CLI, scrapes the offer photos
-with Playwright and writes rows with source 'allegro.pl'; GET /health is open.
+(same key) runs the Allegro search through the CLI — no Playwright either,
+allegro.pl answers 403 to browsers — and writes rows with source 'allegro.pl';
+GET /health is open.
 The THREE searches share one semaphore of SEARCHER_MAX_CONCURRENT slots
 (default 2 — the UI fires the Decathlon and Allegro searches together); a slot
-is one CLI run plus, for OLX/Allegro, one browser. The next request is refused
+is one CLI run plus, for OLX, one browser. The next request is refused
 with 503, never queued. On Cloud Run each instance still serves one request
 (--concurrency 1); the parallelism there comes from --max-instances 2.
 """
@@ -42,8 +43,8 @@ logging.basicConfig(
 logger = logging.getLogger("searcher.main")
 
 # SEARCHER_MAX_CONCURRENT slots (default 2) shared by the three search routes:
-# one CLI process (+ one browser for OLX/Allegro) per slot. Locally / in compose
-# that is two CLI runs and two browsers in this one process; on Cloud Run each
+# one CLI process (+ one browser for OLX) per slot. Locally / in compose
+# that is two CLI runs (each OLX one with a browser) in this one process; on Cloud Run each
 # instance serves one request (--concurrency 1) and the second search gets its
 # own instance (--max-instances 2). A request that finds no slot free is refused
 # (503), never queued — see _run_search.
@@ -171,12 +172,13 @@ async def search_decathlon(req: SearchRequest) -> SearchResponse:
 
 @app.post("/v1/search/allegro", response_model=SearchResponse, dependencies=[Depends(require_api_key)])
 async def search_allegro(req: SearchRequest) -> SearchResponse:
-    """Search allegro.pl for the bike (CLI + Playwright photos), store the offers, return them.
+    """Search allegro.pl for the bike (CLI only, no Playwright), store the offers, return them.
 
     Same status mapping as /v1/search/olx and the SAME semaphore as the other
     two routes (SEARCHER_MAX_CONCURRENT slots, default 2 — the UI fires this
     search together with the Decathlon one). Rows are stored with source
     'allegro.pl', is_new as the listing says (default false: an Allegro
-    listing is used unless the page says new), ≤ 8 scraped photos each.
+    listing is used unless the result says new), no photos (allegro.pl
+    answers 403 to every automated fetch, so nothing scrapes it).
     """
     return await _run_search("allegro", ALLEGRO_SOURCE, find_allegro_offers, req)

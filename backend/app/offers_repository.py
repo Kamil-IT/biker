@@ -112,7 +112,8 @@ def get_decathlon_offers(company: str, model: str) -> BikeOfferResponse:
 def get_allegro_offers(company: str, model: str) -> BikeOfferResponse:
     """Stored allegro.pl offers of one bike (source 'allegro.pl', TODO-033) — see _get_stored_offers.
 
-    Photos come from bike_offer_photos (the searcher's Playwright scrape) and
-    `is_new` from the row — an Allegro listing is used unless the page said new.
+    `photos` is always [] — the searcher stores no Allegro photos (allegro.pl
+    answers 403 to every automated fetch, so the scrape was dropped) — and
+    `is_new` comes from the row, as the search result described the listing.
     """
     return BikeOfferResponse(offers=_get_stored_offers(company, model, ALLEGRO_SOURCE), info="")

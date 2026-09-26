@@ -446,21 +446,21 @@ ALLEGRO_CACHE_KEYS = ("/v1/bike/offer", "/v1/bike/allegro")
 
 
 def case_allegro():
-    """/v1/bike/allegro serves a stored allegro.pl offer + its photo from bike_offer (no AI, no cache; TODO-033)."""
+    """/v1/bike/allegro serves a stored allegro.pl offer from bike_offer (no AI, no cache, no photos; TODO-033)."""
     _delete_bike(FIX_ALLEGRO_BRAND, FIX_ALLEGRO_MODEL)
     url = "https://allegro.pl/oferta/smoke-fixture-allegro-ID1"
-    photo = "https://a.allegroimg.com/original/smoke-fixture-one"
     conn = _DB()
     try:
         bike_id = conn.execute(
             "INSERT INTO bike (brand, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
             (FIX_ALLEGRO_BRAND, FIX_ALLEGRO_MODEL, _now(), _now()),
         ).lastrowid
-        offer_id = conn.execute(
+        # Allegro rows never have photos (the searcher does not scrape allegro.pl — it answers 403); the
+        # photo read path is covered by case_used.
+        conn.execute(
             "INSERT INTO bike_offer (bike_id, price, is_new, url, source, city, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (bike_id, "2 319 zł", True, url, "allegro.pl", None, _now()),
-        ).lastrowid
-        conn.execute("INSERT INTO bike_offer_photos (bike_offer_id, url, display_order) VALUES (?, ?, ?)", (offer_id, photo, 0))
+        )
         conn.commit()
     finally:
         conn.close()
@@ -476,7 +476,7 @@ def case_allegro():
         data = resp.json()
         assert data["info"] == "" and len(data["offers"]) == 1, data
         offer = data["offers"][0]
-        assert (offer["url"], offer["price"], offer["city"], offer["photos"]) == (url, "2 319 zł", None, [photo]), offer
+        assert (offer["url"], offer["price"], offer["city"], offer["photos"]) == (url, "2 319 zł", None, []), offer
         assert offer["is_new"] is True and offer["source"] == "allegro.pl", offer  # is_new comes from the row
         assert offer["brand"] == FIX_ALLEGRO_BRAND and offer["model"] == FIX_ALLEGRO_MODEL, offer
         assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
@@ -493,7 +493,7 @@ def case_allegro_search():
     """/v1/bike/allegro/search refuses an unknown bike with 404 before touching the searcher.
 
     Deliberately no live Allegro run here: every searcher run is a paid subscription
-    search (minutes of CLI time plus a Playwright pass per offer), and the one live
+    search (a minute or two of CLI time), and the one live
     run this suite keeps is case_decathlon_search, which exercises the same proxy
     code path (searcher_client._search)."""
     resp = _post(ALLEGRO_SEARCH_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=30)

@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Deploys biker to GCP Cloud Run: backend (FastAPI + Chromium), frontend (nginx) and the on-demand
-  OLX / Decathlon / Allegro searcher (claude CLI + Chromium, TODO-031/032/033) as three services in
+  OLX / Decathlon / Allegro searcher (claude CLI + Chromium for the OLX photos, TODO-031/032/033) as three services in
   europe-central2, all against Cloud SQL biker-pg. Run by hand from the developer machine (TODO-030).
 
 .DESCRIPTION
@@ -59,7 +59,7 @@ function Get-ServiceUrl([string]$Service) {
 $dbUrl = "postgresql+psycopg://biker@/biker?host=/cloudsql/$SqlInstance"
 
 if ($Only -in 'all', 'searcher') {
-    # One CLI run + one Chromium per 2 GiB instance (--concurrency 1), scale to zero. Two instances because the
+    # One CLI run per 2 GiB instance (--concurrency 1; Chromium only for the OLX photo scrape), scale to zero. Two instances because the
     # UI's "Nowe" button fires the Decathlon and Allegro searches together (backend SEARCHER_MAX_INFLIGHT = 2,
     # TODO-033): the second search gets its own instance; a third concurrent search hits Cloud Run's 429, which
     # the backend maps to 503 busy. A search is minutes, hence the 900 s timeout (the backend waits at most

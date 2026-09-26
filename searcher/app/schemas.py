@@ -9,8 +9,8 @@ class BikeOffer(BaseModel):
     is_new false, city from the listing, photos scraped), decathlon.pl new
     offers (/v1/search/decathlon → /v1/bike/decathlon: is_new from the shop
     page, default true, no city, no photos) and allegro.pl offers
-    (/v1/search/allegro → /v1/bike/allegro: is_new from the listing, default
-    false, no city, ≤ 8 photos scraped). The defaults are the OLX ones.
+    (/v1/search/allegro → /v1/bike/allegro: is_new from the search result,
+    default false, no city, no photos — allegro.pl answers 403 to browsers). The defaults are the OLX ones.
     """
 
     brand: str

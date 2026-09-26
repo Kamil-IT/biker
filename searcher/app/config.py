@@ -9,7 +9,7 @@ compose / Cloud Run settings win over the file):
   CLAUDE_BIN               path to the claude CLI; unset = whatever `claude` resolves to on PATH
   SEARCHER_CLAUDE_MODEL    model passed to `claude --model` (default claude-haiku-4-5-20251001)
   SEARCHER_CLI_TIMEOUT     seconds one CLI run may take before it is killed (default 300)
-  SEARCHER_MAX_CONCURRENT  CLI runs (each with its own browser) allowed at once, counted across the
+  SEARCHER_MAX_CONCURRENT  CLI runs (OLX ones with a browser) allowed at once, counted across the
                            three search routes (default 2: the UI fires Decathlon + Allegro together)
   PLAYWRIGHT_HEADLESS      true = no browser window (Docker / server); unset = visible browser
   CLAUDE_CODE_OAUTH_TOKEN  read by the CLI itself on a server (`claude setup-token`); never logged

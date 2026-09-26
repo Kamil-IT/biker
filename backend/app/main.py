@@ -245,8 +245,9 @@ async def bike_allegro_search(req: BikeOfferRequest) -> BikeOfferResponse:
     """Run the Allegro search on demand through the searcher service (TODO-033).
 
     Proxies to {SEARCHER_URL}/v1/search/allegro and waits for it
-    (SEARCHER_TIMEOUT, default 600 s). The searcher writes the offers and
-    their photos to the DB, so a later /v1/bike/allegro returns them. The
+    (SEARCHER_TIMEOUT, default 600 s). The searcher writes the offers to the
+    DB (no photos — allegro.pl blocks scraping), so a later /v1/bike/allegro
+    returns them. The
     "Nowe" card's button fires this together with /v1/bike/decathlon/search,
     which is why SEARCHER_MAX_INFLIGHT defaults to 2. 503 when the searcher
     is not configured, unreachable or busy, 502 (its detail passed through)

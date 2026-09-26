@@ -1,7 +1,7 @@
 """HTTP client for the on-demand searcher service (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro).
 
 The searcher (top-level `searcher/`, port 8100 locally) runs the Claude Code CLI
-once per search — plus Playwright once per OLX or Allegro listing — and writes
+once per search — plus Playwright once per OLX listing — and writes
 what it finds into bike_offer / bike_offer_photos. The backend only proxies the
 request, waits, and hands back the searcher's {offers, info} — it never calls
 Claude for OLX, Decathlon or Allegro. One client, three sources: `search_olx`
@@ -24,7 +24,8 @@ the searcher's own capacity rather than anything per marketplace. The default
 is 2 since TODO-033: the "Nowe" card's button fires the Decathlon and Allegro
 searches together, and the searcher now allows two runs (locally
 SEARCHER_MAX_CONCURRENT=2; on Cloud Run --max-instances 2 with --concurrency 1,
-i.e. one CLI + one Chromium per instance). The rest are refused straight away,
+i.e. one CLI per instance, plus a Chromium only for an OLX search). The rest
+are refused straight away,
 as is a request the searcher itself answers 503 (busy) to — and so is a 429
 from the searcher's URL: Cloud Run answers 429 "Rate exceeded" when every
 instance is at --concurrency and max-instances is reached, which is the same
