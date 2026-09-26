@@ -46,6 +46,9 @@ export default function App() {
   // Details state
   const [view, setView]                         = useState<AppView>('search')
   const [selectedBike, setSelectedBike]         = useState<Bike | null>(null)
+  // Mirrors selectedBike for the slow used-bike calls: a result that lands after
+  // the user has opened another bike must not overwrite that bike's card (TODO-031).
+  const selectedBikeRef                         = useRef<Bike | null>(null)
   const [detailsState, setDetailsState]         = useState<DetailsState>('loading')
   const [bikeCategories, setBikeCategories]     = useState<BikeCategory[] | null>(null)
   const [bikeDescription, setBikeDescription]   = useState<BikeDescription | null>(null)
@@ -82,8 +85,7 @@ export default function App() {
   /* ── Handlers ─────────────────────────────────────── */
 
   const handleSearch = async (payload: SearchPayload) => {
-    const { search: _s, ...structured } = payload
-    const hasStructured = Object.values(structured).some(v => v !== undefined)
+    const hasStructured = Object.entries(payload).some(([k, v]) => k !== 'search' && v !== undefined)
 
     setNoMatchMsg(null)
 
@@ -245,6 +247,28 @@ export default function App() {
     }
   }
 
+  // On-demand OLX search (TODO-031) behind the Used card's "Poproś o dane" button.
+  // usedBikeState is deliberately not set to 'loading': the button shows its own
+  // spinner, and 'loading' would restart the 5 s skeleton grace in the offers section.
+  // Throws on failure so the button can return to clickable.
+  const searchUsedBikes = async (bike: Bike) => {
+    const res = await fetch('/v1/bike/used/search', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ company: bike.brand, model: bike.model }),
+    })
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error((data as { detail?: string }).detail ?? `Błąd serwera ${res.status}`)
+    }
+    const data: UsedBikeResponse = await res.json()
+    // A search can take minutes; if another bike is open by now, drop the result
+    // (it is stored in the DB anyway and shows when this bike is opened again).
+    if (selectedBikeRef.current !== bike) return
+    setUsedBikes(data)
+    setUsedBikeState('loaded')
+  }
+
   const fetchCeneo = async (bike: Bike) => {
     setCeneoState('loading')
     setCeneoOffers(null)
@@ -344,6 +368,7 @@ export default function App() {
 
   const handleBikeSelect = (bike: Bike) => {
     setSelectedBike(bike)
+    selectedBikeRef.current = bike
     setView('details')
     window.scrollTo({ top: 0, behavior: 'smooth' })
     fetchDetails(bike)
@@ -372,6 +397,7 @@ export default function App() {
     setIsParsing(false)
     setView('search')
     setSelectedBike(null)
+    selectedBikeRef.current = null
     setBikeCategories(null)
     setBikeDescription(null)
     setBikePhotos([])
@@ -593,6 +619,7 @@ export default function App() {
             onBack={handleBackToResults}
             onRetry={() => fetchDetails(selectedBike)}
             onEquipmentSelect={handleEquipmentSelect}
+            onSearchUsed={() => searchUsedBikes(selectedBike)}
           />
         )}
 

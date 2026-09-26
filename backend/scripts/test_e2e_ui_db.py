@@ -17,9 +17,12 @@ Cases
   E5  Expert review         -> endpoint_req_to_body_cache '/v1/bike/review'
                                (only cached when refs/sources exist -> so if the
                                UI shows sources, the row MUST be there)
-  E6  Offers (4 sources)    -> endpoint_req_to_body_cache offer endpoints; every
-                               cached offer response is non-empty (empty is never
-                               cached) and every stored price shows on the page.
+  E6  Offers (3 AI sources) -> endpoint_req_to_body_cache offer endpoints (allegro,
+                               ceneo, decathlon); every cached offer response is
+                               non-empty (empty is never cached) and every stored
+                               price shows on the page. /v1/bike/used is a pure
+                               bike_offer read since TODO-031 and never writes the
+                               generic cache, so it is not checked here.
 
   E2  DB-first short-circuit -> re-search with the top bike's brand+model+an
       unused year. That MISSES the generic cache (new key) yet must NOT add a new
@@ -57,7 +60,7 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent / "cache.db"
 
-OFFER_ENDPOINTS = ("/v1/bike/offer", "/v1/bike/ceneo", "/v1/bike/decathlon", "/v1/bike/used")
+OFFER_ENDPOINTS = ("/v1/bike/offer", "/v1/bike/ceneo", "/v1/bike/decathlon")
 
 # card / details / component selectors (verified against the frontend source)
 SEL_CARD = "button[aria-label^='View specifications for']"

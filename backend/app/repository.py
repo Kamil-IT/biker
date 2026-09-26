@@ -13,8 +13,6 @@ from .models import (
     BikeDetailPhoto,
     BikeDetailComponent,
     BikeMissingRequest,
-    BikeOffer,
-    BikeOfferPhoto,
     dialect_insert,
     get_session,
 )
@@ -519,24 +517,32 @@ def find_bikes_by_details(req) -> list[BikeResult]:
 # ── Missing-data requests (TODO-026) ────────────────────────────────────────
 
 
+def _find_bike_id(session, company: str, model: str) -> Optional[int]:
+    """Identity lookup normalised in Python (`strip().lower()`), never created.
+
+    SQLite's lower() is ASCII-only, so the compare happens here rather than in
+    SQL — see find_bikes_by_details. Oldest row wins should a case-split
+    duplicate identity exist.
+    """
+    brand, name = _lc(company), _lc(model)
+    return next(
+        (b.id for b in session.query(Bike.id, Bike.brand, Bike.model).order_by(Bike.id)
+         if _lc(b.brand) == brand and _lc(b.model) == name),
+        None,
+    )
+
+
 def record_missing_request(company: str, model: str, missing_type: str) -> MissingDataResponse:
     """Count one user request for a missing details section of an existing bike.
 
     The bike is looked up, never created: `save_search` always writes it before
     the details view can open, so a miss means that write was swallowed (locked
-    SQLite, unmigrated DB). Brand/model are normalised in Python like
-    find_bikes_by_details — SQLite's lower() is ASCII-only. A miss or a failed
-    write returns counter 0 and leaves the DB untouched.
+    SQLite, unmigrated DB). A miss or a failed write returns counter 0 and
+    leaves the DB untouched.
     """
     session = get_session()
     try:
-        brand, name = _lc(company), _lc(model)
-        # Oldest row wins should a case-split duplicate identity exist.
-        bike_id = next(
-            (b.id for b in session.query(Bike.id, Bike.brand, Bike.model).order_by(Bike.id)
-             if _lc(b.brand) == brand and _lc(b.model) == name),
-            None,
-        )
+        bike_id = _find_bike_id(session, company, model)
         if bike_id is None:
             logger.error(
                 "missing request: bike not found, nothing recorded | company=%r model=%r type=%r",

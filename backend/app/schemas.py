@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class SearchRequest(BaseModel):
@@ -264,8 +264,10 @@ class BikeOfferResponse(BaseModel):
 
 
 class UsedBikeRequest(BaseModel):
-    company: str
-    model: str
+    # Bounded to the bike.brand / bike.model column width: /v1/bike/used/search
+    # forwards both into the searcher's CLI prompt and its bike row (TODO-031).
+    company: str = Field(max_length=255)
+    model: str = Field(max_length=255)
 
     @field_validator("company", "model")
     @classmethod

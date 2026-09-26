@@ -76,6 +76,7 @@ export interface BikeOfferResponse {
   info: string
 }
 
+// Returned by both POST /v1/bike/used (DB read) and POST /v1/bike/used/search (on-demand OLX searcher, TODO-031).
 export interface UsedBikeResponse {
   offers: BikeOffer[]
   info: string

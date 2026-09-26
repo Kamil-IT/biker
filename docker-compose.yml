@@ -1,7 +1,8 @@
-# Full stack on one machine: backend + frontend, database = Cloud SQL on GCP (TODO-029).
+# Full stack on one machine: backend + frontend + OLX searcher, database = Cloud SQL on GCP (TODO-029/031).
 #   docker compose up --build   →   http://localhost:8080
 # Needs (all gitignored / outside the repo):
-#   backend/.env                    ANTHROPIC_API_KEY
+#   backend/.env                    ANTHROPIC_API_KEY, SEARCHER_API_KEY
+#   searcher/.env                   SEARCHER_API_KEY (same value) + CLAUDE_CODE_OAUTH_TOKEN for the claude CLI
 #   backend/gcp-prod-pgpass.conf    libpq pgpass line with the Cloud SQL password for user biker
 #   gcloud ADC                      `gcloud auth application-default login` (used by the proxy)
 # DATABASE_URL / PGPASSFILE are set here and override the .env values.
@@ -25,6 +26,7 @@ services:
       DATABASE_URL: postgresql+psycopg://biker@cloudsql-proxy:5432/biker
       PGPASSFILE: /tmp/pgpass
       PLAYWRIGHT_HEADLESS: "true"
+      SEARCHER_URL: http://searcher:8100   # SEARCHER_API_KEY comes from backend/.env
     volumes:
       - ./backend/gcp-prod-pgpass.conf:/run/secrets/pgpass:ro
     # libpq ignores a pgpass file readable by others (Windows bind mounts are 0777) and matches on
@@ -41,6 +43,30 @@ services:
     ports:
       - "8000:8000"
     shm_size: "1gb"   # Chromium crashes with Docker's default 64 MB /dev/shm
+
+  # On-demand OLX searcher (TODO-031): claude CLI + Playwright, writes bike_offer into the same database.
+  searcher:
+    build: ./searcher
+    env_file: searcher/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://biker@cloudsql-proxy:5432/biker
+      PGPASSFILE: /tmp/pgpass
+      PLAYWRIGHT_HEADLESS: "true"
+    volumes:
+      - ./backend/gcp-prod-pgpass.conf:/run/secrets/pgpass:ro
+    command:   # same pgpass dance as the backend
+      - sh
+      - -c
+      - >-
+        umask 077 && sed 's/^[^:]*:[^:]*:/*:*:/' /run/secrets/pgpass > /tmp/pgpass
+        && exec uvicorn app.main:app --host 0.0.0.0 --port $${PORT}
+    depends_on:
+      - cloudsql-proxy
+      - backend         # the backend's init_db() creates the shared tables …
+    restart: on-failure # … and the searcher refuses to start until they exist
+    ports:
+      - "8100:8100"
+    shm_size: "1gb"   # same Chromium /dev/shm issue as the backend
 
   frontend:
     build: ./frontend
