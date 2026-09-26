@@ -148,9 +148,12 @@ Van Rysel EDR Easy (633), Decathlon / Triban RC 520 (33); regresja: Trek Marlin 
 4. Bez incydentów środowiskowych tym razem — poza tym, że stare serwery deweloperskie z sesji TODO-032 nadal trzymały
    porty (nie ruszałem, wziąłem kolejne).
 
-## 7. Merge i commit
+## 7. Commit i PR
 
-_(uzupełniane)_
+Jeden commit `df8ae5b` (32 zmienione pliki + nowe: finder, fetcher, prompt, plan testów z 13 zrzutami, ten dokument i
+przeniesiony z niezacommitowanego stanu `docs/DECATHLON_SEARCHER_MIGRATION.md`) na branchu `feature/033-searcher-allegro`,
+PR [#104](https://github.com/Kamil-IT/biker/pull/104). `main` nie ruszył się w trakcie prac, więc bez konfliktów. Merge,
+przeniesienie zadania do `backlog/done/` i odhaczenie w Notion — po decyzji użytkownika (merged is the bar).
 
 ## 8. Wdrożenie na GCP
 
