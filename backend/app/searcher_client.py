@@ -1,26 +1,34 @@
-"""HTTP client for the on-demand searcher service (TODO-031 OLX, TODO-032 Decathlon).
+"""HTTP client for the on-demand searcher service (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro).
 
 The searcher (top-level `searcher/`, port 8100 locally) runs the Claude Code CLI
-once per search — plus Playwright once per OLX listing — and writes what it
-finds into bike_offer / bike_offer_photos. The backend only proxies the
+once per search — plus Playwright once per OLX or Allegro listing — and writes
+what it finds into bike_offer / bike_offer_photos. The backend only proxies the
 request, waits, and hands back the searcher's {offers, info} — it never calls
-Claude for OLX or Decathlon. One client, two sources: `search_olx` posts to
-/v1/search/olx, `search_decathlon` to /v1/search/decathlon (see SEARCH_PATHS);
-both responses have the same shape and are validated into the route's model.
+Claude for OLX, Decathlon or Allegro. One client, three sources: `search_olx`
+posts to /v1/search/olx, `search_decathlon` to /v1/search/decathlon and
+`search_allegro` to /v1/search/allegro (see SEARCH_PATHS); all three responses
+have the same shape and are validated into the route's model.
 
 Configuration (backend/.env):
   SEARCHER_URL           base URL, e.g. http://localhost:8100 — unset = not configured
   SEARCHER_API_KEY       shared secret sent as X-Searcher-Key — unset = not configured
   SEARCHER_TIMEOUT       seconds to wait for one search (default 600)
-  SEARCHER_MAX_INFLIGHT  concurrent searches this backend lets through (default 1)
+  SEARCHER_MAX_INFLIGHT  concurrent searches this backend lets through (default 2)
 
 Every search is billed to the Claude subscription and takes minutes, so two
 guards sit in front of the network call: identical (source, company, model)
 requests share one in-flight search (single-flight), and at most
-SEARCHER_MAX_INFLIGHT distinct searches run at once across BOTH sources — the
-searcher has a single CLI slot, so the semaphore is one process-wide object,
-not one per source — and the rest are refused straight away, as is a request
-the searcher itself answers 503 (busy) to. Queueing instead would let a search
+SEARCHER_MAX_INFLIGHT distinct searches run at once across ALL sources — the
+semaphore is one process-wide object, not one per source, because it mirrors
+the searcher's own capacity rather than anything per marketplace. The default
+is 2 since TODO-033: the "Nowe" card's button fires the Decathlon and Allegro
+searches together, and the searcher now allows two runs (locally
+SEARCHER_MAX_CONCURRENT=2; on Cloud Run --max-instances 2 with --concurrency 1,
+i.e. one CLI + one Chromium per instance). The rest are refused straight away,
+as is a request the searcher itself answers 503 (busy) to — and so is a 429
+from the searcher's URL: Cloud Run answers 429 "Rate exceeded" when every
+instance is at --concurrency and max-instances is reached, which is the same
+"no slot" condition seen from the outside. Queueing instead would let a search
 outlive SEARCHER_TIMEOUT and end in a second paid run.
 """
 import asyncio
@@ -36,12 +44,13 @@ from .schemas import BikeOfferResponse, UsedBikeResponse
 
 logger = logging.getLogger("biker.searcher")
 
-SEARCH_PATHS = {"olx": "/v1/search/olx", "decathlon": "/v1/search/decathlon"}
+SEARCH_PATHS = {"olx": "/v1/search/olx", "decathlon": "/v1/search/decathlon", "allegro": "/v1/search/allegro"}
 _SOURCE_BY_PATH = {path: source for source, path in SEARCH_PATHS.items()}  # for log lines
 DEFAULT_TIMEOUT = 600.0  # one CLI search + photo scraping can take minutes
 CONNECT_TIMEOUT = 10.0   # an unreachable searcher should fail fast, not after 600 s
-DEFAULT_MAX_INFLIGHT = 1  # must not exceed the searcher's SEARCHER_MAX_CONCURRENT (also 1)
+DEFAULT_MAX_INFLIGHT = 2  # Decathlon + Allegro fire together; must not exceed the searcher's capacity (also 2)
 DETAIL_MAX_LEN = 300     # the searcher's error text is relayed to the browser — keep it short
+BUSY_STATUSES = (503, 429)  # 503 = the searcher's own "slot taken"; 429 = Cloud Run "Rate exceeded" at max-instances
 
 ResponseT = TypeVar("ResponseT", bound=BaseModel)
 
@@ -65,7 +74,7 @@ class SearcherUnavailable(SearcherError):
 
 
 class SearcherBusy(SearcherError):
-    """SEARCHER_MAX_INFLIGHT other searches are running, or the searcher said 503 busy (503)."""
+    """SEARCHER_MAX_INFLIGHT other searches are running, or the searcher's URL answered 503 busy / 429 (503)."""
 
 
 class SearcherFailed(SearcherError):
@@ -142,10 +151,15 @@ async def _post_search(path: str, company: str, model: str, response_model: type
         raise SearcherUnavailable(f"searcher unreachable: {exc}") from exc
     elapsed = time.perf_counter() - t0
 
-    if resp.status_code == 503:
-        # The searcher refuses rather than queues when its one slot is taken.
-        logger.warning("searcher %s busy | detail=%r elapsed=%.2fs", source, _error_detail(resp, source), elapsed)
-        raise SearcherBusy("searcher busy")
+    if resp.status_code in BUSY_STATUSES:
+        # The searcher refuses rather than queues when its slots are taken (503);
+        # Cloud Run does the same in front of it with 429 once every instance is
+        # at --concurrency and --max-instances is reached. Both mean "try later".
+        logger.warning(
+            "searcher %s busy | status=%d detail=%r elapsed=%.2fs",
+            source, resp.status_code, _error_detail(resp, source), elapsed,
+        )
+        raise SearcherBusy(f"searcher busy (HTTP {resp.status_code})")
     if resp.status_code != 200:
         detail = _error_detail(resp, source)
         logger.error(
@@ -212,3 +226,8 @@ async def search_olx(company: str, model: str) -> UsedBikeResponse:
 async def search_decathlon(company: str, model: str) -> BikeOfferResponse:
     """Run (or join) the Decathlon search for one bike (TODO-032) — see _search."""
     return await _search(SEARCH_PATHS["decathlon"], company, model, BikeOfferResponse)
+
+
+async def search_allegro(company: str, model: str) -> BikeOfferResponse:
+    """Run (or join) the Allegro search for one bike (TODO-033) — see _search."""
+    return await _search(SEARCH_PATHS["allegro"], company, model, BikeOfferResponse)

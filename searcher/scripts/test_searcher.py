@@ -4,11 +4,12 @@
 
 Reads SEARCHER_URL (default http://localhost:8100) and SEARCHER_API_KEY from the
 environment or searcher/.env. Every case here is free: health, auth (401) and
-validation (422) on both search routes — no `claude -p` run is ever started, so
-the suite costs nothing and finishes in seconds. The one paid, live search of the
-whole test set is `backend/scripts/test_search.py` `case_decathlon_search`
-(through the backend proxy, only when the searcher is up); the OLX path and the
-DB writes are covered by the manual test plans under docs/testing/.
+validation (422) on all three search routes (olx, decathlon, allegro) — no
+`claude -p` run is ever started, so the suite costs nothing and finishes in
+seconds. The one paid, live search of the whole test set is
+`backend/scripts/test_search.py` `case_decathlon_search` (through the backend
+proxy, only when the searcher is up); the OLX and Allegro paths and the DB
+writes are covered by the manual test plans under docs/testing/.
 """
 import json
 import os
@@ -26,6 +27,7 @@ API_KEY = os.getenv("SEARCHER_API_KEY", "").strip()
 HEALTH_URL = f"{BASE_URL}/health"
 SEARCH_URL = f"{BASE_URL}/v1/search/olx"
 DECATHLON_URL = f"{BASE_URL}/v1/search/decathlon"
+ALLEGRO_URL = f"{BASE_URL}/v1/search/allegro"
 
 assert API_KEY, "SEARCHER_API_KEY must be set (env or searcher/.env)"
 
@@ -87,6 +89,20 @@ resp = httpx.post(DECATHLON_URL, json=bad_body, headers={"X-Searcher-Key": API_K
 _show("[TC-6] decathlon: blank model", bad_body, resp)
 assert resp.status_code == 422, f"Expected 422 for a blank model, got {resp.status_code}"
 print("OK -- 422 for a blank model on /v1/search/decathlon")
+
+# ── [TC-7] POST /v1/search/allegro without X-Searcher-Key → 401 ──
+alg_body = {"company": "Trek", "model": "Marlin 5"}
+resp = httpx.post(ALLEGRO_URL, json=alg_body, timeout=30)
+_show("[TC-7] allegro: no key", alg_body, resp)
+assert resp.status_code == 401, f"Expected 401 without a key, got {resp.status_code}"
+print("OK -- 401 without X-Searcher-Key on /v1/search/allegro")
+
+# ── [TC-8] POST /v1/search/allegro with the key but a blank model → 422 (no CLI run) ──
+bad_body = {"company": "Trek", "model": "   "}
+resp = httpx.post(ALLEGRO_URL, json=bad_body, headers={"X-Searcher-Key": API_KEY}, timeout=30)
+_show("[TC-8] allegro: blank model", bad_body, resp)
+assert resp.status_code == 422, f"Expected 422 for a blank model, got {resp.status_code}"
+print("OK -- 422 for a blank model on /v1/search/allegro")
 
 print("\nALL OK")
 sys.exit(0)

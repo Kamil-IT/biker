@@ -9,7 +9,8 @@ compose / Cloud Run settings win over the file):
   CLAUDE_BIN               path to the claude CLI; unset = whatever `claude` resolves to on PATH
   SEARCHER_CLAUDE_MODEL    model passed to `claude --model` (default claude-haiku-4-5-20251001)
   SEARCHER_CLI_TIMEOUT     seconds one CLI run may take before it is killed (default 300)
-  SEARCHER_MAX_CONCURRENT  CLI runs (each with its own browser) allowed at once (default 1)
+  SEARCHER_MAX_CONCURRENT  CLI runs (each with its own browser) allowed at once, counted across the
+                           three search routes (default 2: the UI fires Decathlon + Allegro together)
   PLAYWRIGHT_HEADLESS      true = no browser window (Docker / server); unset = visible browser
   CLAUDE_CODE_OAUTH_TOKEN  read by the CLI itself on a server (`claude setup-token`); never logged
 """
@@ -32,7 +33,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 DEFAULT_CLAUDE_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_CLI_TIMEOUT = 300.0
-DEFAULT_MAX_CONCURRENT = 1
+DEFAULT_MAX_CONCURRENT = 2  # TODO-033: the "Nowe" card runs Decathlon + Allegro at once
 
 
 def _env_number(name: str, default: float) -> float:
