@@ -113,4 +113,19 @@ offer is `is_new=false`, so its Used card is never empty → Cannondale Topstone
 Side effects left in the local database (real, paid searches — kept on purpose): OLX rows for Trek Marlin 5, Romet
 Wagant 3 and Cannondale Topstone Carbon 4; `bike_missing_request` counters for Romet Aspre / Romet Wagant 3.
 
+## Cloud Run (2026-09-26, after PR #97 was opened)
+
+`biker-searcher` deployed from image `searcher:f9f7c6f` (scale to zero, `--concurrency 1`, 900 s, same Cloud SQL);
+backend `854b5e5` redeployed with `SEARCHER_URL` + the `searcher-api-key` secret, frontend redeployed. Checked on the public URLs:
+
+| Check | Result |
+|---|---|
+| `GET /health` on the searcher (anonymous, after the `allUsers` binding) | 200 `{"status":"ok","claude_cli":"2.1.283 (Claude Code)","database":true}` |
+| `POST /v1/search/olx` without `X-Searcher-Key` | 401 |
+| backend `POST /v1/bike/used/search` for an unknown bike | 404 |
+| backend `POST /v1/bike/used` Romet Aspre before any search | 200 `{"offers":[],"info":""}` |
+| backend `POST /v1/bike/used/search` Romet Aspre | 200, 5 real OLX listings with 1–4 photos each, 78 s (CLI run on the subscription, Playwright on Cloud Run) |
+| backend `POST /v1/bike/used` Romet Aspre afterwards | the same 5 rows from Cloud SQL |
+| direct search on the searcher (Trek Marlin 5, identity token) | 200, 5 listings × 4 photos, 89 s; rows visible through the public backend |
+
 The task is ready to move to `backlog/done/` once its PR merges (merged is the bar).

@@ -80,12 +80,13 @@ search is triggered by the user clicking **Poproś o dane** in the "Używane" of
 - Deploying to GCP before the user says so, or choosing the GCP database for them.
 
 ## Acceptance criteria
-- [ ] `POST /v1/bike/used` makes **zero** Anthropic/CLI calls and returns the stored OLX offers (empty list if none).
-- [ ] Clicking **Poproś o dane** in the "Używane" card increments `bike_missing_request` **and** runs the searcher;
+- [x] `POST /v1/bike/used` makes **zero** Anthropic/CLI calls and returns the stored OLX offers (empty list if none).
+- [x] Clicking **Poproś o dane** in the "Używane" card increments `bike_missing_request` **and** runs the searcher;
       the card then shows real OLX listings with photos, and `bike_offer` / `bike_offer_photos` hold them.
-- [ ] `curl -H "X-Searcher-Key: …" -d '{"company":"Trek","model":"Marlin 5"}' http://localhost:8100/v1/search/olx`
+- [x] `curl -H "X-Searcher-Key: …" -d '{"company":"Trek","model":"Marlin 5"}' http://localhost:8100/v1/search/olx`
       returns offers; without the header → 401.
-- [ ] `backend/app/bike_used_finder.py` and `olx_image_fetcher.py` no longer exist in the backend.
-- [ ] Smoke tests in `backend/scripts/test_search.py` and `searcher/scripts/test_searcher.py` pass.
-- [ ] `/manual-tester` run locally is green.
-- [ ] Docs updated (see Scope). After the PR merges: tick **Zrobione** on the Notion task.
+- [x] `backend/app/bike_used_finder.py` and `olx_image_fetcher.py` no longer exist in the backend.
+- [x] Smoke tests in `backend/scripts/test_search.py` and `searcher/scripts/test_searcher.py` pass.
+- [x] `/manual-tester` run locally is green.
+- [x] Docs updated (see Scope). After the PR merges: tick **Zrobione** on the Notion task.
+- [x] Deployed: Cloud Run `biker-searcher` (scale to zero, same Cloud SQL as the backend), backend + frontend redeployed with `SEARCHER_URL`; end-to-end verified on the public URLs (`docs/testing/TODO_031/TEST_PLAN.md` § Cloud Run). PR: https://github.com/Kamil-IT/biker/pull/97
