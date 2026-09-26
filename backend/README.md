@@ -84,7 +84,7 @@ uvicorn app.main:app --reload --port 8000
 `SEARCHER_URL` / `SEARCHER_API_KEY` (TODO-031/032) point `POST /v1/bike/used/search` and `POST /v1/bike/decathlon/search`
 at the on-demand searcher (top-level `searcher/`, `http://localhost:8100` locally; the key is sent as `X-Searcher-Key` and
 must equal the searcher's own `SEARCHER_API_KEY`). `SEARCHER_TIMEOUT` (seconds, default 600) bounds one search. Leave
-`SEARCHER_URL` unset to run without the searcher — both routes then answer 503, while `POST /v1/bike/used` and
+`SEARCHER_URL` unset to run without the searcher — both routes then answer 503, while `POST /v1/bike/used/olx` and
 `POST /v1/bike/decathlon` keep serving whatever is stored in `bike_offer`.
 
 ```bash
@@ -92,7 +92,7 @@ must equal the searcher's own `SEARCHER_API_KEY`). `SEARCHER_TIMEOUT` (seconds, 
 python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, used, used/search, decathlon, decathlon/search; add --ai for the API cases
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
 python scripts/test_review.py   # smoke-test POST /v1/bike/review
-python scripts/test_offer.py    # smoke-test POST /v1/bike/offer
+python scripts/test_offer.py    # smoke-test POST /v1/bike/allegro
 ```
 
 ```bash
@@ -435,12 +435,14 @@ The response parser scans **every** text block for the first balanced `{...}` ra
 
 ---
 
-### `POST /v1/bike/offer`
+### `POST /v1/bike/allegro`
+
+Formerly `/v1/bike/offer`; the generic cache still stores its rows under the old key `/v1/bike/offer`.
 
 Return current buying offers from Polish cycling marketplaces for a specific bike model.
 
 ```http
-POST http://localhost:8000/v1/bike/offer
+POST http://localhost:8000/v1/bike/allegro
 Content-Type: application/json
 
 {
@@ -471,12 +473,12 @@ Content-Type: application/json
 
 ---
 
-### `POST /v1/bike/used`
+### `POST /v1/bike/used/olx`
 
 Return the used-bike listings from OLX.pl **stored in the database** for a specific bike model — a pure read of `bike_offer` + `bike_offer_photos` (TODO-031). **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/bike/used/search`](#post-v1bikeusedsearch)); nothing stored → 200 with an empty list.
 
 ```http
-POST http://localhost:8000/v1/bike/used
+POST http://localhost:8000/v1/bike/used/olx
 Content-Type: application/json
 
 {
@@ -516,7 +518,7 @@ Content-Type: application/json
 
 ### `POST /v1/bike/used/search`
 
-Run the OLX search **on demand** through the separate searcher service (`searcher/`, TODO-031) and wait for it. The searcher runs the Claude Code CLI (subscription OAuth token — no Anthropic API key) with `bike_offer_olx.md`, scrapes up to 4 photos per listing with Playwright, and **replaces** the bike's `olx.pl` rows in `bike_offer` + `bike_offer_photos` — so the next `POST /v1/bike/used` returns them. Triggered by the frontend's **Poproś o dane** button in the "Używane" card (alongside `POST /v1/bike/missing`); also usable from `curl`. Never cached.
+Run the OLX search **on demand** through the separate searcher service (`searcher/`, TODO-031) and wait for it. The searcher runs the Claude Code CLI (subscription OAuth token — no Anthropic API key) with `bike_offer_olx.md`, scrapes up to 4 photos per listing with Playwright, and **replaces** the bike's `olx.pl` rows in `bike_offer` + `bike_offer_photos` — so the next `POST /v1/bike/used/olx` returns them. Triggered by the frontend's **Poproś o dane** button in the "Używane" card (alongside `POST /v1/bike/missing`); also usable from `curl`. Never cached.
 
 ```http
 POST http://localhost:8000/v1/bike/used/search
@@ -528,7 +530,7 @@ Content-Type: application/json
 }
 ```
 
-**Response:** the searcher's `{ offers, info }` — the same shape as `POST /v1/bike/used` (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `offers: []`.
+**Response:** the searcher's `{ offers, info }` — the same shape as `POST /v1/bike/used/olx` (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `offers: []`.
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/missing`). The searcher itself creates missing bikes for direct `curl` calls, but the backend never lets anonymous web traffic mint `bike` rows — they would surface in the DB-first search — nor spend a subscription run on them.
 - **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"OLX searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"OLX searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"OLX searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 1, never more than the searcher's `SEARCHER_MAX_CONCURRENT`) distinct searches and the searcher answers 503 itself when its slot is taken — nothing queues, because a queued search would outlive the timeout and end in a second paid run. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
@@ -581,7 +583,7 @@ Content-Type: application/json
 
 ### `POST /v1/bike/decathlon`
 
-Return the decathlon.pl offers **stored in the database** for a specific bike model — a pure read of `bike_offer` (TODO-032, the same move `/v1/bike/used` made in TODO-031). **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/bike/decathlon/search`](#post-v1bikedecathlonsearch)); nothing stored → 200 with an empty list.
+Return the decathlon.pl offers **stored in the database** for a specific bike model — a pure read of `bike_offer` (TODO-032, the same move `/v1/bike/used/olx` made in TODO-031). **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/bike/decathlon/search`](#post-v1bikedecathlonsearch)); nothing stored → 200 with an empty list.
 
 ```http
 POST http://localhost:8000/v1/bike/decathlon

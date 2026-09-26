@@ -220,11 +220,16 @@ async def bike_review(req: BikeReviewRequest) -> BikeReviewResponse:
     return result
 
 
-@app.post("/v1/bike/offer", response_model=BikeOfferResponse)
-async def bike_offer(req: BikeOfferRequest) -> BikeOfferResponse:
-    logger.info("offer request | company=%r model=%r", req.company, req.model)
+# The route was renamed /v1/bike/offer -> /v1/bike/allegro; the cache key keeps the
+# old name so the rows already stored under it still hit.
+_ALLEGRO_CACHE_KEY = "/v1/bike/offer"
+
+
+@app.post("/v1/bike/allegro", response_model=BikeOfferResponse)
+async def bike_allegro(req: BikeOfferRequest) -> BikeOfferResponse:
+    logger.info("allegro offer request | company=%r model=%r", req.company, req.model)
     _fields = {"company": req.company, "model": req.model}
-    cached = get_cached("/v1/bike/offer", _fields, BikeOfferResponse)
+    cached = get_cached(_ALLEGRO_CACHE_KEY, _fields, BikeOfferResponse)
     if cached is not None:
         return cached
 
@@ -233,11 +238,11 @@ async def bike_offer(req: BikeOfferRequest) -> BikeOfferResponse:
     elapsed = time.perf_counter() - t_start
     logger.info("offer complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     if result.offers:
-        set_cached("/v1/bike/offer", _fields, result)
+        set_cached(_ALLEGRO_CACHE_KEY, _fields, result)
     return result
 
 
-@app.post("/v1/bike/used", response_model=UsedBikeResponse)
+@app.post("/v1/bike/used/olx", response_model=UsedBikeResponse)
 async def bike_used(req: UsedBikeRequest) -> UsedBikeResponse:
     """Stored OLX listings for the bike — a pure DB read (TODO-031).
 
@@ -259,7 +264,7 @@ async def bike_used_search(req: UsedBikeRequest) -> UsedBikeResponse:
 
     Proxies to {SEARCHER_URL}/v1/search/olx and waits for it (SEARCHER_TIMEOUT,
     default 600 s). The searcher writes the listings to the DB, so a later
-    /v1/bike/used returns them. 503 when the searcher is not configured or
+    /v1/bike/used/olx returns them. 503 when the searcher is not configured or
     unreachable, 502 (its detail passed through) when it fails. Never cached.
     """
     logger.info("used bikes search request | company=%r model=%r", req.company, req.model)

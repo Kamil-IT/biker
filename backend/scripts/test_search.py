@@ -9,13 +9,13 @@ Every case seeds its own namespaced fixture rows and deletes them afterwards, so
 it passes on a cold or aged database. Endpoints covered here:
 
   no API   /v1/bike/search (DB hit) · /v1/bike/search-cache · /v1/bike/details-cache
-           /v1/bike/missing · /v1/bike/used · /v1/bike/used/search (404 only — no paid run)
+           /v1/bike/missing · /v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
            /v1/bike/decathlon · /v1/bike/decathlon/search (404 + foreign-brand skip always; the
            live house-brand search — the ONE paid searcher run in the suite — only when the searcher is up)
   --ai     /v1/bike/search (free text) · /v1/bike/parse · /v1/bike/ceneo
 
 The other endpoints have their own single-happy-path script: test_details.py
-(/details), test_review.py (/review), test_offer.py (/offer), test_equipment.py
+(/details), test_review.py (/review), test_offer.py (/allegro), test_equipment.py
 (/equipment/details), test_equipment_review.py (/equipment/review).
 Exit code 0 = every selected case passed (skips do not fail); 1 = a failure.
 """
@@ -48,7 +48,7 @@ SEARCH_URL = f"{BASE}/v1/bike/search"
 SEARCH_CACHE_URL = f"{BASE}/v1/bike/search-cache"
 DETAILS_CACHE_URL = f"{BASE}/v1/bike/details-cache"
 MISSING_URL = f"{BASE}/v1/bike/missing"
-USED_URL = f"{BASE}/v1/bike/used"
+USED_URL = f"{BASE}/v1/bike/used/olx"
 USED_SEARCH_URL = f"{BASE}/v1/bike/used/search"
 PARSE_URL = f"{BASE}/v1/bike/parse"
 CENEO_URL = f"{BASE}/v1/bike/ceneo"
@@ -284,7 +284,7 @@ FIX_USED_BRAND, FIX_USED_MODEL = "Smoke Fixture", "Used Bike"
 
 
 def case_used():
-    """/v1/bike/used serves stored OLX offers from bike_offer (no AI, no cache)."""
+    """/v1/bike/used/olx serves stored OLX offers from bike_offer (no AI, no cache)."""
     _delete_bike(FIX_USED_BRAND, FIX_USED_MODEL)
     url = "https://www.olx.pl/d/oferta/smoke-fixture-used-ID1.html"
     photo = "https://ireland.apollo.olxcdn.com/smoke/one.jpg"

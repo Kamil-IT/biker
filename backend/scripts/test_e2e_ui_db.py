@@ -20,7 +20,7 @@ Cases
   E6  Offers (2 AI sources) -> endpoint_req_to_body_cache offer endpoints (allegro,
                                ceneo); every cached offer response is non-empty
                                (empty is never cached) and every stored price
-                               shows on the page. /v1/bike/used (TODO-031) and
+                               shows on the page. /v1/bike/used/olx (TODO-031) and
                                /v1/bike/decathlon (TODO-032) are pure bike_offer
                                reads and never write the generic cache, so they
                                are not checked here.
@@ -61,7 +61,8 @@ from pathlib import Path
 
 DB_PATH = Path(__file__).resolve().parent.parent / "cache.db"
 
-OFFER_ENDPOINTS = ("/v1/bike/offer", "/v1/bike/ceneo")
+# generic-cache keys (not routes): /v1/bike/allegro still caches under its old name
+OFFER_ENDPOINTS = ("/v1/bike/offer",)
 
 # card / details / component selectors (verified against the frontend source)
 SEL_CARD = "button[aria-label^='View specifications for']"

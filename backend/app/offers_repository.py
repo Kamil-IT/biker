@@ -2,7 +2,7 @@
 
 Every row here is written by the separate searcher service
 (searcher/app/repository.py): OLX listings (source 'olx.pl', TODO-031) are
-read for POST /v1/bike/used and Decathlon offers (source 'decathlon.pl',
+read for POST /v1/bike/used/olx and Decathlon offers (source 'decathlon.pl',
 TODO-032) for POST /v1/bike/decathlon. No TTL — while rows exist the
 frontend's "Request data" button stays hidden, so nothing re-triggers the
 search. Lives next to repository.py rather than in it to keep that file from

@@ -7,7 +7,7 @@ AI-powered bike finder. Describe what you're looking for in plain English and ge
 1. You enter a free-text description (e.g. *"comfortable bike for daily 10 km city commute"*)
 2. The backend first searches its own bike database: every structured filter it can check (brand, model, frame material, wheel size, frame size, gender, electric, battery, brakes, drivetrain, belt drive) is matched against stored bike specs. All matching bikes are returned (no cap) with no AI call
 3. Only when the database has no match, a single Claude Haiku call recommends every real bike that fits (at least 1 — the closest match when nothing meets every filter)
-4. Click a result to open the details page — the backend fetches specs, description, manufacturer photos, review score, and current Allegro / Ceneo offers in parallel via Claude web search + Playwright; Decathlon offers and used OLX listings are read from the database only (they get there through the on-demand searches below). Any section (photos, overview, specs, review, Used / New offers) still without data after 5 s — or with an empty/failed response — shows a **Request data** button instead of its spinner; clicking it records the request via `POST /v1/bike/missing`. Data that arrives later replaces the button
+4. Click a result to open the details page — the backend fetches specs, description, manufacturer photos, review score, and current Allegro offers in parallel via Claude web search + Playwright; Decathlon offers and used OLX listings are read from the database only (they get there through the on-demand searches below). Any section (photos, overview, specs, review, Used / New offers) still without data after 5 s — or with an empty/failed response — shows a **Request data** button instead of its spinner; clicking it records the request via `POST /v1/bike/missing`. Data that arrives later replaces the button
 5. In the **Used** offers card that same button also starts the on-demand OLX search (`POST /v1/bike/used/search` → the `searcher/` service, which runs the Claude Code CLI on your subscription and stores what it finds in `bike_offer`). The button reads "Szukam na OLX…" while it runs, then the real listings with photos replace it — or "Nie znaleziono ofert" when there are none. In the **New** card it does the same for Decathlon (`POST /v1/bike/decathlon/search` → the same searcher, "Szukam na Decathlon…", no photos) — but only for Decathlon's house brands (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt; `backend/app/decathlon_brands.py`): any other brand gets an instant "Nie znaleziono ofert" with no search spent (closes `TODO_ISSUE_010`)
 6. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel). Equipment is informational only — no shopping/offer links
 
@@ -133,11 +133,11 @@ instead of exceeding the 2 GiB and getting the instance killed; raise it only to
 
 | Command | What it does |
 |---|---|
-| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/bike/used`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`) |
+| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/bike/used/olx`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`) |
 | `cd searcher && python scripts/test_searcher.py` | Smoke-test the searcher (`/health`, 401/422 on both search routes — free, no CLI run; the single paid live run lives in `backend/scripts/test_search.py` `case_decathlon_search`) |
 | `cd backend && python scripts/test_details.py` | Smoke-test `POST /v1/bike/details` |
 | `cd backend && python scripts/test_review.py` | Smoke-test `POST /v1/bike/review` |
-| `cd backend && python scripts/test_offer.py` | Smoke-test `POST /v1/bike/offer` |
+| `cd backend && python scripts/test_offer.py` | Smoke-test `POST /v1/bike/allegro` |
 | `cd backend && python scripts/test_equipment.py` | Smoke-test `POST /v1/equipment/details` + `/v1/equipment/review` |
 | `cd backend && pytest` | Review-aggregation unit tests (no API key) |
 | `cd frontend && npm run build` | TypeScript check + production bundle → `dist/` |
@@ -197,10 +197,10 @@ biker/
 │   │       ├── equipment_photos.md        # Equipment manufacturer page URL prompt
 │   │       └── equipment_review.md        # Equipment review prompt (no offer links)
 │   └── scripts/
-│       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing, /v1/bike/used, /v1/bike/used/search, /v1/bike/decathlon, /v1/bike/decathlon/search)
+│       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing, /v1/bike/used/olx, /v1/bike/used/search, /v1/bike/decathlon, /v1/bike/decathlon/search)
 │       ├── test_details.py            # Smoke test for /v1/bike/details
 │       ├── test_review.py             # Smoke test for /v1/bike/review
-│       ├── test_offer.py              # Smoke test for /v1/bike/offer
+│       ├── test_offer.py              # Smoke test for /v1/bike/allegro
 │       ├── test_equipment.py          # Smoke test for /v1/equipment/details + /review
 │       └── test_equipment_review.py   # Focused regression for equipment-review JSON extraction
 └── frontend/

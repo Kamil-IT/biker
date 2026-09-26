@@ -40,7 +40,7 @@ contents of `backend/cache.db`:
 | `/v1/bike/offer` (allegro.pl) | 7 | 7 |
 | `/v1/bike/ceneo` | 7 | 7 |
 | `/v1/bike/decathlon` | 4 | 4 |
-| `/v1/bike/used` (olx.pl) | 7 | 24 |
+| `/v1/bike/used/olx` (olx.pl) | 7 | 24 |
 | **total** | **25** | **42** |
 
 `bike_offers` = 0 rows. `bike_offer_photos` = 0 rows. (`cache` holds 163 rows overall; the other
@@ -143,7 +143,7 @@ These are real, found in the code — each needs a decision, not a hypothesis:
   This test is deleted with the blob path once green — it exists to gate the cutover.
 - `scripts/test_search.py` — add the smoke test CLAUDE.md requires: `POST /v1/bike/offer` twice for
   the same bike, HTTP 200 both times, byte-identical JSON on the second (stored-result) call. Same
-  for `/v1/bike/used`.
+  for `/v1/bike/used/olx`.
 
 ### Frontend
 None. `BikeOffer` payload shape is unchanged.
