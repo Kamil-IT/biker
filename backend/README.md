@@ -89,7 +89,7 @@ must equal the searcher's own `SEARCHER_API_KEY`). `SEARCHER_TIMEOUT` (seconds, 
 
 ```bash
 # In a second terminal:
-python scripts/test_search.py   # smoke-test POST /v1/bike/search (+ the DB-only routes: search-cache, missing, used, decathlon — TC-20 – TC-35)
+python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, used, used/search, decathlon, decathlon/search; add --ai for the API cases
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
 python scripts/test_review.py   # smoke-test POST /v1/bike/review
 python scripts/test_offer.py    # smoke-test POST /v1/bike/offer
@@ -510,7 +510,7 @@ Content-Type: application/json
 
 **Flow:** none — no outbound HTTP calls; one DB read of `bike` + `bike_offer` + `bike_offer_photos`.
 
-**Tests:** `scripts/test_search.py` TC-30 (seeded fixture bike with 2 `olx.pl` offers → exactly those 2 in `id` order, photos in `display_order`, < 5 s — the read is ~0.5 s, the rest is Windows refusing `localhost` as `::1` first, no generic-cache row) and TC-31 (unknown bike → 200 `{ "offers": [], "info": "" }` in < 5 s).
+**Tests:** `scripts/test_search.py` `case_used` — a seeded fixture bike with 1 `olx.pl` offer and 1 photo → exactly that offer (`url`, `price`, `city`, `photos`), `is_new` false, `source = "olx.pl"`, `info` empty.
 
 ---
 
@@ -538,7 +538,7 @@ Content-Type: application/json
 **Flow:**
 1. `POST {SEARCHER_URL}/v1/search/olx` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), which runs the `claude` CLI once (`WebSearch`/`WebFetch`, `claude-haiku-4-5-20251001`) and Playwright once per listing, then writes the rows. The backend itself makes no Anthropic call.
 
-**Tests:** `scripts/test_search.py` TC-32 — an unknown bike is a **404** whatever the searcher's state; then it probes `GET {SEARCHER_URL}/health` (3 s) and, when reachable, runs a live Trek Marlin 5 search (200, every `url` on `https://www.olx.pl/`, `source = "olx.pl"`, no generic-cache row) and checks that `POST /v1/bike/used` then returns the same offers (DB round-trip); otherwise expects **503** and prints SKIP for the live part.
+**Tests:** `scripts/test_search.py` `case_used_search` — SKIP unless `GET {SEARCHER_URL}/health` answers; then one live search for the first bike in `bike` (200, `{offers, info}` only, every offer `source = "olx.pl"` and `is_new` false).
 
 ---
 
@@ -619,7 +619,7 @@ Content-Type: application/json
 
 **Flow:** none — pure DB read of `bike_offer` / `bike_offer_photos`, no outbound call.
 
-**Tests:** `scripts/test_search.py` TC-33 (seeded fixture bike with 1 `decathlon.pl` offer, `is_new` true, `city` null → exactly that offer with `photos: []`, < 5 s, no generic-cache row) and TC-34 (unknown bike → 200 `{ "offers": [], "info": "" }` in < 5 s).
+**Tests:** `scripts/test_search.py` `case_decathlon` — a seeded fixture bike with 1 `decathlon.pl` offer (`is_new` true, `city` null) → exactly that offer with `photos: []` in < 5 s and no generic-cache row; then an unknown bike → 200 `{ "offers": [], "info": "" }`.
 
 ---
 
@@ -648,7 +648,7 @@ Content-Type: application/json
 **Flow:**
 1. `POST {SEARCHER_URL}/v1/search/decathlon` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), which runs the `claude` CLI once (`WebSearch`/`WebFetch`, no Playwright) and writes the rows. The backend itself makes no Anthropic call. — **or none** when the brand is not a Decathlon house brand (answered from the allowlist).
 
-**Tests:** `scripts/test_search.py` TC-35 — an unknown bike is a **404** whatever the searcher's state; `Trek Marlin 5` (a known bike of a foreign brand) is a 200 with `offers: []` and an `info` naming Decathlon in < 5 s with no searcher call; then it probes `GET {SEARCHER_URL}/health` (3 s) and, when reachable, runs a live `Decathlon` / `Rockrider ST 100` search — the identity the DB-first search already carries, not a fresh `Rockrider` / `ST 100` row, because a decathlon.pl product URL is globally unique in `bike_offer` and a duplicate identity would capture it (the `bike` row is seeded if missing and kept; 200, every `url` on `https://www.decathlon.pl/`, `source = "decathlon.pl"`, `photos: []`, no generic-cache row) and, when at least one offer came back, checks that `POST /v1/bike/decathlon` then returns the same `(url, price)` set (DB round-trip; 0 offers prints a WARNING — the stored rows are kept, so only their shape is checked); otherwise expects **503** and prints SKIP for the live part.
+**Tests:** `scripts/test_search.py` `case_decathlon_search` — an unknown bike is a **404** whatever the searcher's state; a seeded fixture bike of a foreign brand is a 200 with `offers: []` and an `info` naming Decathlon in < 5 s with no searcher call and no generic-cache row; then, only when `GET {SEARCHER_URL}/health` answers (otherwise SKIP), it runs a live `Decathlon` / `Rockrider ST 100` search — the identity the DB-first search already carries, not a fresh `Rockrider` / `ST 100` row, because a decathlon.pl product URL is globally unique in `bike_offer` and a duplicate identity would capture it (the `bike` row is seeded if missing and kept; 200, every `url` on `https://www.decathlon.pl/`, `source = "decathlon.pl"`, `photos: []`, no generic-cache row) and, when at least one offer came back, checks that `POST /v1/bike/decathlon` then returns the same `(url, price)` set (DB round-trip; 0 offers prints a WARNING — the stored rows are kept, so only their shape is checked).
 
 ---
 

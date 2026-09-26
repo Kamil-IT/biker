@@ -76,7 +76,8 @@ triggered only by the user clicking **Poproś o dane** in the **"Nowe"** offers 
 - `app/schemas.py` — `BikeOfferRequest` fields get `Field(max_length=255)` (they now reach the searcher's prompt).
 - **Delete** `app/bike_offer_decathlon_finder.py` and `app/prompts/bike_offer_decathlon.md`.
 - `.env.example` — comment: `SEARCHER_URL`/`SEARCHER_API_KEY` also back `/v1/bike/decathlon/search`.
-- `scripts/test_search.py` — replace the Decathlon AI + cache-hit tests with TC-33 (seeded `decathlon.pl` fixture:
+- `scripts/test_search.py` — replace the Decathlon AI + cache-hit tests with TC-33 (after the merge of PR #100 the
+  suite is one `case_*` function per endpoint: these became `case_decathlon` and `case_decathlon_search`) (seeded `decathlon.pl` fixture:
   `is_new` true, `city` null, `photos []`, source, no generic-cache row, < 5 s), TC-34 (unknown bike → fast 200
   empty), TC-35 (`/v1/bike/decathlon/search`: unknown bike → 404; `Trek Marlin 5` → 200 `offers: []` with `info`
   naming Decathlon in < 5 s and no searcher call; live `Rockrider ST 100` when `{SEARCHER_URL}/health` answers —
@@ -103,18 +104,19 @@ triggered only by the user clicking **Poproś o dane** in the **"Nowe"** offers 
 
 ## Acceptance criteria
 - [x] `POST /v1/bike/decathlon` makes **zero** Anthropic/CLI calls and returns the stored decathlon.pl offers (empty
-      list when none; unknown bike → 200 empty). — TC-33/34, TC-032-01
+      list when none; unknown bike → 200 empty). — `case_decathlon` (ex TC-33/34), TC-032-01
 - [x] Clicking **Poproś o dane** in the "Nowe" card increments `bike_missing_request` (`offers_new`) **and** runs the
       Decathlon search; the card then shows a real decathlon.pl offer, `bike_offer` holds it, and reopening the bike reads
       it from the DB without any AI call. — TC-032-02/03/01 (Riverside 500, Van Rysel GRVL GRX AF); Rockrider ST 100 via
       the smoke suites (its row is stored by `test_searcher.py` TC-8 before the browser cases run)
 - [x] For a non-Decathlon brand (e.g. Trek) the click ends in "Nie znaleziono ofert" in < 1 s with **no** searcher run.
-      — TC-35(b) 0.29 s, TC-032-04 0.53 s
+      — `case_decathlon_search` foreign-brand step (ex TC-35b) 0.29 s, TC-032-04 0.53 s
 - [x] `curl -H "X-Searcher-Key: …" -d '{"company":"Decathlon","model":"Rockrider ST 100"}' http://localhost:8100/v1/search/decathlon`
       returns the offer; without the header → 401. — `test_searcher.py` TC-7/8/9 (the identity the app already carries;
       a fresh `Rockrider / ST 100` row would capture the product URL, see the test plan K1)
 - [x] `backend/app/bike_offer_decathlon_finder.py` and `backend/app/prompts/bike_offer_decathlon.md` no longer exist.
-- [x] Smoke tests in `backend/scripts/test_search.py` (TC-33–35) and `searcher/scripts/test_searcher.py` (TC-7–9) pass.
+- [x] Smoke tests in `backend/scripts/test_search.py` (`case_decathlon`, `case_decathlon_search` — ex TC-33–35) and
+      `searcher/scripts/test_searcher.py` (TC-7–9) pass.
 - [x] `/manual-tester` run locally is green (`docs/testing/TODO_032/TEST_PLAN.md`, 8/8).
 - [x] Docs updated (see Contract). `TODO_ISSUE_010` → `DONE_ISSUE_010` in `backlog/done/` when the PR merges.
 - [x] Deployed only after the user's explicit go-ahead: `biker-searcher` new image, backend + frontend redeployed
