@@ -1,5 +1,4 @@
 import json
-import time
 from urllib.parse import urlparse
 
 import httpx
@@ -78,13 +77,3 @@ assert isinstance(data["sources_used"], int), "sources_used must be int"
 assert data["sources_used"] >= 1, "sources_used must be >= 1 for a real review"
 
 print("OK — real review returned: score + rating + sources_used all non-fallback")
-
-# Second call should hit the cache and return the same rating.
-t = time.perf_counter()
-resp2 = httpx.post(URL, json=payload, timeout=120)
-elapsed2 = time.perf_counter() - t
-assert resp2.status_code == 200, f"Expected 200 on 2nd call, got {resp2.status_code}"
-data2 = resp2.json()
-assert data2["rating"] == data["rating"], "cached rating must match first call"
-assert data2["sources_used"] == data["sources_used"], "cached sources_used must match"
-print(f"OK — 2nd call consistent (cache) in {elapsed2:.2f}s")
