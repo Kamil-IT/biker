@@ -13,6 +13,17 @@ Depends on TODO-028 (Postgres) and TODO-029 (backend image, headless Playwright)
 - Project `biker-engine-prod` (number 919806073640) created, set as the gcloud default, billing account
   `01BCBC-E85F03-9949DB` (Free Trial) linked.
 
+## Status (2026-09-26) — step 1 "minimal deploy with UI" done, step 2 open
+- Live: https://biker-frontend-919806073640.europe-central2.run.app (frontend) →
+  https://biker-backend-919806073640.europe-central2.run.app (backend), both public, Cloud SQL `biker-pg` over the
+  `/cloudsql/…` socket, secrets `anthropic-api-key` / `db-password` in Secret Manager, SA `biker-run`.
+- Decision change (interview 2026-09-25): **frontend runs on Cloud Run too** (the compose nginx image with
+  `BACKEND_URL`), not Firebase Hosting — no extra CLI, and no 60 s rewrite timeout on `/v1/bike/details`.
+- `scripts/deploy.ps1` never touches IAM; the `allUsers` run.invoker binding was done by hand once.
+- Sanity check (cache happy path) 9/9 locally and on the public URL: `docs/testing/TODO-030/TEST_PLAN.md`.
+- Still to do (step 2, same PR): per-IP rate limit → 429 + UI message, budget alerts, Anthropic spend limit,
+  `docs/DEPLOYMENT.md`. The Anthropic credit is exhausted, so only cached data works until topped up.
+
 ## Decisions (agreed 2026-09-24)
 1. **Stack**: Cloud Run (backend) + Cloud SQL for PostgreSQL (smallest shared-core instance) + Firebase Hosting
    (frontend), region `europe-central2` (Warsaw).

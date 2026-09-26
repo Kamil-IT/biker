@@ -45,7 +45,7 @@ def _tail(text) -> str:
 # No ANTHROPIC_API_KEY: the CLI must use the subscription (OAuth) login. The
 # other two are secrets the CLI (an LLM with network tools, fed user text)
 # has no business seeing. CLAUDE_CODE_OAUTH_TOKEN stays — the CLI needs it.
-_STRIP_FROM_CHILD = {"ANTHROPIC_API_KEY", "SEARCHER_API_KEY", "DATABASE_URL"}
+_STRIP_FROM_CHILD = {"ANTHROPIC_API_KEY", "SEARCHER_API_KEY", "DATABASE_URL", "PGPASSWORD", "PGPASSFILE"}
 
 
 def _child_env() -> dict[str, str]:

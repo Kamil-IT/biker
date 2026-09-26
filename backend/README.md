@@ -27,6 +27,17 @@ Every table — the generic response cache included — goes through the one SQL
 | unset | SQLite file `backend/cache.db` (FK enforcement + WAL switched on per connection) |
 | `postgresql+psycopg://…` | PostgreSQL (`pool_pre_ping`, session `timezone=UTC`) |
 
+**GCP Cloud SQL (`biker-pg`, the database the app now uses).** Run the Cloud SQL Auth Proxy on the host
+(`cloud-sql-proxy --gcloud-auth --port 6543 biker-engine-prod:europe-central2:biker-pg`) and set in `backend/.env`:
+
+```
+DATABASE_URL=postgresql+psycopg://biker@127.0.0.1:6543/biker
+PGPASSFILE=C:/…/backend/gcp-prod-pgpass.conf
+```
+
+The URL carries no password: libpq reads it from `backend/gcp-prod-pgpass.conf` (gitignored, one line
+`127.0.0.1:6543:biker:biker:<password>`). Never commit it or put the password in `DATABASE_URL`.
+
 The schema is created at startup by `init_db()` (`create_all()`) on either database. Upserts
 (`set_cached`, `record_missing_request`) use `models.dialect_insert()`, which picks the SQLite or PostgreSQL
 `INSERT … ON CONFLICT` construct for the active engine.
@@ -94,9 +105,22 @@ pytest scripts/test_details_parity.py -v   # blob vs ORM read parity
 
 `backend/Dockerfile` is the image docker compose and Cloud Run both use: Python 3.14 slim, `patchright install --with-deps chromium`,
 non-root user, `uvicorn` on `$PORT` (default 8000). `.env`/`cache.db` are excluded by `.dockerignore` — `ANTHROPIC_API_KEY`
-and `DATABASE_URL` come from the environment. `PLAYWRIGHT_HEADLESS=true` (read by `app/browser_config.py`) runs the photo /
+and `DATABASE_URL` come from the environment; under compose the Cloud SQL password arrives as the mounted pgpass file (`PGPASSFILE`). `PLAYWRIGHT_HEADLESS=true` (read by `app/browser_config.py`) runs the photo /
 Allegro scrapers without a display; unset keeps the visible browser for local debugging (the OLX scraper moved to
-`searcher/` in TODO-031). See the root `README.md` § Run with Docker.
+`searcher/` in TODO-031). See the root `README.md`
+§ Run with Docker.
+
+On Cloud Run (`scripts/deploy.ps1`, service `biker-backend`) the same image gets
+`DATABASE_URL=postgresql+psycopg://biker@/biker?host=/cloudsql/biker-engine-prod:europe-central2:biker-pg` — the unix socket
+mounted by `--add-cloudsql-instances`, still no password — plus `PGPASSWORD` and `ANTHROPIC_API_KEY` as Secret Manager
+references (`db-password`, `anthropic-api-key`). libpq picks `PGPASSWORD` up exactly like the pgpass file, so nothing in
+`app/` changes between compose and Cloud Run. See the root `README.md` § Deploy to GCP.
+
+Browser launches are capped per process by `BROWSER_MAX_CONCURRENCY` (default 2, `app/browser_config.py` `BROWSER_SLOTS`):
+every scraper (bike/equipment photos, OLX and Allegro images) holds one slot around `sync_playwright()` + `chromium.launch()`.
+One launch costs 0.5–0.9 GiB (node driver + Chromium tree, and Cloud Run's `/tmp` is memory-backed), so two fit in the
+2 GiB instance next to the app; a third request waits for a slot instead of getting the instance OOM-killed. Raise it only
+together with `--memory` in `scripts/deploy.ps1`.
 
 ## Unit tests
 
@@ -105,8 +129,10 @@ cd backend
 pytest -m "not llm"
 ```
 
-`pytest.ini` scopes default collection to `scripts/test_review_aggregation.py`, so a
-bare `pytest` run covers the review-aggregation unit tests. The rest of `scripts/`
+`pytest.ini` scopes default collection to `scripts/test_review_aggregation.py` and
+`scripts/test_browser_slots.py`, so a bare `pytest` run covers the review-aggregation unit tests
+and the browser-launch cap (a fake Playwright proves no scraper exceeds `BROWSER_MAX_CONCURRENCY`
+launches and always returns its slot). The rest of `scripts/`
 stays excluded — those are standalone smoke scripts that hit a live server at import
 time and must not be auto-run. (The category-scoring eval `scripts/test_scoring.py`
 was removed with the category pipeline in TODO-024.)

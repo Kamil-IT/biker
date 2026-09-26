@@ -3,7 +3,7 @@ import logging
 import re
 import time
 
-from .browser_config import playwright_headless
+from .browser_config import BROWSER_SLOTS, playwright_headless
 from .schemas import BikeOffer
 
 logger = logging.getLogger("searcher.olx_images")
@@ -41,7 +41,7 @@ def _fetch_images_sync(urls: list[str]) -> dict[str, list[str]]:
     results: dict[str, list[str]] = {u: [] for u in urls}
     t = time.perf_counter()
 
-    with sync_playwright() as p:
+    with BROWSER_SLOTS, sync_playwright() as p:   # slot first: the node driver counts too
         browser = p.chromium.launch(headless=playwright_headless())
         try:
             context = browser.new_context(
