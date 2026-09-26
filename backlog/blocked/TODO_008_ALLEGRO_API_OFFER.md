@@ -11,7 +11,9 @@
 > Verified without credentials: graceful degradation (200 + empty + `info`), 422 validation, OAuth token reuse/refresh under mock, empty-result caching rule.
 
 ## Goal
-Add a `POST /v1/bike/allegro` endpoint that fetches live bike offers from the official Allegro REST API (`api.allegro.pl`), in addition to the existing web-search Allegro path (`/v1/bike/offer`).
+Add a `POST /v1/bike/allegro` endpoint that fetches live bike offers from the official Allegro REST API (`api.allegro.pl`), in addition to the existing web-search Allegro path.
+
+> ⚠️ The web-search Allegro route was renamed `/v1/bike/offer` → `/v1/bike/allegro`, so that name is now taken — pick another route name (e.g. `/v1/bike/allegro-api`) when unblocking this task.
 
 ## Prerequisites
 - Allegro developer app + OAuth2 credentials.
@@ -32,7 +34,7 @@ Add a `POST /v1/bike/allegro` endpoint that fetches live bike offers from the of
 - `backend/README.md` — Endpoints + Flow (note the OAuth token call + the listing call).
 
 ## Open questions / Notes
-- Replace the web-search Allegro (`/v1/bike/offer`) or run alongside? (default: new route alongside)
+- Replace the web-search Allegro (`/v1/bike/allegro`, formerly `/v1/bike/offer`) or run alongside? (default: new route alongside)
 - Confirm the bikes/rowery category id on Allegro.
 
 ## Acceptance criteria

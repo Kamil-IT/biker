@@ -41,8 +41,6 @@ interface BikeDetailsViewProps {
   offerState: 'loading' | 'loaded' | 'error'
   usedBikes: UsedBikeResponse | null
   usedBikeState: 'loading' | 'loaded' | 'error'
-  ceneoOffers: BikeOfferResponse | null
-  ceneoState: 'loading' | 'loaded' | 'error'
   decathlonOffers: BikeOfferResponse | null
   decathlonState: 'loading' | 'loaded' | 'error'
   onBack: () => void
@@ -67,8 +65,6 @@ export default function BikeDetailsView({
   offerState,
   usedBikes,
   usedBikeState,
-  ceneoOffers,
-  ceneoState,
   decathlonOffers,
   decathlonState,
   onBack,
@@ -172,8 +168,6 @@ export default function BikeDetailsView({
           model={model}
           offers={offers}
           offerState={offerState}
-          ceneoOffers={ceneoOffers}
-          ceneoState={ceneoState}
           decathlonOffers={decathlonOffers}
           decathlonState={decathlonState}
           usedBikes={usedBikes}
@@ -261,8 +255,6 @@ interface MergedOffersSectionProps {
   model: string
   offers: BikeOfferResponse | null
   offerState: OfferState
-  ceneoOffers: BikeOfferResponse | null
-  ceneoState: OfferState
   decathlonOffers: BikeOfferResponse | null
   decathlonState: OfferState
   usedBikes: UsedBikeResponse | null
@@ -276,8 +268,6 @@ function MergedOffersSection({
   model,
   offers,
   offerState,
-  ceneoOffers,
-  ceneoState,
   decathlonOffers,
   decathlonState,
   usedBikes,
@@ -285,10 +275,9 @@ function MergedOffersSection({
   onSearchUsed,
   onSearchNew,
 }: MergedOffersSectionProps) {
-  // Pool every offer from all four sources, then split purely on the is_new flag.
+  // Pool every offer from all three sources (Allegro, Decathlon, OLX), then split purely on the is_new flag.
   const allOffers: BikeOffer[] = [
     ...(offers?.offers ?? []),
-    ...(ceneoOffers?.offers ?? []),
     ...(decathlonOffers?.offers ?? []),
     ...(usedBikes?.offers ?? []),
   ]
@@ -308,7 +297,6 @@ function MergedOffersSection({
   const hasDecathlonRows = (decathlonOffers?.offers.length ?? 0) > 0
   const anyLoading =
     offerState === 'loading' ||
-    ceneoState === 'loading' ||
     decathlonState === 'loading' ||
     usedBikeState === 'loading'
   const grace = useLoadingGrace(anyLoading)

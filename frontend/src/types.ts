@@ -71,14 +71,14 @@ export interface BikeOffer {
   city?: string
 }
 
-// Returned by POST /v1/bike/offer and /v1/bike/ceneo (AI-backed), and by
+// Returned by POST /v1/bike/allegro (AI-backed), and by
 // POST /v1/bike/decathlon (DB read) / /v1/bike/decathlon/search (on-demand Decathlon searcher, TODO-032).
 export interface BikeOfferResponse {
   offers: BikeOffer[]
   info: string
 }
 
-// Returned by both POST /v1/bike/used (DB read) and POST /v1/bike/used/search (on-demand OLX searcher, TODO-031).
+// Returned by both POST /v1/bike/used/olx (DB read) and POST /v1/bike/used/search (on-demand OLX searcher, TODO-031).
 export interface UsedBikeResponse {
   offers: BikeOffer[]
   info: string

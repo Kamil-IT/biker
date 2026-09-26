@@ -1,8 +1,8 @@
-"""Happy-path smoke test for POST /v1/bike/offer (allegro.pl; calls the Anthropic API when uncached)."""
+"""Happy-path smoke test for POST /v1/bike/allegro (allegro.pl; calls the Anthropic API when uncached)."""
 import json
 import httpx
 
-URL = "http://localhost:8000/v1/bike/offer"
+URL = "http://localhost:8000/v1/bike/allegro"
 payload = {"company": "INDIANA", "model": "Rock Jr 24"}
 
 print(f"POST {URL}")

@@ -4,7 +4,7 @@ The on-demand marketplace search (TODO-031 OLX, TODO-032 Decathlon). A small Fas
 asked**: `POST /v1/search/olx` searches olx.pl for a bike, scrapes each listing's photos with Playwright and writes the
 result into the shared bike database (`bike_offer` + `bike_offer_photos`, `source = 'olx.pl'`); `POST /v1/search/decathlon`
 searches decathlon.pl the same way (one CLI run, no Playwright) and writes `bike_offer` rows with `source = 'decathlon.pl'`.
-The backend never searches either shop itself — `POST /v1/bike/used` and `POST /v1/bike/decathlon` are pure DB reads,
+The backend never searches either shop itself — `POST /v1/bike/used/olx` and `POST /v1/bike/decathlon` are pure DB reads,
 and `POST /v1/bike/used/search` / `POST /v1/bike/decathlon/search` proxy here when the user clicks **Poproś o dane** in
 the "Używane" / "Nowe" card. One busy slot is shared by both searches: one CLI run at a time per instance.
 

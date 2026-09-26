@@ -234,7 +234,7 @@ To keep the old JSON-based system:
 1. Add new Offer endpoints to populate `bike_offer` table — **partly done (TODO-031/032):** the on-demand searcher
    (`searcher/app/repository.py` `save_offers(company, model, offers, source)`, sources `'olx.pl'` and `'decathlon.pl'`,
    upsert on `url` scoped to (bike, source), replace semantics per bike and source) writes it and
-   `backend/app/offers_repository.py` `get_used_offers` / `get_decathlon_offers` read it for `POST /v1/bike/used` /
+   `backend/app/offers_repository.py` `get_used_offers` / `get_decathlon_offers` read it for `POST /v1/bike/used/olx` /
    `POST /v1/bike/decathlon`. Allegro / Ceneo still go through the generic response cache
 2. Add Bike model to bike creation flow (currently implicit in search results)
 3. Create analytics queries (e.g., most-searched brands, price trends)
