@@ -85,14 +85,20 @@ def _get_semaphore() -> asyncio.Semaphore:
 
 
 def _error_detail(resp: httpx.Response) -> str:
-    """The searcher's {"detail": ...} when it sent one, else the raw body — both trimmed."""
+    """The searcher's {"detail": ...} when it sent one, else just the status.
+
+    A non-JSON body is not the searcher talking — it is Cloud Run's HTML 403
+    when the service is not public, a load balancer page, … — so relaying it
+    to the browser only leaks noise; the body goes to the log instead.
+    """
     try:
         detail = resp.json().get("detail")
         if detail:
             return str(detail)[:DETAIL_MAX_LEN]
     except (ValueError, AttributeError):
         pass
-    return resp.text.strip()[:DETAIL_MAX_LEN] or f"HTTP {resp.status_code}"
+    logger.error("searcher olx non-JSON error body | status=%d body=%r", resp.status_code, resp.text[:DETAIL_MAX_LEN])
+    return f"searcher answered HTTP {resp.status_code}"
 
 
 async def _post_search(company: str, model: str) -> UsedBikeResponse:
