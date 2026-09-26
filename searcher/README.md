@@ -129,26 +129,33 @@ deliberately and re-run `scripts/test_searcher.py`) + patchright Chromium, non-r
 `HOME` (the CLI keeps state in `~/.claude`), `PLAYWRIGHT_HEADLESS=true`, `PORT=8100`. No secrets in the image — `CLAUDE_CODE_OAUTH_TOKEN`, `SEARCHER_API_KEY` and `DATABASE_URL` come from the
 environment.
 
-The root `docker-compose.yml` runs it as the `searcher` service on `8100` against the compose `db` (started after the
-backend with `restart: on-failure`, since the backend's `init_db()` creates the shared tables), and gives the backend
-`SEARCHER_URL=http://searcher:8100`. Put `CLAUDE_CODE_OAUTH_TOKEN` in `searcher/.env` for the container —
-there is no interactive login inside it.
+The root `docker-compose.yml` runs it as the `searcher` service on `8100` against the same **Cloud SQL** database as the
+backend (through the `cloudsql-proxy` sidecar and the same mounted pgpass file), started after the backend with
+`restart: on-failure` (the backend's `init_db()` creates the shared tables), and gives the backend
+`SEARCHER_URL=http://searcher:8100`. Put `CLAUDE_CODE_OAUTH_TOKEN` and `SEARCHER_API_KEY` in `searcher/.env` for the
+container — there is no interactive login inside it.
 
 ```bash
 docker compose up --build -d searcher
 curl -s http://localhost:8100/health
 ```
 
-## Cloud Run (intended deployment — not done yet)
+## Cloud Run
 
-Deploy only after the user has said which database the GCP searcher should write to. The plan:
+Deployed by the root `scripts/deploy.ps1` (`-Only searcher`, or as part of `all`, which deploys searcher → backend → frontend)
+as the Cloud Run service `biker-searcher` in `europe-central2`, project `biker-engine-prod`:
 
-- One Cloud Run service `biker-searcher` built from `searcher/Dockerfile` (Cloud Build → Artifact Registry).
-- **Scale to zero** (`--min-instances 0`), `--max-instances 1`, `--concurrency 1` (one CLI run + one Chromium per
-  instance, mirroring `SEARCHER_MAX_CONCURRENT=1`), `--timeout 900` (a search is minutes, not seconds),
-  `--memory 2Gi` (Chromium + Node), `--cpu 1`.
-- Secrets from **Secret Manager** mounted as env vars: `CLAUDE_CODE_OAUTH_TOKEN`, `SEARCHER_API_KEY`, `DATABASE_URL`
-  (the Cloud SQL connection via the Cloud SQL connector or the `/cloudsql/...` socket in the URL).
-- Ingress: internal + the backend only; the backend gets `SEARCHER_URL=https://biker-searcher-….run.app` and the
-  same `SEARCHER_API_KEY`.
-- Cold start ≈ 10 s (image ~1 GB); the first request then waits on the CLI as usual.
+- image `europe-central2-docker.pkg.dev/biker-engine-prod/biker/searcher:<git sha>` built from `searcher/Dockerfile`;
+- **scale to zero** (`--min-instances 0`), `--max-instances 1`, `--concurrency 1` (one CLI run + one Chromium per instance,
+  mirroring `SEARCHER_MAX_CONCURRENT=1`), `--timeout 900` (a search is minutes; the backend waits at most 600 s),
+  `--cpu 2 --memory 2Gi --cpu-boost`;
+- the same Cloud SQL socket as the backend: `DATABASE_URL=postgresql+psycopg://biker@/biker?host=/cloudsql/<instance>`
+  with `PGPASSWORD` from the `db-password` secret;
+- secrets from **Secret Manager** as env vars: `searcher-api-key` → `SEARCHER_API_KEY` (the backend reads the same secret),
+  `claude-code-oauth-token` → `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token` on the developer machine);
+  the service account `biker-run` needs `roles/secretmanager.secretAccessor` on both;
+- the backend service gets `SEARCHER_URL=https://biker-searcher-….run.app` and `SEARCHER_API_KEY` from the same secret;
+- who may call it is a one-time IAM decision outside the script: `roles/run.invoker` for `allUsers` (the endpoint is
+  protected by the shared secret, and the backend calls it over its public URL).
+
+Cold start ≈ 10–20 s (image ≈ 2.7 GB); the first request then waits on the CLI as usual.
