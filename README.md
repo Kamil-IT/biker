@@ -134,7 +134,7 @@ instead of exceeding the 2 GiB and getting the instance killed; raise it only to
 | Command | What it does |
 |---|---|
 | `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/bike/used`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`) |
-| `cd searcher && python scripts/test_searcher.py` | Smoke-test the searcher (`/health`, auth, one real OLX search + one real Decathlon search, each with a DB check) |
+| `cd searcher && python scripts/test_searcher.py` | Smoke-test the searcher (`/health`, 401/422 on both search routes — free, no CLI run; the single paid live run lives in `backend/scripts/test_search.py` `case_decathlon_search`) |
 | `cd backend && python scripts/test_details.py` | Smoke-test `POST /v1/bike/details` |
 | `cd backend && python scripts/test_review.py` | Smoke-test `POST /v1/bike/review` |
 | `cd backend && python scripts/test_offer.py` | Smoke-test `POST /v1/bike/offer` |
@@ -224,6 +224,6 @@ biker/
     │   ├── olx_image_fetcher.py       # Playwright: up to 4 OLX CDN photos per listing
     │   ├── repository.py / models.py  # save_offers: writes bike_offer + bike_offer_photos (replace per bike + source)
     │   └── prompts/                   # bike_offer_olx.md + bike_offer_decathlon.md — the search prompts (moved from the backend)
-    ├── scripts/test_searcher.py       # Smoke test (OLX TC-1–6, Decathlon TC-7–9)
+    ├── scripts/test_searcher.py       # Smoke test (health, auth + validation on both routes — no paid runs)
     └── Dockerfile                     # Python 3.14 + Node 24 + claude CLI + Chromium (Cloud Run image)
 ```

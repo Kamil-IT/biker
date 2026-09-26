@@ -9,9 +9,9 @@ Every case seeds its own namespaced fixture rows and deletes them afterwards, so
 it passes on a cold or aged database. Endpoints covered here:
 
   no API   /v1/bike/search (DB hit) · /v1/bike/search-cache · /v1/bike/details-cache
-           /v1/bike/missing · /v1/bike/used · /v1/bike/used/search (only when the searcher is up)
+           /v1/bike/missing · /v1/bike/used · /v1/bike/used/search (404 only — no paid run)
            /v1/bike/decathlon · /v1/bike/decathlon/search (404 + foreign-brand skip always; the
-           live house-brand search only when the searcher is up)
+           live house-brand search — the ONE paid searcher run in the suite — only when the searcher is up)
   --ai     /v1/bike/search (free text) · /v1/bike/parse · /v1/bike/ceneo
 
 The other endpoints have their own single-happy-path script: test_details.py
@@ -324,22 +324,13 @@ def _require_searcher() -> None:
 
 
 def case_used_search():
-    """/v1/bike/used/search proxies to the live searcher (skipped when the searcher is not running)."""
-    _require_searcher()
-    # The route refuses bikes that are not in `bike`, so search for one that is.
-    conn = _DB()
-    try:
-        row = conn.execute("SELECT brand, model FROM bike ORDER BY id LIMIT 1").fetchone()
-    finally:
-        conn.close()
-    if row is None:
-        raise Skip("no bike in the database to search for")
-    resp = _post(USED_SEARCH_URL, {"company": row[0], "model": row[1]}, timeout=600)
-    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:300]}"
-    data = resp.json()
-    assert set(data) == {"offers", "info"} and isinstance(data["offers"], list), data
-    for o in data["offers"]:
-        assert o["source"] == "olx.pl" and o["is_new"] is False, o
+    """/v1/bike/used/search refuses an unknown bike with 404 before touching the searcher.
+
+    Deliberately no live OLX run here: every searcher run is a paid subscription
+    search (~1–2 min), and the one live run this suite keeps is case_decathlon_search,
+    which exercises the same proxy code path (searcher_client._search)."""
+    resp = _post(USED_SEARCH_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=30)
+    assert resp.status_code == 404, f"Expected 404 for an unknown bike, got {resp.status_code}: {resp.text[:200]}"
 
 
 FIX_DEC_BRAND, FIX_DEC_MODEL = "Smoke Fixture", "Decathlon Bike"
