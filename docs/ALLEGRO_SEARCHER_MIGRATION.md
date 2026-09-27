@@ -161,7 +161,14 @@ przeniesienie zadania do `backlog/done/` i odhaczenie w Notion — po decyzji u�
 
 ## 8. Wdrożenie na GCP
 
-_(dopiero po zgodzie użytkownika)_
+| Krok | Kto | Co |
+|---|---|---|
+| Zgoda | użytkownik | „Wdrażać na Cloud Run, zrób po deployu” (merge też po deployu) |
+| Obrazy + Cloud Run | ja | `scripts/deploy.ps1 -Tag 40a1f5e` — searcher → backend → frontend; rewizje `biker-searcher-00003-lgg` (`maxScale: 2`, `containerConcurrency: 1`, obraz `searcher:40a1f5e`), `biker-backend-00006-npz`, `biker-frontend-00005-8bc` |
+| Sekrety / IAM | nikt | **nic nowego** — ten sam serwis, te same `searcher-api-key`, `claude-code-oauth-token`, `db-password`, ta sama Cloud SQL `biker-pg`, publiczny `run.invoker` już był |
+| Weryfikacja końcowa | ja | skrypt `curl` na publicznych URL-ach (9 kroków): frontend 200; searcher `/health` ok; bez klucza 401; Trek Marlin 5 `/v1/bike/allegro` przed — pusto (stary wiersz cache martwy); nieznany rower 404; **para równolegle**: `/v1/bike/allegro/search` Trek Marlin 5 → 1 prawdziwa oferta (2 319,00 zł, nowy, `photos: []`) po 68 s i `/v1/bike/decathlon/search` Riverside 500 → 200 po 35 s (tym razem 0 ofert, wiersz zachowany); **trzecie wyszukiwanie w trakcie pary → 503 „Allegro searcher is busy”** (obie instancje zajęte); potem `/v1/bike/allegro` czyta ten sam wiersz z Cloud SQL; regresja `/v1/bike/used/olx` Trek Marlin 5 z OLX |
+
+Zero zdjęć na produkcji jest z założenia (§ 3) — run Allegro to od teraz sam `claude -p`, bez Chromium.
 
 ## 9. Architektura po zmianie
 

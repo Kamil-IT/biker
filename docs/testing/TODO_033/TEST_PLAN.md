@@ -196,3 +196,23 @@ Re-verified on the restarted searcher (`searcher2.log`):
 
 Rounds 1–2 stay valid: the scrape they exercised never stored a photo (403), so the rows and the UI they verified are identical
 to what the photo-less code produces.
+
+## Cloud Run (2026-09-27, after the go-ahead)
+
+`scripts/deploy.ps1 -Tag 40a1f5e` rebuilt and deployed all three services (searcher `biker-searcher-00003-lgg` with
+`maxScale: 2` / `containerConcurrency: 1`, backend `biker-backend-00006-npz`, frontend `biker-frontend-00005-8bc`); no new
+secrets or IAM bindings were needed. Checked on the public URLs (scratchpad `verify_prod_033.sh`):
+
+| Check | Result |
+|---|---|
+| frontend `GET /` | 200 |
+| searcher `GET /health` (anonymous) | 200 `{"status":"ok","claude_cli":"2.1.283 (Claude Code)","database":true}` |
+| searcher `POST /v1/search/allegro` without `X-Searcher-Key` | 401 |
+| backend `POST /v1/bike/allegro` Trek / Marlin 5 before any search | 200 `{"offers":[],"info":""}` — the old generic-cache row is dead, as decided |
+| backend `POST /v1/bike/allegro/search` unknown bike | 404 `Bike not found` |
+| **in parallel:** `POST /v1/bike/allegro/search` Trek / Marlin 5 + `POST /v1/bike/decathlon/search` Riverside / Riverside 500 | Allegro 200 after **68 s** — 1 real offer (`2 319,00 zł`, `is_new: true`, `photos: []`, `…/rower-mlodziezowy-trek-marlin-5-gen-3-ml-17473270489`); Decathlon 200 after 35 s (0 offers this time, stored row kept) — two searcher instances, no 503 for either |
+| a **third** `POST /v1/bike/allegro/search` (Trek / FX 3 Disc) fired while the pair ran | **503** `"Allegro searcher is busy — try again in a moment"` |
+| backend `POST /v1/bike/allegro` Trek / Marlin 5 afterwards | the same row from Cloud SQL (`brand`/`model` from the `bike` row, `photos: []`, `info: ""`) |
+| regression: backend `POST /v1/bike/used/olx` Trek / Marlin 5 | 200 with the stored OLX rows and photos |
+
+The task is ready to move to `backlog/done/` once PR #104 merges.
