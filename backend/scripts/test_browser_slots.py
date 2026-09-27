@@ -15,7 +15,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-never-used")   # the finders build a client at import
 
-from app import allegro_image_fetcher, bike_photos_finder, browser_config, equipment_photos_finder, olx_image_fetcher  # noqa: E402
+# Only the bike / equipment photo scrapers still launch a browser in the backend:
+# the OLX image fetcher moved to searcher/ in TODO-031, the Allegro one in TODO-033.
+from app import bike_photos_finder, browser_config, equipment_photos_finder  # noqa: E402
 
 
 class _Gauge:
@@ -93,8 +95,6 @@ def fake_playwright(monkeypatch):
 
 
 SCRAPERS = [
-    pytest.param(lambda: olx_image_fetcher._fetch_images_sync(["https://www.olx.pl/x"]), id="olx"),
-    pytest.param(lambda: allegro_image_fetcher._fetch_images_sync(["https://allegro.pl/x"]), id="allegro"),
     pytest.param(lambda: bike_photos_finder._scrape_images_sync("https://www.trekbikes.com/x"), id="bike-photos"),
     pytest.param(lambda: equipment_photos_finder._scrape_images_sync("https://www.pocsports.com/x"), id="equipment-photos"),
 ]
@@ -112,8 +112,9 @@ def test_scraper_never_exceeds_browser_slots(fake_playwright, scrape):
 
 def test_slot_released_when_scrape_raises(fake_playwright):
     fake_playwright.fail = True
-    with pytest.raises(RuntimeError):
-        allegro_image_fetcher._fetch_images_sync(["https://allegro.pl/x"])   # warm-up goto raises outside the inner try
+    # goto raises inside the `with BROWSER_SLOTS, sync_playwright()` block; the
+    # finder swallows it into [] — the slot must have been given back regardless.
+    assert bike_photos_finder._scrape_images_sync("https://www.trekbikes.com/x") == []
     sem = browser_config.BROWSER_SLOTS
     taken = [sem.acquire(blocking=False) for _ in range(browser_config.BROWSER_MAX_CONCURRENCY)]
     try:

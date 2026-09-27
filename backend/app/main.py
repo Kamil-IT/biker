@@ -24,7 +24,6 @@ from .bike_details_finder import find_bike_details  # noqa: E402
 from .bike_description_finder import find_bike_description  # noqa: E402
 from .bike_photos_finder import find_bike_photos  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
-from .bike_offer_finder import find_bike_offers  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
 from .equipment_details_finder import find_equipment_details  # noqa: E402
 from .equipment_description_finder import find_equipment_description  # noqa: E402
@@ -40,12 +39,15 @@ from .store import (  # noqa: E402
 from .repository import (  # noqa: E402
     save_bike_details, get_bike_details, find_bikes_by_details, record_missing_request,
 )
-from .offers_repository import get_used_offers, get_decathlon_offers, bike_exists  # noqa: E402
-# The OLX used-bike search (TODO-031) and the Decathlon search (TODO-032) live in
-# the separate searcher service; the backend reads bike_offer and proxies the
-# on-demand searches to it.
+from .offers_repository import (  # noqa: E402
+    get_used_offers, get_decathlon_offers, get_allegro_offers, bike_exists,
+)
+# The OLX used-bike search (TODO-031), the Decathlon search (TODO-032) and the
+# Allegro search (TODO-033) live in the separate searcher service; the backend
+# reads bike_offer and proxies the on-demand searches to it.
 from .searcher_client import (  # noqa: E402
-    search_olx, search_decathlon, SearcherNotConfigured, SearcherUnavailable, SearcherBusy, SearcherFailed,
+    search_olx, search_decathlon, search_allegro,
+    SearcherNotConfigured, SearcherUnavailable, SearcherBusy, SearcherFailed,
 )
 from .decathlon_brands import is_decathlon_brand, not_sold_info  # noqa: E402
 from .models import init_db  # noqa: E402
@@ -220,25 +222,60 @@ async def bike_review(req: BikeReviewRequest) -> BikeReviewResponse:
     return result
 
 
-# The route was renamed /v1/bike/offer -> /v1/bike/allegro; the cache key keeps the
-# old name so the rows already stored under it still hit.
-_ALLEGRO_CACHE_KEY = "/v1/bike/offer"
-
-
 @app.post("/v1/bike/allegro", response_model=BikeOfferResponse)
 async def bike_allegro(req: BikeOfferRequest) -> BikeOfferResponse:
-    logger.info("allegro offer request | company=%r model=%r", req.company, req.model)
-    _fields = {"company": req.company, "model": req.model}
-    cached = get_cached(_ALLEGRO_CACHE_KEY, _fields, BikeOfferResponse)
-    if cached is not None:
-        return cached
+    """Stored allegro.pl offers for the bike — a pure DB read (TODO-033).
 
+    No AI call and no generic cache: the bike's 'allegro.pl' rows in
+    bike_offer / bike_offer_photos are filled only by the searcher service,
+    triggered through /v1/bike/allegro/search. Nothing stored → 200 with an
+    empty list. (The generic-cache rows the old web_search finder wrote under
+    the key /v1/bike/offer are not read any more — see TODO-033 decision 5.)
+    """
+    logger.info("allegro request | company=%r model=%r", req.company, req.model)
     t_start = time.perf_counter()
-    result = await find_bike_offers(req.company, req.model)
+    result = get_allegro_offers(req.company, req.model)
     elapsed = time.perf_counter() - t_start
-    logger.info("offer complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
-    if result.offers:
-        set_cached(_ALLEGRO_CACHE_KEY, _fields, result)
+    logger.info("allegro served from DB | offers=%d elapsed=%.3fs", len(result.offers), elapsed)
+    return result
+
+
+@app.post("/v1/bike/allegro/search", response_model=BikeOfferResponse)
+async def bike_allegro_search(req: BikeOfferRequest) -> BikeOfferResponse:
+    """Run the Allegro search on demand through the searcher service (TODO-033).
+
+    Proxies to {SEARCHER_URL}/v1/search/allegro and waits for it
+    (SEARCHER_TIMEOUT, default 600 s). The searcher writes the offers to the
+    DB (no photos — allegro.pl blocks scraping), so a later /v1/bike/allegro
+    returns them. The
+    "Nowe" card's button fires this together with /v1/bike/decathlon/search,
+    which is why SEARCHER_MAX_INFLIGHT defaults to 2. 503 when the searcher
+    is not configured, unreachable or busy, 502 (its detail passed through)
+    when it fails. Never cached.
+    """
+    logger.info("allegro search request | company=%r model=%r", req.company, req.model)
+    # Same guard as the other two proxies: only bikes the app already knows, or
+    # anonymous traffic could mint `bike` rows and spend subscription runs.
+    if not bike_exists(req.company, req.model):
+        logger.warning("allegro search refused: unknown bike | company=%r model=%r", req.company, req.model)
+        raise HTTPException(status_code=404, detail="Bike not found")
+    t_start = time.perf_counter()
+    try:
+        result = await search_allegro(req.company, req.model)
+    except SearcherNotConfigured as exc:
+        logger.error("allegro search: searcher not configured | %s", exc)
+        raise HTTPException(status_code=503, detail="Allegro searcher is not configured") from exc
+    except SearcherUnavailable as exc:
+        logger.error("allegro search: searcher unavailable | %s", exc)
+        raise HTTPException(status_code=503, detail="Allegro searcher unavailable") from exc
+    except SearcherBusy as exc:
+        logger.warning("allegro search: searcher busy | %s", exc)
+        raise HTTPException(status_code=503, detail="Allegro searcher is busy — try again in a moment") from exc
+    except SearcherFailed as exc:
+        logger.error("allegro search failed | status=%d detail=%r", exc.status, exc.detail)
+        raise HTTPException(status_code=502, detail=exc.detail) from exc
+    elapsed = time.perf_counter() - t_start
+    logger.info("allegro search complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     return result
 
 

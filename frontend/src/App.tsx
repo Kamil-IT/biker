@@ -46,9 +46,9 @@ export default function App() {
   // Details state
   const [view, setView]                         = useState<AppView>('search')
   const [selectedBike, setSelectedBike]         = useState<Bike | null>(null)
-  // Mirrors selectedBike for the slow on-demand searches (OLX, Decathlon): a result
-  // that lands after the user has opened another bike must not overwrite that
-  // bike's card (TODO-031 / TODO-032).
+  // Mirrors selectedBike for the slow on-demand searches (OLX, Decathlon, Allegro): a
+  // result that lands after the user has opened another bike must not overwrite that
+  // bike's card (TODO-031 / TODO-032 / TODO-033).
   const selectedBikeRef                         = useRef<Bike | null>(null)
   const [detailsState, setDetailsState]         = useState<DetailsState>('loading')
   const [bikeCategories, setBikeCategories]     = useState<BikeCategory[] | null>(null)
@@ -210,49 +210,40 @@ export default function App() {
     }
   }
 
-  const fetchOffer = async (bike: Bike) => {
-    setOfferState('loading')
-    setOffers(null)
+  // Stored offers of one marketplace, read when the details view opens. All three
+  // (/v1/bike/allegro, /v1/bike/used/olx, /v1/bike/decathlon) are fast DB reads of the
+  // rows the searcher wrote — no AI call (TODO-031 / TODO-032 / TODO-033) — and differ
+  // only in path and state pair, hence one reader.
+  const fetchStoredOffers = async <T,>(
+    path: string,
+    bike: Bike,
+    setData: (data: T | null) => void,
+    setState: (state: OfferState) => void,
+  ) => {
+    setState('loading')
+    setData(null)
     try {
-      const res = await fetch('/v1/bike/allegro', {
+      const res = await fetch(path, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ company: bike.brand, model: bike.model }),
       })
       if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
-      const data: BikeOfferResponse = await res.json()
-      setOffers(data)
-      setOfferState('loaded')
+      setData(await res.json() as T)
+      setState('loaded')
     } catch {
-      setOfferState('error')
+      setState('error')
     }
   }
 
-  const fetchUsedBikes = async (bike: Bike) => {
-    setUsedBikeState('loading')
-    setUsedBikes(null)
-    try {
-      const res = await fetch('/v1/bike/used/olx', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ company: bike.brand, model: bike.model }),
-      })
-      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
-      const data: UsedBikeResponse = await res.json()
-      setUsedBikes(data)
-      setUsedBikeState('loaded')
-    } catch {
-      setUsedBikeState('error')
-    }
-  }
-
-  // On-demand searches behind the offer cards' "Poproś o dane" buttons: OLX in the
-  // Used card (TODO-031), Decathlon in the New card (TODO-032). The card's state is
-  // deliberately not set to 'loading': the button shows its own spinner, and 'loading'
-  // would restart the 5 s skeleton grace in the offers section. Throws on failure
-  // (with the backend's `detail`) so the button can return to clickable. A search can
-  // take minutes; if another bike is open by then the result is dropped — it is stored
-  // in the DB anyway and shows when this bike is opened again.
+  // On-demand searches behind the offer cards' "Poproś o dane" buttons — three of
+  // them: OLX in the Used card (TODO-031), Decathlon (TODO-032) and Allegro (TODO-033)
+  // together in the New card. The card's state is deliberately not set to 'loading':
+  // the button shows its own spinner, and 'loading' would restart the 5 s skeleton
+  // grace in the offers section. Throws on failure (with the backend's `detail`) so
+  // the button can return to clickable. A search can take minutes; if another bike is
+  // open by then the result is dropped — it is stored in the DB anyway and shows when
+  // this bike is opened again.
   const postOnDemandSearch = async <T,>(path: string, bike: Bike): Promise<T | null> => {
     const res = await fetch(path, {
       method:  'POST',
@@ -275,29 +266,39 @@ export default function App() {
   }
 
   // For a non-Decathlon brand the backend answers at once with no offers (no searcher run).
-  const searchDecathlon = async (bike: Bike) => {
+  // Resolves to whether any offer came back — searchNew needs that to tell "no offers"
+  // from "the search never ran".
+  const searchDecathlon = async (bike: Bike): Promise<boolean> => {
     const data = await postOnDemandSearch<BikeOfferResponse>('/v1/bike/decathlon/search', bike)
-    if (!data) return
+    if (!data) return false
     setDecathlonOffers(data)
     setDecathlonState('loaded')
+    return data.offers.length > 0
   }
 
-  const fetchDecathlon = async (bike: Bike) => {
-    setDecathlonState('loading')
-    setDecathlonOffers(null)
-    try {
-      const res = await fetch('/v1/bike/decathlon', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ company: bike.brand, model: bike.model }),
-      })
-      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
-      const data: BikeOfferResponse = await res.json()
-      setDecathlonOffers(data)
-      setDecathlonState('loaded')
-    } catch {
-      setDecathlonState('error')
-    }
+  // Allegro listings can be used (`is_new: false`) — the returned rows land in
+  // whichever card their flag says, through the same `offers` state the DB read fills.
+  const searchAllegro = async (bike: Bike): Promise<boolean> => {
+    const data = await postOnDemandSearch<BikeOfferResponse>('/v1/bike/allegro/search', bike)
+    if (!data) return false
+    setOffers(data)
+    setOfferState('loaded')
+    return data.offers.length > 0
+  }
+
+  // The New card's button runs Decathlon and Allegro at the same time (TODO-033). Each
+  // search sets its own state the moment it returns, so rows from either source
+  // replace the button as they arrive rather than after both finish. Rejects — the
+  // button becomes clickable again, with the first failure's error — whenever a search
+  // failed and no search brought rows: both failed, or one failed (e.g. 503 busy) while
+  // the other came back empty (for a non-Decathlon brand Decathlon is always instantly
+  // empty, so an Allegro failure must not read as "no offers"). A failure next to real
+  // rows from the other source is swallowed — those rows are on screen.
+  const searchNew = async (bike: Bike) => {
+    const results = await Promise.allSettled([searchDecathlon(bike), searchAllegro(bike)])
+    const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    const gotRows = results.some(r => r.status === 'fulfilled' && r.value)
+    if (failures.length > 0 && !gotRows) throw failures[0].reason
   }
 
   const fetchEquipmentDetails = async (company: string, model: string) => {
@@ -368,9 +369,9 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
     fetchDetails(bike)
     fetchReview(bike)
-    fetchOffer(bike)
-    fetchUsedBikes(bike)
-    fetchDecathlon(bike)
+    fetchStoredOffers<BikeOfferResponse>('/v1/bike/allegro', bike, setOffers, setOfferState)
+    fetchStoredOffers<UsedBikeResponse>('/v1/bike/used/olx', bike, setUsedBikes, setUsedBikeState)
+    fetchStoredOffers<BikeOfferResponse>('/v1/bike/decathlon', bike, setDecathlonOffers, setDecathlonState)
   }
 
   const handleBackToResults = () => {
@@ -612,7 +613,7 @@ export default function App() {
             onRetry={() => fetchDetails(selectedBike)}
             onEquipmentSelect={handleEquipmentSelect}
             onSearchUsed={() => searchUsedBikes(selectedBike)}
-            onSearchNew={() => searchDecathlon(selectedBike)}
+            onSearchNew={() => searchNew(selectedBike)}
           />
         )}
 

@@ -1,10 +1,12 @@
-"""Persistence of search results into the shared bike_offer tables (TODO-031, TODO-032).
+"""Persistence of search results into the shared bike_offer tables (TODO-031, TODO-032, TODO-033).
 
 Writes exactly what the backend's offers_repository reads back: bike_offer
 rows under the bike's id tagged with the marketplace `source` ('olx.pl' for
-/v1/search/olx, 'decathlon.pl' for /v1/search/decathlon), each photo a
-bike_offer_photos row ordered by display_order. Every write is scoped to one
-(bike, source) pair, so the two searches never touch each other's rows.
+/v1/search/olx, 'decathlon.pl' for /v1/search/decathlon, 'allegro.pl' for
+/v1/search/allegro), each photo a bike_offer_photos row ordered by
+display_order. Every write is scoped to one (bike, source) pair, so the three
+searches never touch each other's rows — even when two of them run at once
+for the same bike (the UI fires Decathlon + Allegro together).
 """
 import logging
 from datetime import datetime, timezone
@@ -80,7 +82,8 @@ def save_offers(
     price/is_new/city/created_at), its photos are rewritten in order, and
     finally every `source` row of this bike whose url is not in the new set is
     deleted together with its photos. `is_new` is each offer's own flag (false
-    for OLX listings, the shop page's answer for Decathlon).
+    for OLX listings, the shop page's answer for Decathlon, the listing's
+    answer — default false — for Allegro).
 
     Two guards keep the shared table sane: (1) `url` is globally UNIQUE and the
     prompt's cascade returns model-family listings, so a listing that already

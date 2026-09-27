@@ -1,9 +1,10 @@
-"""Stored marketplace offers — the read side of bike_offer / bike_offer_photos (TODO-031/032).
+"""Stored marketplace offers — the read side of bike_offer / bike_offer_photos (TODO-031/032/033).
 
 Every row here is written by the separate searcher service
 (searcher/app/repository.py): OLX listings (source 'olx.pl', TODO-031) are
-read for POST /v1/bike/used/olx and Decathlon offers (source 'decathlon.pl',
-TODO-032) for POST /v1/bike/decathlon. No TTL — while rows exist the
+read for POST /v1/bike/used/olx, Decathlon offers (source 'decathlon.pl',
+TODO-032) for POST /v1/bike/decathlon and Allegro offers (source 'allegro.pl',
+TODO-033) for POST /v1/bike/allegro. No TTL — while rows exist the
 frontend's "Request data" button stays hidden, so nothing re-triggers the
 search. Lives next to repository.py rather than in it to keep that file from
 growing further past the 500-line limit.
@@ -23,15 +24,16 @@ logger = logging.getLogger(__name__)
 
 OLX_SOURCE = "olx.pl"
 DECATHLON_SOURCE = "decathlon.pl"
+ALLEGRO_SOURCE = "allegro.pl"
 
 
 def bike_exists(company: str, model: str) -> bool:
     """Whether the bike identity is known (Python-normalised brand/model compare).
 
-    /v1/bike/used/search and /v1/bike/decathlon/search check this before
-    spending a searcher run: the searcher creates missing bikes for direct
-    calls, and letting anonymous web traffic mint arbitrary `bike` rows would
-    pollute the DB-first search.
+    The three searcher proxies (/v1/bike/used/search, /v1/bike/decathlon/search
+    and /v1/bike/allegro/search) check this before spending a searcher run: the
+    searcher creates missing bikes for direct calls, and letting anonymous web
+    traffic mint arbitrary `bike` rows would pollute the DB-first search.
     """
     session = get_session()
     try:
@@ -105,3 +107,13 @@ def get_used_offers(company: str, model: str) -> UsedBikeResponse:
 def get_decathlon_offers(company: str, model: str) -> BikeOfferResponse:
     """Stored decathlon.pl offers of one bike (source 'decathlon.pl') — see _get_stored_offers."""
     return BikeOfferResponse(offers=_get_stored_offers(company, model, DECATHLON_SOURCE), info="")
+
+
+def get_allegro_offers(company: str, model: str) -> BikeOfferResponse:
+    """Stored allegro.pl offers of one bike (source 'allegro.pl', TODO-033) — see _get_stored_offers.
+
+    `photos` is always [] — the searcher stores no Allegro photos (allegro.pl
+    answers 403 to every automated fetch, so the scrape was dropped) — and
+    `is_new` comes from the row, as the search result described the listing.
+    """
+    return BikeOfferResponse(offers=_get_stored_offers(company, model, ALLEGRO_SOURCE), info="")

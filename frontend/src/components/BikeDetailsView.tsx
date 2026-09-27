@@ -48,7 +48,8 @@ interface BikeDetailsViewProps {
   onEquipmentSelect: (name: string) => void
   // On-demand OLX search behind the Used card's "Request data" button (TODO-031).
   onSearchUsed: () => Promise<void>
-  // On-demand Decathlon search behind the New card's "Request data" button (TODO-032).
+  // On-demand Decathlon + Allegro searches (run in parallel) behind the New card's
+  // "Request data" button (TODO-032 / TODO-033).
   onSearchNew: () => Promise<void>
 }
 
@@ -289,12 +290,15 @@ function MergedOffersSection({
   // A late source can still add rows to either category, so both cards show their
   // skeleton for the first 5 s while any source is loading; after that each card
   // shows whatever rows it has, or its own "Request data" button (TODO-027). In both
-  // cards that button also runs an on-demand search: OLX in the Used card (TODO-031),
-  // Decathlon in the New card (TODO-032); the rows it returns land in `usedBikes` /
-  // `decathlonOffers` and take the button's place. The New card offers the Decathlon
-  // search only while no decathlon.pl row is stored: an outlet row (`is_new: false`)
-  // sits in the Used card, and re-searching would cost a paid run per click for nothing.
-  const hasDecathlonRows = (decathlonOffers?.offers.length ?? 0) > 0
+  // cards that button also runs an on-demand search: OLX in the Used card (TODO-031);
+  // Decathlon (TODO-032) and Allegro (TODO-033) in parallel in the New card. The rows
+  // each search returns land in `usedBikes` / `decathlonOffers` / `offers` and take
+  // the button's place. The New card offers its searches only while NEITHER source
+  // has a stored row: a used Allegro listing or a Decathlon outlet row (`is_new:
+  // false`) sits in the Used card while the New card stays empty, and re-searching
+  // would cost two paid runs per click for nothing.
+  const hasNewSourceRows =
+    (decathlonOffers?.offers.length ?? 0) > 0 || (offers?.offers.length ?? 0) > 0
   const anyLoading =
     offerState === 'loading' ||
     decathlonState === 'loading' ||
@@ -326,8 +330,10 @@ function MergedOffersSection({
           company={company}
           model={model}
           missingType={MissingType.OffersNew}
-          onRequested={hasDecathlonRows ? undefined : onSearchNew}
-          pendingLabel={hasDecathlonRows ? undefined : 'Szukam na Decathlon…'}
+          onRequested={hasNewSourceRows ? undefined : onSearchNew}
+          // Not gated: a used Allegro listing arriving mid-search fills the Used card and
+          // flips hasNewSourceRows while this button is still showing its spinner.
+          pendingLabel="Szukam na Allegro i Decathlon…"
         />
       </div>
     </div>
@@ -341,7 +347,8 @@ interface OfferCategoryCardProps {
   company: string
   model: string
   missingType: MissingType
-  // Used: OLX (TODO-031), New: Decathlon (TODO-032) — the search the button runs after the click + its label.
+  // The search the button runs after the click + its label. Used: OLX (TODO-031);
+  // New: Decathlon and Allegro together (TODO-032 / TODO-033).
   onRequested?: () => Promise<void>
   pendingLabel?: string
 }
@@ -475,9 +482,14 @@ function OfferRow({ offer }: { offer: BikeOffer }) {
         }`}>
           {offer.is_new ? 'Nowy' : 'Używany'}
         </span>
-        <span className="font-display font-bold text-terra tabular-nums text-[15px]">
-          {offer.price}
-        </span>
+        {/* An Allegro offer found from search results alone may carry no price (TODO-033). */}
+        {offer.price ? (
+          <span className="font-display font-bold text-terra tabular-nums text-[15px]">
+            {offer.price}
+          </span>
+        ) : (
+          <span className="font-mono text-[10px] text-muted">cena w ofercie</span>
+        )}
       </div>
       <span className="shrink-0 font-mono text-[13px] text-terra group-hover:text-terra-dark transition-colors duration-150" aria-hidden="true">
         →

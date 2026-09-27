@@ -81,18 +81,21 @@ uvicorn app.main:app --reload --port 8000
 > The same script also repairs placeholder (all-lowercase) brand casing left by earlier builds, on
 > **every** run — no `--force` needed — as long as `search_cache` still exists.
 
-`SEARCHER_URL` / `SEARCHER_API_KEY` (TODO-031/032) point `POST /v1/bike/used/search` and `POST /v1/bike/decathlon/search`
-at the on-demand searcher (top-level `searcher/`, `http://localhost:8100` locally; the key is sent as `X-Searcher-Key` and
-must equal the searcher's own `SEARCHER_API_KEY`). `SEARCHER_TIMEOUT` (seconds, default 600) bounds one search. Leave
-`SEARCHER_URL` unset to run without the searcher — both routes then answer 503, while `POST /v1/bike/used/olx` and
-`POST /v1/bike/decathlon` keep serving whatever is stored in `bike_offer`.
+`SEARCHER_URL` / `SEARCHER_API_KEY` (TODO-031/032/033) point `POST /v1/bike/used/search`, `POST /v1/bike/decathlon/search`
+and `POST /v1/bike/allegro/search` at the on-demand searcher (top-level `searcher/`, `http://localhost:8100` locally; the key
+is sent as `X-Searcher-Key` and must equal the searcher's own `SEARCHER_API_KEY`). `SEARCHER_TIMEOUT` (seconds, default 600)
+bounds one search. `SEARCHER_MAX_INFLIGHT` (default **2**) is how many distinct searches this backend lets run at once across
+all three sources — the "Nowe" card fires the Decathlon and Allegro searches together — and must never exceed the searcher's
+capacity (`SEARCHER_MAX_CONCURRENT`, locally 2; on Cloud Run `--max-instances 2` with `--concurrency 1`); a third search is
+refused with 503, nothing queues. Leave `SEARCHER_URL` unset to run without the searcher — all three routes then answer 503,
+while `POST /v1/bike/used/olx`, `POST /v1/bike/decathlon` and `POST /v1/bike/allegro` keep serving whatever is stored in
+`bike_offer`.
 
 ```bash
 # In a second terminal:
-python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, used, used/search, decathlon, decathlon/search; add --ai for the API cases
+python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, used, used/search, decathlon, decathlon/search, allegro, allegro/search; add --ai for the API cases
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
 python scripts/test_review.py   # smoke-test POST /v1/bike/review
-python scripts/test_offer.py    # smoke-test POST /v1/bike/allegro
 ```
 
 ```bash
@@ -105,10 +108,11 @@ pytest scripts/test_details_parity.py -v   # blob vs ORM read parity
 
 `backend/Dockerfile` is the image docker compose and Cloud Run both use: Python 3.14 slim, `patchright install --with-deps chromium`,
 non-root user, `uvicorn` on `$PORT` (default 8000). `.env`/`cache.db` are excluded by `.dockerignore` — `ANTHROPIC_API_KEY`
-and `DATABASE_URL` come from the environment; under compose the Cloud SQL password arrives as the mounted pgpass file (`PGPASSFILE`). `PLAYWRIGHT_HEADLESS=true` (read by `app/browser_config.py`) runs the photo /
-Allegro scrapers without a display; unset keeps the visible browser for local debugging (the OLX scraper moved to
-`searcher/` in TODO-031). See the root `README.md`
-§ Run with Docker.
+and `DATABASE_URL` come from the environment; under compose the Cloud SQL password arrives as the mounted pgpass file (`PGPASSFILE`). `PLAYWRIGHT_HEADLESS=true` (read by `app/browser_config.py`) runs the bike / equipment
+photo scrapers without a display; unset keeps the visible browser for local debugging (the OLX image scraper moved to
+`searcher/` in TODO-031, the Allegro one was deleted in TODO-033 without a replacement — allegro.pl answers 403 to Chromium,
+so Allegro offers carry no photos — and the backend launches no marketplace browser any more). See the root
+`README.md` § Run with Docker.
 
 On Cloud Run (`scripts/deploy.ps1`, service `biker-backend`) the same image gets
 `DATABASE_URL=postgresql+psycopg://biker@/biker?host=/cloudsql/biker-engine-prod:europe-central2:biker-pg` — the unix socket
@@ -117,7 +121,7 @@ references (`db-password`, `anthropic-api-key`). libpq picks `PGPASSWORD` up exa
 `app/` changes between compose and Cloud Run. See the root `README.md` § Deploy to GCP.
 
 Browser launches are capped per process by `BROWSER_MAX_CONCURRENCY` (default 2, `app/browser_config.py` `BROWSER_SLOTS`):
-every scraper (bike/equipment photos, OLX and Allegro images) holds one slot around `sync_playwright()` + `chromium.launch()`.
+every scraper left in the backend (the bike and equipment photo finders) holds one slot around `sync_playwright()` + `chromium.launch()`.
 One launch costs 0.5–0.9 GiB (node driver + Chromium tree, and Cloud Run's `/tmp` is memory-backed), so two fit in the
 2 GiB instance next to the app; a third request waits for a slot instead of getting the instance OOM-killed. Raise it only
 together with `--memory` in `scripts/deploy.ps1`.
@@ -437,17 +441,15 @@ The response parser scans **every** text block for the first balanced `{...}` ra
 
 ### `POST /v1/bike/allegro`
 
-Formerly `/v1/bike/offer`; the generic cache still stores its rows under the old key `/v1/bike/offer`.
-
-Return current buying offers from Polish cycling marketplaces for a specific bike model.
+Return the allegro.pl offers **stored in the database** for a specific bike model — a pure read of `bike_offer` (TODO-033, the same move `/v1/bike/used/olx` made in TODO-031 and `/v1/bike/decathlon` in TODO-032). **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/bike/allegro/search`](#post-v1bikeallegrosearch)); nothing stored → 200 with an empty list. The old `web_search` finder's rows under the generic-cache key `/v1/bike/offer` are not read any more (dead rows, deliberately not backfilled).
 
 ```http
 POST http://localhost:8000/v1/bike/allegro
 Content-Type: application/json
 
 {
-  "company": "Canyon",
-  "model": "Grizl CF 7 ESC"
+  "company": "Trek",
+  "model": "Marlin 5"
 }
 ```
 
@@ -456,20 +458,57 @@ Content-Type: application/json
 {
   "offers": [
     {
-      "brand": "Canyon",
-      "model": "Grizl CF 7",
-      "price": "8 999 zł",
+      "brand": "Trek",
+      "model": "Marlin 5",
+      "price": "2 319 zł",
       "is_new": false,
-      "url": "https://www.olx.pl/oferta/...",
-      "photos": ["https://img.olx.pl/...jpg"],
-      "source": "allegro.pl"
+      "url": "https://allegro.pl/oferta/rower-gorski-mtb-trek-marlin-5-29-l-shimano-hydraulika-poserwisie-noweopony-18571327937",
+      "photos": [],
+      "source": "allegro.pl",
+      "city": null
     }
-  ]
+  ],
+  "info": ""
 }
 ```
 
+- The bike is looked up in `bike` by `company` + `model` normalised in Python (`strip().lower()`, never SQL `lower()`) and is never created; `brand`/`model` on every offer are the bike row's stored casing.
+- Offers are the bike's `bike_offer` rows with `source = 'allegro.pl'` in `id` order (insertion order); `is_new` is the row's, as the searcher read it off the listing (an Allegro listing is used unless the page says new, so `false` is the common value — the frontend then shows it in the "Używane" card); `photos` is always `[]` — the Allegro search stores no photos by design (allegro.pl answers 403 to every automated fetch, Chromium included, so the searcher's photo scrape was dropped after the probes); `city` is `null`. `info` is always `""`.
+- Unknown bike, no rows, or a DB error → `{ "offers": [], "info": "" }` (logged, never a 5xx) so the details view keeps rendering.
+- `company` / `model` must be non-empty and at most 255 characters (422).
+
+**Flow:** none — pure DB read of `bike` + `bike_offer`, no outbound call.
+
+**Tests:** `scripts/test_search.py` `case_allegro` — a seeded fixture bike with 1 `allegro.pl` offer (`is_new` true, `city` null, no photo row) → exactly that offer (`url`, `price`, `city`, `photos == []`) in < 5 s with no generic-cache row under either `/v1/bike/offer` or `/v1/bike/allegro`; then an unknown bike → 200 `{ "offers": [], "info": "" }`.
+
+---
+
+### `POST /v1/bike/allegro/search`
+
+Run the Allegro search **on demand** through the separate searcher service (`searcher/`, TODO-033) and wait for it. The searcher runs the Claude Code CLI (subscription OAuth token — no Anthropic API key) with `bike_offer_allegro.md` (the backend's prompt rewritten for the CLI: WebSearch results only, because allegro.pl answers HTTP 403 to every automated fetch — so a listing whose price no search snippet shows is stored with `price: ""`), stores every offer with `photos: []` (no Playwright — allegro.pl answers 403 to Chromium too, so the photo scrape that first shipped with TODO-033 was dropped after the probes on the user's decision: nothing to gain, ~10 s and a browser launch per run wasted), and **replaces** the bike's `allegro.pl` rows in `bike_offer` (≤ 3 offers; `bike_offer_photos` is never written) — so the next `POST /v1/bike/allegro` returns them. Triggered by the frontend's **Poproś o dane** button in the "Nowe" card, which fires it **together with** `POST /v1/bike/decathlon/search` (alongside `POST /v1/bike/missing`); also usable from `curl`. Never cached.
+
+```http
+POST http://localhost:8000/v1/bike/allegro/search
+Content-Type: application/json
+
+{
+  "company": "Trek",
+  "model": "Marlin 5"
+}
+```
+
+**Response:** the searcher's `{ offers, info }` — the same shape as `POST /v1/bike/allegro` (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `offers: []` (the stored rows are kept).
+
+- **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/used/search`) — checked **before** any searcher call, so anonymous traffic can neither mint `bike` rows nor spend a subscription run.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Allegro searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Allegro searcher unavailable"` — the exception text stays in the log), or when no search slot is free (`"Allegro searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 2) distinct searches across **all three** sources, the searcher answers 503 itself when its own slots are taken, and Cloud Run answers **429** "Rate exceeded" once every `biker-searcher` instance is busy (`--max-instances 2`, `--concurrency 1`) — the 429 is mapped to the same 503 busy; nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **502** when the searcher answers with a non-200/503/429 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
+- `company` / `model` must be non-empty and at most 255 characters (422) — they reach the searcher's CLI prompt and its `bike` row.
+- A run takes a minute or two: the 2026-09-26 probes with the CLI-tuned prompt found 3 real offers in 67 s (Kross Level 3.0) and 75 s (Trek Marlin 4). The ~10 s Playwright photo pass those probes still ran returned 0 photos every time (DataDome 403 on the offer pages), which is why it was removed — the route launches no browser now. The SDK-era prompt had needed 286 s (Trek Marlin 5) or given up empty, which is why it was rewritten.
+
 **Flow:**
-1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches allegro.pl; returns 1 offer with price, condition, direct link, and photo URLs
+1. `POST {SEARCHER_URL}/v1/search/allegro` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once (`WebSearch`/`WebFetch`, no Playwright) and writes the rows. The backend itself makes no Anthropic call.
+
+**Tests:** `scripts/test_search.py` `case_allegro_search` — an unknown bike is a **404** before any searcher call. Deliberately no live Allegro run (every searcher run is a paid subscription search); the one live run kept in the suite is `case_decathlon_search`, which goes through the same proxy code path.
 
 ---
 
@@ -533,8 +572,8 @@ Content-Type: application/json
 **Response:** the searcher's `{ offers, info }` — the same shape as `POST /v1/bike/used/olx` (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `offers: []`.
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/missing`). The searcher itself creates missing bikes for direct `curl` calls, but the backend never lets anonymous web traffic mint `bike` rows — they would surface in the DB-first search — nor spend a subscription run on them.
-- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"OLX searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"OLX searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"OLX searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 1, never more than the searcher's `SEARCHER_MAX_CONCURRENT`) distinct searches and the searcher answers 503 itself when its slot is taken — nothing queues, because a queued search would outlive the timeout and end in a second paid run. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
-- **502** when the searcher answers with a non-200/503 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"OLX searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"OLX searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"OLX searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 2 since TODO-033, never more than the searcher's `SEARCHER_MAX_CONCURRENT`) distinct searches across all three sources and the searcher answers 503 itself when its slots are taken (Cloud Run's 429 at `--max-instances` counts as busy too) — nothing queues, because a queued search would outlive the timeout and end in a second paid run. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **502** when the searcher answers with a non-200/503/429 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
 - `company` / `model` must be non-empty and at most 255 characters (422).
 
 **Flow:**
@@ -643,8 +682,8 @@ Content-Type: application/json
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/used/search`) — checked **before** any searcher call, so anonymous traffic can neither mint `bike` rows nor spend a subscription run.
 - **200** `{ "offers": [], "info": "Decathlon nie sprzedaje marki Trek — w sklepie są tylko marki własne (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt)." }` **immediately, with no searcher call**, when `company` is not a Decathlon house brand (`app/decathlon_brands.py`: `rockrider`, `btwin`, `triban`, `vanrysel`, `elops`, `riverside`, `stilus`, `tilt`, `decathlon`, compared lower-cased with apostrophes, hyphens, dots and whitespace removed, so `B'Twin` / `b-twin` / `VAN RYSEL` all match). Decathlon sells only its own brands, so this is what closes `TODO_ISSUE_010` (Decathlon offers always empty for foreign brands).
-- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Decathlon searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Decathlon searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"Decathlon searcher is busy — try again in a moment"`): the `SEARCHER_MAX_INFLIGHT` slot (default 1) is **shared with the OLX search** — the searcher has one CLI slot — and the searcher answers 503 itself when it is taken; nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
-- **502** when the searcher answers with a non-200/503 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Decathlon searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Decathlon searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"Decathlon searcher is busy — try again in a moment"`): the `SEARCHER_MAX_INFLIGHT` slots (default 2 since TODO-033) are **shared with the OLX and Allegro searches** — they mirror the searcher's capacity, and the "Nowe" card fires this search together with `/v1/bike/allegro/search` — and the searcher answers 503 itself when its slots are taken (Cloud Run's 429 at `--max-instances` counts as busy too); nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **502** when the searcher answers with a non-200/503/429 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
 - `company` / `model` must be non-empty and at most 255 characters (422) — they reach the searcher's CLI prompt and its `bike` row.
 
 **Flow:**
