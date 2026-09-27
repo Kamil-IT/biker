@@ -1,6 +1,6 @@
 # Test plan — TODO-033 On-demand Allegro search in the searcher
 
-Branch `feature/033-searcher-allegro` · task `backlog/TODO_033_SEARCHER_ALLEGRO_ON_DEMAND.md` · executed 2026-09-26.
+Branch `feature/033-searcher-allegro` · task `backlog/done/DONE_033_SEARCHER_ALLEGRO_ON_DEMAND.md` · executed 2026-09-26.
 
 ## Scope
 

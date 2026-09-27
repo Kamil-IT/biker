@@ -3,7 +3,7 @@
 Zapis całego procesu — od stanu wyjściowego, przez wywiad, sondy (które zmieniły plan), implementację, testy, aż po
 wdrożenie — z datą 2026-09-26. Trzecia powtórka schematu z `docs/OLX_SEARCHER_MIGRATION.md` (TODO-031) i
 `docs/DECATHLON_SEARCHER_MIGRATION.md` (TODO-032). Branch `feature/033-searcher-allegro`, zadanie
-`backlog/TODO_033_SEARCHER_ALLEGRO_ON_DEMAND.md`, plan i wyniki testów `docs/testing/TODO_033/TEST_PLAN.md`, zadanie w
+`backlog/done/DONE_033_SEARCHER_ALLEGRO_ON_DEMAND.md`, plan i wyniki testów `docs/testing/TODO_033/TEST_PLAN.md`, zadanie w
 Notion: „8. Allegro search na serverless i na callu na UI” (Zadania Q4 2026).
 
 ## 1. Punkt wyjścia
