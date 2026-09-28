@@ -282,7 +282,7 @@ A worktree backend's `SEARCHER_URL` must point at its own searcher port (`backen
 - DB-hit `match_score`/`explanation`/`accessories` come from the bike's latest `search_bike_rating_cache` row; otherwise score 10, `accessories=[]`, explanation in Polish, `"Pasuje: marka Trek, koła 29\", …"`
 - The category pipeline (11 scoring calls + per-category finders, `categories.py`, `anthropic_scorer.py`, `CategoryResult`) was **removed** in TODO-024
 - Returns `{ search, bikes: [{ brand, model, accessories, match_score, explanation }] }` — shape unchanged; `search` is the enriched query. `explanation` and `accessories` are Polish (brand/model and named components such as "Shimano GRX" stay untranslated)
-- On parse error: returns an empty list — never a 502 for bad JSON (an upstream API error is a 502). A non-empty AI result is stored via `store.save_search` (bikes into `bike`, ratings into `search_cache` + `search_bike_rating_cache`), never in the generic cache
+- On parse error: returns an empty list — never a 502 for bad JSON (an upstream API error is a 502). An Anthropic 400 (`anthropic.BadRequestError`, e.g. credit balance too low) is a **400** `{detail: <Anthropic's message>}` on every endpoint, via the app-wide handler in `app/main.py` A non-empty AI result is stored via `store.save_search` (bikes into `bike`, ratings into `search_cache` + `search_bike_rating_cache`), never in the generic cache
 
 **Endpoint** `GET /v1/bike/search-cache` (follow-up, cache-only — no web/Claude call)
 - `?query=<enriched query>` → `CachedSearchResponse` from `searches` + `bike_results` for an exact normalised repeat; 404 if missing/stale (24 h TTL); bikes returned in original score-weighted order (`ORDER BY position`)
