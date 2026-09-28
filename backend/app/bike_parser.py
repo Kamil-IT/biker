@@ -28,7 +28,9 @@ async def parse_free_text(text: str) -> ParseResponse:
         response = await _client.messages.create(
             model=MODEL,
             max_tokens=256,
-            temperature=0,
+            # anthropic 1.x dropped `temperature` from create() (TypeError); the API and
+            # Haiku 4.5 still accept it, so it goes in the raw body — works on 0.x too.
+            extra_body={"temperature": 0},
             system=system_prompt,
             messages=[{"role": "user", "content": text}],
         )
