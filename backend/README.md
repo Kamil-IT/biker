@@ -227,20 +227,14 @@ A bike matches when **every** checkable field given matches. A bike missing the 
 | `SearchRequest` field | Source in DB | Rule |
 |---|---|---|
 | `brand`, `model` | `bike.brand` / `bike.model` | case-insensitive exact |
-| `frame_material` | `Frame / Frame`, `spec_key='Material'` | synonyms — Aluminum ↔ aluminium/alloy/6061…, Steel ↔ chromoly/cro-mo/hi-ten…, Carbon |
 | `wheel_size` | any `spec_key='Wheel Size'`, or `Wheels/*` `Size` | number token (`29` in `29 x 2.4`); `700c` ↔ `28`, `650b` ↔ `27.5` |
 | `frame_size` | `Frame / Frame`, `spec_key='Sizes'` / `'Size'` | size token in the list (`SM`/`MD`/`LG` aliased) |
-| `gender` | `spec_key='Gender'` | Male/Female also match unisex; Universal = unisex |
 | `is_electric` | `Electric / Powertrain` category present / absent | |
-| `battery_capacity_wh` | `Electric / Powertrain / Battery`, `spec_key='Capacity'` | parsed Wh within ±10 % |
-| `brake_type` | `Brakes/*` element names, descriptions, spec values | Hydraulic → `hydraulic` (also matches Polish `hydrauliczne`); Mechanical → `mechanical`/cable disc/Polish `mechaniczn`; V-brake / Rim → rim keywords (incl. Polish `obręczow`/`szczękow`) and **no** `disc`/`tarcz` mention — element descriptions are generated in Polish |
-| `drivetrain` | `Drivetrain/*` element names, descriptions, spec values | `Nx` token (`1x12`, not `52x36T`), else chainring count (`50/34T` = 2x; single ring and no front derailleur = 1x) |
-| `belt_drive` | `Drivetrain/*` `element_name` contains `belt` | |
 | `bike_type`, `year`, `search` | — | **not checkable**, ignored by the DB step |
 
 A request with **only** non-checkable fields skips the DB and goes straight to the AI call. **Every** matching DB bike is returned (no cap, TODO-025), highest `match_score` first — never topped up with AI results.
 
-`match_score` / `explanation` / `accessories` of a DB hit come from the bike's most recent `search_bike_rating_cache` row when one exists; otherwise `match_score = 10`, `accessories = []` and the explanation lists the matched fields, e.g. `"Pasuje: rama karbonowa, koła 29\", hamulce tarczowe hydrauliczne."` (Polish, like the AI-generated explanations).
+`match_score` / `explanation` / `accessories` of a DB hit come from the bike's most recent `search_bike_rating_cache` row when one exists; otherwise `match_score = 10`, `accessories = []` and the explanation lists the matched fields, e.g. `"Pasuje: marka Trek, koła 29\", elektryczny."` (Polish, like the AI-generated explanations).
 
 ### A DB hit deliberately does not warm the generic cache
 
@@ -266,17 +260,11 @@ Content-Type: application/json
   "wheel_size": "29\"",
   "is_electric": false,
   "bike_type": "Gravel",
-  "frame_size": "M",
-  "gender": "Universal",
-  "frame_material": "Carbon",
-  "brake_type": "Hydraulic Disc",
-  "drivetrain": "2x",
-  "belt_drive": false,
-  "battery_capacity_wh": 500
+  "frame_size": "M"
 }
 ```
 
-All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M — comfortable bike…"` and, on a DB miss, sends it to a single Claude call. All fields participate in the SQLite cache key, so two searches that differ only in a filter return distinct results. `price_max`, `rider_height_cm`, `rider_weight_kg`, `has_suspension` and `is_kids` were removed (TODO-023); they are silently ignored if sent, so a payload made only of them is rejected with 422.
+All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M — comfortable bike…"` and, on a DB miss, sends it to a single Claude call. All fields participate in the SQLite cache key, so two searches that differ only in a filter return distinct results. `price_max`, `rider_height_cm`, `rider_weight_kg`, `has_suspension` and `is_kids` were removed (TODO-023), and so were `gender`, `frame_material`, `brake_type`, `drivetrain`, `belt_drive` and `battery_capacity_wh` (together with the search form's "Opcje zaawansowane" group); they are silently ignored if sent, so a payload made only of them is rejected with 422.
 
 **Flow:**
 0. SQLite reads only — generic cache, then the DB details search over `bike` + `bike_detail_component` (skipped when no checkable field is set). **A hit at either step returns immediately, making zero outbound HTTP calls.** See [Search Cache](#search-cache)

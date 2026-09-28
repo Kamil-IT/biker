@@ -226,42 +226,17 @@ def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
 # free text are ignored. A missing spec row does not match. Normalise in Python:
 # SQLite's lower() is ASCII-only, so 'RIESE & MÜLLER' would miss 'riese & müller'.
 
-BATTERY_TOLERANCE = 0.10  # ±10 % — "500 Wh" should still find a 504 Wh pack
-
-_SPEC_FIELDS = (
-    "frame_material", "wheel_size", "frame_size", "gender", "is_electric",
-    "battery_capacity_wh", "brake_type", "drivetrain", "belt_drive",
-)
+_SPEC_FIELDS = ("wheel_size", "frame_size", "is_electric")
 CHECKABLE_FIELDS = ("brand", "model") + _SPEC_FIELDS
 
 _ELECTRIC = "Electric / Powertrain"
 
-_MATERIAL_SYNONYMS = {
-    "aluminum": ("alumin", "alloy", "al6", "al 6", "6061", "6066", "7005"),
-    "carbon": ("carbon",),
-    "steel": ("steel", "chromoly", "cro-mo", "crmo", "cromo", "hi-ten", "4130"),
-    "titanium": ("titanium",),
-}
 _WHEEL_SYNONYMS = {
     "700c": ("700c", "700", "28"),
     "28": ("28", "700c", "700"),
     "650b": ("650b", "27.5"),
     "27.5": ("27.5", "650b"),
 }
-_GENDER_PATTERNS = {
-    "male": r"\bmen|\bmale|\bunisex|\buniversal",
-    "female": r"\bwomen|\bfemale|\bladies|\bunisex|\buniversal",
-    "universal": r"\bunisex|\buniversal",
-}
-# Element descriptions are generated in Polish, so the patterns also carry the
-# Polish stems ("hydrauliczne" already contains "hydraulic").
-_BRAKE_PATTERNS = {
-    "hydraulic disc": r"hydraulic",
-    "mechanical disc": r"mechanical|cable[^|]*disc|mechaniczn|linkow[^|]*tarcz",
-    "v-brake": r"v-?\s?brake|linear[- ]pull",
-    "rim": r"\brim\b|v-?\s?brake|linear[- ]pull|cantilever|dual[- ]pivot|side-?pull|obręczow|szczękow",
-}
-_DISC_PATTERN = r"disc|tarcz"
 _SIZE_ALIASES = {"SM": "S", "MD": "M", "LG": "L", "2XL": "XXL"}
 
 
@@ -280,33 +255,12 @@ class _BikeSpecs:
     def __init__(self) -> None:
         self.categories: set[str] = set()
         self.rows: list[tuple[str, str, str, str, str]] = []  # cat, sub, element, key, value
-        self.descriptions: dict[str, list[str]] = {}  # category -> element descriptions
 
     def values(self, key: str, category: Optional[str] = None, sub: Optional[str] = None) -> list[str]:
         return [
             v for c, s, _, k, v in self.rows
             if _lc(k) == key and v and (category is None or c == category) and (sub is None or s == sub)
         ]
-
-    def blob(self, category: str) -> str:
-        """Element names, descriptions and spec values of one category, lowercased.
-
-        Descriptions matter: many brakes are named only by model ("SRAM Maven
-        Silver") and say "Hydraulic Disc Brake" only in their description.
-        """
-        parts = list(self.descriptions.get(category, []))
-        for c, _, e, _, v in self.rows:
-            if c == category:
-                parts += [e, v]
-        return " | ".join(_lc(p) for p in parts if p)
-
-    def subcategories(self, category: str) -> set[str]:
-        return {s for c, s, *_ in self.rows if c == category}
-
-
-def _match_material(specs: _BikeSpecs, want: str) -> bool:
-    needles = _MATERIAL_SYNONYMS.get(_lc(want), (_lc(want),))
-    return any(any(n in _lc(v) for n in needles) for v in specs.values("material", "Frame", "Frame"))
 
 
 def _match_wheel(specs: _BikeSpecs, want: str) -> bool:
@@ -327,98 +281,23 @@ def _match_frame_size(specs: _BikeSpecs, want: str) -> bool:
     return False
 
 
-def _match_gender(specs: _BikeSpecs, want: str) -> bool:
-    pattern = _GENDER_PATTERNS.get(_lc(want), re.escape(_lc(want)))
-    return any(re.search(pattern, _lc(v)) for v in specs.values("gender"))
-
-
-def _match_battery(specs: _BikeSpecs, want: int) -> bool:
-    for v in specs.values("capacity", _ELECTRIC, "Battery"):
-        m = re.search(r"(\d{2,4}(?:[.,]\d+)?)\s*wh", _lc(v))
-        if m and abs(float(m.group(1).replace(",", ".")) - want) <= want * BATTERY_TOLERANCE:
-            return True
-    return False
-
-
-def _match_brake(specs: _BikeSpecs, want: str) -> bool:
-    blob = specs.blob("Brakes")
-    pattern = _BRAKE_PATTERNS.get(_lc(want), re.escape(_lc(want)))
-    if not blob or re.search(pattern, blob) is None:
-        return False
-    # Rim brakes and discs are exclusive; "rim" can turn up in a disc bike's
-    # description ("rotor mount on the rim side"), so a disc mention (English
-    # "disc" or Polish "tarcza"/"tarczowe") vetoes it.
-    return not (_lc(want) in ("rim", "v-brake") and re.search(_DISC_PATTERN, blob))
-
-
-def _match_drivetrain(specs: _BikeSpecs, want: str) -> bool:
-    blob = specs.blob("Drivetrain")
-    if not blob:
-        return False
-    m = re.fullmatch(r"([123])\s*x", _lc(want))
-    if not m:
-        return _lc(want) in blob
-    n = m.group(1)
-    # "1x12" / "2x11" / "1x drivetrain"; the lookbehind stops "52x36T" reading as 2x.
-    if re.search(rf"(?<![\d.]){n}\s?x(?!\d{{2}}t)", blob):
-        return True
-    # Otherwise infer from the chainring spec: "32T" (with no front derailleur)
-    # is 1x, "50/34T" is 2x, "48/38/28T" is 3x.
-    has_fd = "Front Derailleur" in specs.subcategories("Drivetrain")
-    for v in specs.values("chainrings", "Drivetrain") + specs.values("chainring", "Drivetrain"):
-        rings = re.findall(r"\d{2}", v.split("(")[0])
-        if n == "1" and len(rings) == 1 and not has_fd:
-            return True
-        if n in ("2", "3") and "/" in v and len(rings) == int(n):
-            return True
-    return False
-
-
-def _match_belt(specs: _BikeSpecs, want: bool) -> bool:
-    has_belt = any("belt" in _lc(e) for c, _, e, _, _ in specs.rows if c == "Drivetrain")
-    return has_belt == want
-
-
 _MATCHERS = {
-    "frame_material": _match_material,
     "wheel_size": _match_wheel,
     "frame_size": _match_frame_size,
-    "gender": _match_gender,
     "is_electric": lambda specs, want: (_ELECTRIC in specs.categories) == want,
-    "battery_capacity_wh": _match_battery,
-    "brake_type": _match_brake,
-    "drivetrain": _match_drivetrain,
-    "belt_drive": _match_belt,
-}
-
-# Polish display names for the English filter values the frontend sends
-# (mirrors the option labels in frontend SearchInput.tsx); unknown values pass through.
-_PL_MATERIAL = {"aluminum": "aluminiowa", "aluminium": "aluminiowa", "carbon": "karbonowa", "steel": "stalowa"}
-_PL_GENDER = {"male": "męski", "female": "damski", "universal": "uniwersalny"}
-_PL_BRAKE = {
-    "hydraulic disc": "tarczowe hydrauliczne",
-    "mechanical disc": "tarczowe mechaniczne",
-    "v-brake": "V-brake",
-    "rim": "obręczowe",
 }
 
 _MATCH_LABELS = {
     "brand": lambda v: f"marka {v}",
     "model": lambda v: f"model {v}",
-    "frame_material": lambda v: f"rama {_PL_MATERIAL.get(_lc(v), v)}",
     "wheel_size": lambda v: f"koła {v}",
     "frame_size": lambda v: f"rozmiar {v}",
-    "gender": lambda v: f"geometria {_PL_GENDER.get(_lc(v), v)}",
     "is_electric": lambda v: "elektryczny" if v else "bez napędu elektrycznego",
-    "battery_capacity_wh": lambda v: f"bateria ~{v} Wh",
-    "brake_type": lambda v: f"hamulce {_PL_BRAKE.get(_lc(v), v)}",
-    "drivetrain": lambda v: f"napęd {v}",
-    "belt_drive": lambda v: "napęd paskowy" if v else "bez napędu paskowego",
 }
 
 
 def _describe_match(fields: dict) -> str:
-    """'Pasuje: rama karbonowa, koła 29", hamulce tarczowe hydrauliczne.' for a DB hit."""
+    """'Pasuje: marka Trek, koła 29", elektryczny.' for a DB hit."""
     return "Pasuje: " + ", ".join(_MATCH_LABELS[f](v) for f, v in fields.items()) + "."
 
 
@@ -475,17 +354,14 @@ def find_bikes_by_details(req) -> list[BikeResult]:
                     BikeDetailComponent.bike_detail_id, BikeDetailComponent.category,
                     BikeDetailComponent.subcategory, BikeDetailComponent.element_name,
                     BikeDetailComponent.spec_key, BikeDetailComponent.spec_value,
-                    BikeDetailComponent.element_description, BikeDetailComponent.spec_order,
                 )
                 .filter(BikeDetailComponent.bike_detail_id.in_(list(specs)))
                 .all()
             )
-            for detail_id, cat, sub, elem, key, value, desc, spec_order in rows:
+            for detail_id, cat, sub, elem, key, value in rows:
                 bucket = specs[detail_id]
                 bucket.categories.add(cat)
                 bucket.rows.append((cat, sub, elem or "", key or "", value or ""))
-                if desc and not spec_order:  # once per element, not once per spec row
-                    bucket.descriptions.setdefault(cat, []).append(desc)
             # A bike with no details cannot prove any spec, so it never matches.
             candidates = [
                 b for b in candidates
