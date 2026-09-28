@@ -39,6 +39,10 @@ export default function App() {
   const [showAdvanced, setShowAdvanced]     = useState(false)
   const [isParsing, setIsParsing]           = useState(false)
   const [noMatchMsg, setNoMatchMsg]         = useState<string | null>(null)
+  // The free text that the filters currently shown were parsed from. A submit whose
+  // text differs from it re-runs /v1/bike/parse on a cleared filter panel, so a brand
+  // or model left over from the previous text never rides along with a new search.
+  const parsedQueryRef                      = useRef('')
 
   const updateFilter = <K extends keyof SearchFilters>(key: K, val: SearchFilters[K]) =>
     setFilters(prev => ({ ...prev, [key]: val }))
@@ -88,8 +92,21 @@ export default function App() {
 
     setNoMatchMsg(null)
 
-    // If only free text provided, parse it into structured fields first
-    if (payload.search && !hasStructured) {
+    const searchText  = payload.search?.trim() ?? ''
+    const textChanged = !!searchText && searchText !== parsedQueryRef.current
+    if (!searchText) parsedQueryRef.current = ''
+
+    // Parse the free text into structured fields when it is all we have, and also
+    // whenever the text changed since the filters were filled — then the stale
+    // filters go first, so the new text alone decides them.
+    if (searchText && (textChanged || !hasStructured)) {
+      // The panel — and with it the payload SearchInput built from it — is cleared, so
+      // a parse that extracts nothing falls through to a text-only search.
+      if (textChanged) {
+        setFilters(EMPTY_FILTERS)
+        payload = { search: payload.search }
+      }
+      parsedQueryRef.current = searchText
       setIsParsing(true)
       try {
         const res = await fetch('/v1/bike/parse', {
@@ -387,6 +404,7 @@ export default function App() {
     setErrorMsg(null)
     setQuery('')
     setFilters(EMPTY_FILTERS)
+    parsedQueryRef.current = ''
     setShowFilters(false)
     setShowAdvanced(false)
     setIsParsing(false)
