@@ -264,6 +264,8 @@ A request with **only** non-checkable fields skips the DB and goes straight to t
 
 ## Endpoints
 
+**Anthropic 400s:** any endpoint whose Anthropic API call is rejected with a 400 (`anthropic.BadRequestError`, e.g. *"Your credit balance is too low to access the Anthropic API…"*) answers **400** `{"detail": "<Anthropic's error message>"}` via the app-wide handler in `app/main.py`, instead of an unhandled 500 (or, for search, a 502).
+
 ### `POST /v1/bike/search`
 
 Find every matching bike (no cap, min 1) — from the DB when its details match, otherwise from one Claude call. All fields are optional but at least one must be provided.
@@ -290,7 +292,7 @@ All fields except `search` default to `null` (no constraint). The backend assemb
 0. DB reads only — the DB details search over `bike` + `bike_detail_component` (skipped when no checkable field is set). **A hit returns immediately, making zero outbound HTTP calls.** No generic-cache lookup. See [Search Cache](#search-cache)
 1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns every matching bike as a JSON array (min 1: when nothing meets every filter, the closest bike with a low `match_score` and an explanation naming the unmet filter; `max_tokens=8000`, a warning is logged on `stop_reason == "max_tokens"`), parsed with `app/json_extract.extract_json()`; `explanation` and `accessories` come back in Polish (brand/model and named components untranslated). Runs only on a DB miss
 
-A response with no parseable JSON returns `bikes: []` (never a 502) and nothing is stored; an upstream API error is a 502. When the AI returns bikes, they are written to `bike` + `search_cache` + `search_bike_rating_cache` via `store.save_search` — never to the generic cache. A DB-served result is not written anywhere — see [Search Cache](#search-cache).
+A response with no parseable JSON returns `bikes: []` (never a 502) and nothing is stored; an upstream API error is a 502, except an Anthropic 400, which is a 400 with Anthropic's message. When the AI returns bikes, they are written to `bike` + `search_cache` + `search_bike_rating_cache` via `store.save_search` — never to the generic cache. A DB-served result is not written anywhere — see [Search Cache](#search-cache).
 
 ---
 

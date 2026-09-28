@@ -6,7 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()  # must run before the finders construct AsyncAnthropic
 
-from fastapi import FastAPI, HTTPException  # noqa: E402
+import anthropic  # noqa: E402
+from fastapi import FastAPI, HTTPException, Request  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
 from .schemas import (  # noqa: E402
     SearchRequest, BikeSearchResponse,
     BikeDetailsRequest, BikeDetailsResponse,
@@ -73,6 +75,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Biker API", version="1.0.0", lifespan=lifespan)
 
 
+@app.exception_handler(anthropic.BadRequestError)
+async def anthropic_bad_request(request: Request, exc: anthropic.BadRequestError) -> JSONResponse:
+    # A 400 from the Anthropic API (e.g. "Your credit balance is too low …") is
+    # returned as a 400 carrying Anthropic's own message, not an unhandled 500.
+    body = exc.body if isinstance(exc.body, dict) else {}
+    error = body.get("error") if isinstance(body.get("error"), dict) else {}
+    message = error.get("message") or exc.message
+    logger.error("anthropic bad request | path=%s error=%s", request.url.path, message)
+    return JSONResponse(status_code=400, content={"detail": message})
+
+
 @app.post("/v1/bike/search", response_model=BikeSearchResponse)
 async def bike_search(req: SearchRequest) -> BikeSearchResponse:
     # No generic cache (endpoint_req_to_body_cache) here, neither read nor write.
@@ -92,6 +105,8 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
     t_total = time.perf_counter()
     try:
         bikes = await find_bikes(enriched)
+    except anthropic.BadRequestError:
+        raise  # → anthropic_bad_request: 400 with Anthropic's message
     except Exception as exc:  # noqa: BLE001 — upstream API failure, not a parse error
         logger.error("bike search failed | error=%s", exc)
         raise HTTPException(status_code=502, detail=f"Upstream error: {exc}") from exc
