@@ -123,7 +123,7 @@ export default function SearchInput({
           value={value}
           onChange={e => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="np. wygodny rower na codzienne 10 km dojazdów po mieście, głównie asfalt…"
+          placeholder="Kross, Romet, Ecobike, Trek Madone..."
           disabled={isLoading}
           autoComplete="off"
           autoFocus
