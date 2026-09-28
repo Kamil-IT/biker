@@ -230,13 +230,14 @@ Pytest regression for the ORM read path (`pytest scripts/test_details_parity.py 
 
 ## Search Cache
 
-`POST /v1/bike/search` resolves through a **three-step cascade** (TODO-024), stopping at the first step that produces bikes:
+`POST /v1/bike/search` resolves through a **two-step cascade** (TODO-024), stopping at the first step that produces bikes:
 
 | # | Step | Cost | Condition |
 |---|------|------|-----------|
-| 1 | Generic response cache (`app/cache.py`) | 0 outbound calls | Exact normalised match on the full request (every filter field) |
-| 2 | **DB details search** (`repository.find_bikes_by_details`) | 0 outbound calls | ≥1 DB-checkable field is set **and** ≥1 bike matches every one of them |
-| 3 | **One** Claude call (`app/bike_finder.py`, `app/prompts/bike_search.md`) | 1 call | Everything else |
+| 1 | **DB details search** (`repository.find_bikes_by_details`) | 0 outbound calls | ≥1 DB-checkable field is set **and** ≥1 bike matches every one of them |
+| 2 | **One** Claude call (`app/bike_finder.py`, `app/prompts/bike_search.md`) | 1 call | Everything else |
+
+The endpoint does **not** use the generic response cache (`app/cache.py`, table `endpoint_req_to_body_cache`) at all — see [No generic cache for search](#no-generic-cache-for-search).
 
 ### How the DB step matches
 
@@ -254,11 +255,11 @@ A request with **only** non-checkable fields skips the DB and goes straight to t
 
 `match_score` / `explanation` / `accessories` of a DB hit come from the bike's most recent `search_bike_rating_cache` row when one exists; otherwise `match_score = 10`, `accessories = []` and the explanation lists the matched fields, e.g. `"Pasuje: marka Trek, koła 29\", elektryczny."` (Polish, like the AI-generated explanations).
 
-### A DB hit deliberately does not warm the generic cache
+### No generic cache for search
 
-`set_cached` is never called on the step-2 path. The generic `cache` table has **no `ttl` column** and `get_cached` never checks age — writing a DB-sourced result there would pin that answer permanently, even after the DB changes.
+`/v1/bike/search` neither reads nor writes `endpoint_req_to_body_cache` (`get_cached` / `set_cached`). That table has **no TTL** and the first write wins, so any answer stored there is served for that exact request body forever. That is how the answers stored before TODO-025 (capped at 5 bikes) kept coming back after the cap was removed. The DB step always reflects the current `bike` table, and an AI answer is stored only as data: `store.save_search` writes the bikes into `bike` and their ratings into `search_cache` + `search_bike_rating_cache`. A later search by brand/model then finds those bikes in the DB. A spec filter (`wheel_size`, `frame_size`, `is_electric`) also needs their `bike_detail` rows, and free-text-only or `bike_type`/`year`-only searches are never checkable. Those repeats call Claude again every time, because nothing replays an earlier answer. The old `/v1/bike/search` rows in `endpoint_req_to_body_cache` are dead: nothing reads them.
 
-**Tests:** `scripts/test_search.py` TC-20 – TC-25 against a live server: brand+model DB hit (TC-20), DB miss → one AI call (TC-21), non-checkable-only → AI (TC-22), legacy `price_max` ignored (TC-23), spec-field DB hit with no AI and no cache row (TC-24), and no regression on the generic-cache path (TC-25).
+**Test:** `scripts/test_search.py` `case_search_db_hit_and_search_cache` seeds a stale generic-cache row for the exact request body and asserts the DB answer is returned instead; the `--ai` free-text case asserts no generic-cache row is written.
 
 ## Endpoints
 
@@ -282,13 +283,13 @@ Content-Type: application/json
 }
 ```
 
-All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M — comfortable bike…"` and, on a DB miss, sends it to a single Claude call. All fields participate in the SQLite cache key, so two searches that differ only in a filter return distinct results. `price_max`, `rider_height_cm`, `rider_weight_kg`, `has_suspension` and `is_kids` were removed (TODO-023), and so were `gender`, `frame_material`, `brake_type`, `drivetrain`, `belt_drive` and `battery_capacity_wh` (together with the search form's "Opcje zaawansowane" group); they are silently ignored if sent, so a payload made only of them is rejected with 422.
+All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M — comfortable bike…"` and, on a DB miss, sends it to a single Claude call. Nothing is served from a response cache, so every request is answered from the current DB (or the AI). `price_max`, `rider_height_cm`, `rider_weight_kg`, `has_suspension` and `is_kids` were removed (TODO-023), and so were `gender`, `frame_material`, `brake_type`, `drivetrain`, `belt_drive` and `battery_capacity_wh` (together with the search form's "Opcje zaawansowane" group); they are silently ignored if sent, so a payload made only of them is rejected with 422.
 
 **Flow:**
-0. SQLite reads only — generic cache, then the DB details search over `bike` + `bike_detail_component` (skipped when no checkable field is set). **A hit at either step returns immediately, making zero outbound HTTP calls.** See [Search Cache](#search-cache)
+0. DB reads only — the DB details search over `bike` + `bike_detail_component` (skipped when no checkable field is set). **A hit returns immediately, making zero outbound HTTP calls.** No generic-cache lookup. See [Search Cache](#search-cache)
 1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns every matching bike as a JSON array (min 1: when nothing meets every filter, the closest bike with a low `match_score` and an explanation naming the unmet filter; `max_tokens=8000`, a warning is logged on `stop_reason == "max_tokens"`), parsed with `app/json_extract.extract_json()`; `explanation` and `accessories` come back in Polish (brand/model and named components untranslated). Runs only on a DB miss
 
-A response with no parseable JSON returns `bikes: []` (never a 502) and is not cached; an upstream API error is a 502. When the AI returns bikes, the response is written to the generic cache and to `search_cache` + `search_bike_rating_cache` via `store.save_search`. A DB-served result is **not** written back to either — see [Search Cache](#search-cache).
+A response with no parseable JSON returns `bikes: []` (never a 502) and nothing is stored; an upstream API error is a 502. When the AI returns bikes, they are written to `bike` + `search_cache` + `search_bike_rating_cache` via `store.save_search` — never to the generic cache. A DB-served result is not written anywhere — see [Search Cache](#search-cache).
 
 ---
 

@@ -119,6 +119,18 @@ def _cache_row_exists(endpoint: str, request_key: str) -> bool:
         conn.close()
 
 
+def _cache_row_insert(endpoint: str, request_key: str, response: dict) -> None:
+    conn = _DB()
+    try:
+        conn.execute(
+            "INSERT INTO endpoint_req_to_body_cache (endpoint, request, response, time_stored) VALUES (?, ?, ?, ?)",
+            (endpoint, request_key, json.dumps(response), _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _cache_row_delete(endpoint: str, request_key: str) -> None:
     conn = _DB()
     try:
@@ -213,32 +225,46 @@ def _assert_offers(offers: list[dict], source: str) -> None:
 
 FIX_SEARCH_QUERY = "smoke fixture: search happy path"
 FIX_SEARCH_BRAND, FIX_SEARCH_MODEL = "Smoke Fixture", "Search Bike"
+# The stale generic-cache answer. Namespaced like every fixture: a server still on the
+# old code serves it and save_search() stores its search + bike, which the test removes.
+FIX_STALE_QUERY, FIX_STALE_MODEL = "smoke fixture: stale generic row", "Stale Cache Row"
 
 
 def case_search_db_hit_and_search_cache():
-    """/v1/bike/search served from the DB (zero AI) + /v1/bike/search-cache on the same stored search."""
+    """/v1/bike/search served from the DB (zero AI), never from the generic cache,
+    + /v1/bike/search-cache on the same stored search."""
     _seed_search_row(FIX_SEARCH_QUERY, FIX_SEARCH_BRAND, FIX_SEARCH_MODEL)
     body = {"brand": FIX_SEARCH_BRAND, "model": FIX_SEARCH_MODEL}
     key = _norm_key(body)
+    # A stale generic-cache row for this exact body, like the 5-bike answers stored
+    # before TODO-025. The endpoint must not read it (the cache has no TTL).
+    stale = {"search": FIX_STALE_QUERY, "bikes": [{
+        "brand": FIX_SEARCH_BRAND, "model": FIX_STALE_MODEL, "accessories": [],
+        "match_score": 1.0, "explanation": "stale",
+    }]}
     try:
         _cache_row_delete("/v1/bike/search", key)
+        _cache_row_insert("/v1/bike/search", key, stale)
         t0 = time.perf_counter()
         resp = _post(SEARCH_URL, body, timeout=60)
         elapsed = time.perf_counter() - t0
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
         bikes = resp.json()["bikes"]
+        assert all(b["model"] != FIX_STALE_MODEL for b in bikes), f"served the generic-cache row: {bikes}"
         assert bikes and all(b["brand"] == FIX_SEARCH_BRAND and b["model"] == FIX_SEARCH_MODEL for b in bikes), bikes
         assert isinstance(bikes[0]["accessories"], list) and 0 <= bikes[0]["match_score"] <= 10, bikes[0]
         assert bikes[0]["explanation"], "explanation must be non-empty"
         assert elapsed < 5.0, f"DB hit took {elapsed:.2f}s — expected < 5s (AI ran?)"
-        assert not _cache_row_exists("/v1/bike/search", key), "DB-hit path must not write a generic-cache row"
 
         cached = httpx.get(SEARCH_CACHE_URL, params={"query": FIX_SEARCH_QUERY}, timeout=10)
         assert cached.status_code == 200, f"search-cache: expected 200, got {cached.status_code}: {cached.text[:200]}"
         assert cached.json()["cached"] is True and cached.json()["bikes"], cached.json()
     finally:
+        _cache_row_delete("/v1/bike/search", key)
         _drop_search_row(FIX_SEARCH_QUERY)
         _delete_bike(FIX_SEARCH_BRAND, FIX_SEARCH_MODEL)
+        _delete_bike(FIX_SEARCH_BRAND, FIX_STALE_MODEL)  # rating rows first, then the bike
+        _drop_search_row(FIX_STALE_QUERY)
 
 
 FIX_DETAILS_BRAND, FIX_DETAILS_MODEL = "Smoke Fixture", "Details Bike"
@@ -548,14 +574,18 @@ def case_allegro_search():
 # ── Cases that call the Anthropic API (--ai) ────────────────────────────────
 
 def case_search_free_text():
-    """/v1/bike/search with free text — one Claude call on a cold cache."""
-    resp = _post(SEARCH_URL, {"search": "comfortable bike for daily 10 km city commute, mostly paved roads"}, timeout=180)
+    """/v1/bike/search with free text — one Claude call on every run (no generic cache)."""
+    body = {"search": "comfortable bike for daily 10 km city commute, mostly paved roads"}
+    # An older build cached this exact body; clear it so the check below sees only this run.
+    _cache_row_delete("/v1/bike/search", _norm_key(body))
+    resp = _post(SEARCH_URL, body, timeout=180)
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
     bikes = resp.json()["bikes"]
     assert len(bikes) >= 1, "expected at least 1 bike"
     first = bikes[0]
     assert first["brand"] and first["model"] and first["explanation"], first
     assert isinstance(first["accessories"], list) and 0 <= first["match_score"] <= 10, first
+    assert not _cache_row_exists("/v1/bike/search", _norm_key(body)), "search must not write a generic-cache row"
 
 
 def case_parse():
