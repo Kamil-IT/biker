@@ -38,6 +38,7 @@ The backend connects to it when `DATABASE_URL=postgresql+psycopg://biker:biker@l
 cd backend
 python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
+pip install -U anthropic        # existing venv: keep the SDK as new as the Docker image's (unpinned on purpose)
 copy .env.example .env          # edit .env and set your ANTHROPIC_API_KEY
 uvicorn app.main:app --reload --port 8000
 ```
