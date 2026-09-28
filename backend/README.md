@@ -64,6 +64,7 @@ To run a worktree next to `main`, point its frontend at its backend:
 cd backend
 python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
+pip install -U anthropic   # existing venv: -r never upgrades an installed unpinned package; the Docker image always gets the newest
 copy .env.example .env   # then edit .env with your real ANTHROPIC_API_KEY
 python scripts/migrate_bike_details.py   # REQUIRED on an existing cache.db — see note below
 uvicorn app.main:app --reload --port 8000

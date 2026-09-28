@@ -159,6 +159,7 @@ docker start biker-pg && docker exec biker-pg pg_isready -U biker -d biker
 cd backend
 python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
+pip install -U anthropic   # existing venv: -r never upgrades the unpinned SDK; the Docker image always installs the newest (1.9.0 on 2026-09-28)
 copy .env.example .env   # then edit .env: ANTHROPIC_API_KEY, DATABASE_URL to use Postgres, SEARCHER_URL + SEARCHER_API_KEY for the searcher (unset → /v1/bike/used/search, /v1/bike/decathlon/search and /v1/bike/allegro/search answer 503)
 python scripts/copy_sqlite_to_postgres.py   # once: copy cache.db into the empty Postgres (TODO-028)
 python scripts/migrate_bike_details.py   # REQUIRED on an existing cache.db (see below)
