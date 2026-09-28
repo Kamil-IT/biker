@@ -71,6 +71,7 @@ Evidence: `scratchpad/qa034/tc-034-*.png` (session scratchpad, not committed). S
 | 2 | 11 passed · 2 failed | TC-02/TC-08 counted request *initiations*: React `StrictMode` in Vite dev mounts twice, so `/v1/bike/popular` was started 2× and the reviews 6×. App fix: `usePopularBikes` now aborts the discarded first run's fetch with an `AbortController` (the review fan-out no longer runs twice); test now counts served responses. |
 | 3 | 12 passed · 1 failed | TC-08 expected 3 review responses in the whole flow, but the details view opened in TC-07 sends its own `/v1/bike/review` for the search result (pre-existing behaviour). Expectation narrowed to the three popular bikes' reviews. |
 | 4 | **13 passed · 0 failed** | — |
+| 5 | **13 passed · 0 failed** | Re-run after merging `origin/main` (#109 UTF-8 `CLAUDE.md`, #110 temperature, #111 search without the generic cache) — backend restarted on the merged code, `case_popular` PASS again. |
 
 ### Final results — round 4 (2026-09-28)
 
