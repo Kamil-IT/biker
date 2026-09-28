@@ -79,9 +79,6 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         "year": req.year, "wheel_size": req.wheel_size,
         "is_electric": req.is_electric,
         "bike_type": req.bike_type, "frame_size": req.frame_size,
-        "gender": req.gender, "frame_material": req.frame_material,
-        "brake_type": req.brake_type, "drivetrain": req.drivetrain,
-        "belt_drive": req.belt_drive, "battery_capacity_wh": req.battery_capacity_wh,
     }.items() if v is not None}
     cached = get_cached("/v1/bike/search", _fields, BikeSearchResponse)
     if cached is not None:

@@ -36,7 +36,6 @@ export default function App() {
   const [errorMsg, setErrorMsg]             = useState<string | null>(null)
   const resultsRef                          = useRef<HTMLElement>(null)
   const [showFilters, setShowFilters]       = useState(false)
-  const [showAdvanced, setShowAdvanced]     = useState(false)
   const [isParsing, setIsParsing]           = useState(false)
   const [noMatchMsg, setNoMatchMsg]         = useState<string | null>(null)
   // The free text that the filters currently shown were parsed from. A submit whose
@@ -406,7 +405,6 @@ export default function App() {
     setFilters(EMPTY_FILTERS)
     parsedQueryRef.current = ''
     setShowFilters(false)
-    setShowAdvanced(false)
     setIsParsing(false)
     setView('search')
     setSelectedBike(null)
@@ -506,8 +504,6 @@ export default function App() {
                 onFilterChange={updateFilter}
                 showFilters={showFilters}
                 onShowFiltersChange={setShowFilters}
-                showAdvanced={showAdvanced}
-                onShowAdvancedChange={setShowAdvanced}
                 isParsing={isParsing}
                 onSubmit={handleSearch}
                 isLoading={appState === 'loading'}
