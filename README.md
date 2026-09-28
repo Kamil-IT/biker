@@ -4,6 +4,8 @@ AI-powered bike finder. Describe what you're looking for in plain English and ge
 
 ## How it works
 
+Before the first search the home page shows **Najpopularniejsze rowery** — the curated popular bikes (`GET /v1/bike/popular`) as result-style cards with their expert rating in points ("8.4 / 10", from one `POST /v1/bike/review` per bike; "Brak oceny" without one) and a short description; click one to jump straight to its details page (step 4). The section disappears while a search runs or shows results and returns after "Nowe wyszukiwanie".
+
 1. You enter a free-text description (e.g. *"comfortable bike for daily 10 km city commute"*)
 2. The backend first searches its own bike database: every structured filter it can check (brand, model, wheel size, frame size, electric) is matched against stored bike specs. All matching bikes are returned (no cap) with no AI call
 3. Only when the database has no match, a single Claude Haiku call recommends every real bike that fits (at least 1 — the closest match when nothing meets every filter)
@@ -142,7 +144,8 @@ instead of exceeding the 2 GiB and getting the instance killed; raise it only to
 
 | Command | What it does |
 |---|---|
-| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/bike/used/olx`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`, `/v1/bike/allegro`, `/v1/bike/allegro/search`) |
+| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/bike/popular`, `/v1/bike/used/olx`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`, `/v1/bike/allegro`, `/v1/bike/allegro/search`) |
+| `cd backend && python scripts/seed_popular_bikes.py` | Fill `bike_popular` — the home page's "Najpopularniejsze rowery" served by `GET /v1/bike/popular` (TODO-034) — with 3 bikes that have details, photos and a cached review with a real rating; `--dry-run`, `--count N`, repeatable `--bike "Brand\|Model"`; replaces the table contents |
 | `cd searcher && python scripts/test_searcher.py` | Smoke-test the searcher (`/health`, 401/422 on all three search routes — free, no CLI run; the single paid live run lives in `backend/scripts/test_search.py` `case_decathlon_search`) |
 | `cd backend && python scripts/test_details.py` | Smoke-test `POST /v1/bike/details` |
 | `cd backend && python scripts/test_review.py` | Smoke-test `POST /v1/bike/review` |
@@ -180,6 +183,7 @@ biker/
 │   │   ├── schemas.py                 # Pydantic models
 │   │   ├── repository.py              # ORM data access: bike details + DB-first search (find_bikes_by_details) + missing-data request counter
 │   │   ├── offers_repository.py       # Stored marketplace offers read side: get_used_offers (olx.pl) + get_decathlon_offers (decathlon.pl) + get_allegro_offers (allegro.pl) + bike_exists
+│   │   ├── popular_repository.py      # Popular bikes read side for GET /v1/bike/popular: bike_popular + bike + bike_detail, two-sentence blurb (first_sentences)
 │   │   ├── searcher_client.py         # httpx proxy to the searcher (search_olx / search_decathlon / search_allegro), single-flight + shared in-flight cap (2)
 │   │   ├── decathlon_brands.py        # Decathlon house-brand allowlist for /v1/bike/decathlon/search (is_decathlon_brand, not_sold_info; TODO_ISSUE_010)
 │   │   ├── bike_finder.py             # Single Claude call → all matching bikes, min 1 (DB-miss fallback)
@@ -204,7 +208,8 @@ biker/
 │   │       ├── equipment_photos.md        # Equipment manufacturer page URL prompt
 │   │       └── equipment_review.md        # Equipment review prompt (no offer links)
 │   └── scripts/
-│       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing, /v1/bike/used/olx, /v1/bike/used/search, /v1/bike/decathlon, /v1/bike/decathlon/search, /v1/bike/allegro, /v1/bike/allegro/search)
+│       ├── seed_popular_bikes.py      # Fill bike_popular (home page "Najpopularniejsze rowery") with 3 bikes that have details + photos + a cached review; --dry-run, --count, --bike "Brand|Model"
+│       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing, /v1/bike/popular, /v1/bike/used/olx, /v1/bike/used/search, /v1/bike/decathlon, /v1/bike/decathlon/search, /v1/bike/allegro, /v1/bike/allegro/search)
 │       ├── test_details.py            # Smoke test for /v1/bike/details
 │       ├── test_review.py             # Smoke test for /v1/bike/review
 │       ├── test_equipment.py          # Smoke test for /v1/equipment/details + /review
@@ -213,9 +218,12 @@ biker/
     └── src/
         ├── App.tsx                    # App shell, state machine, all API calls
         ├── types.ts                   # Shared TypeScript interfaces
+        ├── hooks/
+        │   └── usePopularBikes.ts     # Home page: GET /v1/bike/popular once + one POST /v1/bike/review per bike (TODO-034)
         └── components/
             ├── SearchInput.tsx        # Search form
-            ├── ResultCard.tsx         # Per-bike result card
+            ├── ResultCard.tsx         # Per-bike result card (with `expertRating` also the home page's popular look: expert rating instead of match score)
+            ├── PopularBikesSection.tsx    # "Najpopularniejsze rowery" under the search form, hidden while searching / showing results
             ├── LoadingCard.tsx        # Shimmer skeleton for search results
             ├── BikeDetailsView.tsx    # Bike details page: Overview, Offers, Review, Specs
             ├── RequestDataButton.tsx  # "Request data" button for empty bike-details sections (POST /v1/bike/missing); in the Used card also runs the OLX search, in the New card the Decathlon + Allegro searches at once

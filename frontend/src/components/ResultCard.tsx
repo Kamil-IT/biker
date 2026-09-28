@@ -1,4 +1,4 @@
-import type { Bike } from '../types'
+import type { Bike, ExpertRating } from '../types'
 
 export type { Bike }
 
@@ -8,6 +8,11 @@ interface ResultCardProps {
   isTop: boolean
   animationDelay: number
   onSelect: (bike: Bike) => void
+  // Home-page "popular" look (TODO-034): the numeral, bar and aria text show this
+  // expert rating instead of `bike.match_score`, and the bar's percentage is dropped.
+  // Callers pass isTop={false} and accessories: [] (no badge, accent bar or chips) and
+  // put the bike's description in `bike.explanation`. Absent → the search-result card.
+  expertRating?: ExpertRating
 }
 
 const scoreLabel = (score: number): string => {
@@ -27,11 +32,27 @@ const formatScore = (score: number): string => {
   return score.toFixed(1)
 }
 
-export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect }: ResultCardProps) {
+const ratingLabel = ({ state }: ExpertRating): string => {
+  if (state === 'pending') return 'Ocena eksperta…'
+  if (state === 'loaded')  return 'Ocena eksperta'
+  return 'Brak oceny'
+}
+
+// Spoken form of the expert rating for the popular look's aria labels.
+const ratingText = ({ state, rating }: ExpertRating): string => {
+  if (state === 'pending')                  return 'ocena eksperta w trakcie wczytywania'
+  if (state === 'loaded' && rating != null) return `ocena eksperta ${formatScore(rating)} na 10`
+  return 'brak oceny'
+}
+
+export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect, expertRating }: ResultCardProps) {
   const { brand, model, accessories, match_score, explanation } = bike
-  const scoreDisplay = formatScore(match_score)
-  const barWidth     = `${match_score * 10}%`
-  const label        = scoreLabel(match_score)
+  // A pending or missing rating is 0 here: "—" in the numeral slot, an empty bar.
+  const score        = expertRating ? (expertRating.rating ?? 0) : match_score
+  const scoreDisplay = formatScore(score)
+  const barWidth     = `${score * 10}%`
+  const label        = expertRating ? ratingLabel(expertRating) : scoreLabel(match_score)
+  const ariaScore    = expertRating ? ratingText(expertRating) : `dopasowanie ${match_score} na 10`
 
   return (
     <button
@@ -50,7 +71,7 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
         opacity: 0,
         animation: `slideUp 420ms cubic-bezier(0.22,1,0.36,1) ${animationDelay}ms forwards`,
       }}
-      aria-label={`Zobacz specyfikację ${brand} ${model}, dopasowanie ${match_score} na 10`}
+      aria-label={`Zobacz specyfikację ${brand} ${model}, ${ariaScore}`}
     >
       {/* Left accent bar (top result only) */}
       {isTop && (
@@ -159,20 +180,25 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
           <span className="font-mono text-[11px] text-muted uppercase tracking-wider">
             {label}
           </span>
-          <span className="font-mono text-[11px] text-muted" aria-hidden="true">
-            {Math.round(match_score * 10)}%
-          </span>
+          {!expertRating && (
+            <span className="font-mono text-[11px] text-muted" aria-hidden="true">
+              {Math.round(match_score * 10)}%
+            </span>
+          )}
         </div>
 
         <div
           className="h-1.5 rounded-full bg-border overflow-hidden"
           role="progressbar"
-          aria-valuenow={match_score}
+          aria-valuenow={score}
           aria-valuemin={0}
           aria-valuemax={10}
-          aria-label={`Dopasowanie: ${match_score} na 10`}
+          aria-label={expertRating ? ariaScore : `Dopasowanie: ${match_score} na 10`}
         >
+          {/* Keyed on the rating state so the fill animation replays from 0 once the
+              rating arrives, instead of relying on the keyframe re-reading --bar-target. */}
           <div
+            key={expertRating?.state}
             className={`h-full rounded-full ${isTop ? 'bg-terra' : 'bg-ink'}`}
             style={{
               '--bar-target': barWidth,

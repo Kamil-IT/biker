@@ -17,7 +17,7 @@ from .schemas import (  # noqa: E402
     EquipmentReviewRequest, EquipmentReviewResponse,
     ParseRequest, ParseResponse,
     CachedSearchResponse,
-    MissingDataRequest, MissingDataResponse,
+    MissingDataRequest, MissingDataResponse, PopularBikesResponse,
 )
 from .bike_finder import find_bikes  # noqa: E402
 from .bike_details_finder import find_bike_details  # noqa: E402
@@ -42,6 +42,7 @@ from .repository import (  # noqa: E402
 from .offers_repository import (  # noqa: E402
     get_used_offers, get_decathlon_offers, get_allegro_offers, bike_exists,
 )
+from .popular_repository import get_popular_bikes  # noqa: E402
 # The OLX used-bike search (TODO-031), the Decathlon search (TODO-032) and the
 # Allegro search (TODO-033) live in the separate searcher service; the backend
 # reads bike_offer and proxies the on-demand searches to it.
@@ -192,6 +193,13 @@ async def bike_missing(req: MissingDataRequest) -> MissingDataResponse:
     """
     logger.info("missing request | company=%r model=%r type=%r", req.company, req.model, req.missing_type)
     return record_missing_request(req.company, req.model, req.missing_type)
+
+
+@app.get("/v1/bike/popular", response_model=PopularBikesResponse)
+async def bike_popular() -> PopularBikesResponse:
+    """Curated home-page bikes from bike_popular (TODO-034) — a pure DB read: no AI call, no generic cache."""
+    logger.info("popular bikes request")
+    return get_popular_bikes()
 
 
 @app.post("/v1/bike/review", response_model=BikeReviewResponse)

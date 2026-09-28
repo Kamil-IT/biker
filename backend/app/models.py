@@ -328,6 +328,32 @@ class BikeMissingRequest(Base):
     __table_args__ = (UniqueConstraint("bike_id", "missing_type", name="uq_missing_bike_type"),)
 
 
+# --- Popular bikes (TODO-034) ---------------------------------------------
+# The hand-curated list the home page shows before the first search. One row
+# per bike, ordered by `position`. Only scripts/seed_popular_bikes.py writes
+# it; the app just reads it through GET /v1/bike/popular. Created by
+# init_db() like every other table — no migration step.
+
+
+class BikePopular(Base):
+    """One curated "popular bike": a pointer to `bike`, ordered by `position`.
+
+    `bike_id` is unique, so a bike is listed at most once; `position` is the
+    display order (1 = first) and is deliberately not unique, so re-seeding
+    can renumber rows without a temporary swap.
+    """
+
+    __tablename__ = "bike_popular"
+
+    id = Column(Integer, primary_key=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    position = Column(Integer, nullable=False, default=0, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    bike = relationship("Bike")
+
+
 # --- Generic endpoint response cache ---------------------------------------
 # The per-endpoint response cache read/written by app/cache.py. A Core table,
 # not an ORM class: it has no primary key (rows are identified by the

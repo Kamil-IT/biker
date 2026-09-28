@@ -93,7 +93,7 @@ while `POST /v1/bike/used/olx`, `POST /v1/bike/decathlon` and `POST /v1/bike/all
 
 ```bash
 # In a second terminal:
-python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, used, used/search, decathlon, decathlon/search, allegro, allegro/search; add --ai for the API cases
+python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, popular, used, used/search, decathlon, decathlon/search, allegro, allegro/search; add --ai for the API cases
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
 python scripts/test_review.py   # smoke-test POST /v1/bike/review
 ```
@@ -103,6 +103,24 @@ python scripts/test_review.py   # smoke-test POST /v1/bike/review
 python scripts/migrate_bike_details.py
 pytest scripts/test_details_parity.py -v   # blob vs ORM read parity
 ```
+
+### Seed the popular bikes (`bike_popular`)
+
+The home page's "Najpopularniejsze rowery" section (TODO-034) is served by `GET /v1/bike/popular` from the
+`bike_popular` table, which nothing in the app writes. Fill it with:
+
+```bash
+python scripts/seed_popular_bikes.py              # replace the table contents with 3 automatically picked bikes
+python scripts/seed_popular_bikes.py --dry-run    # only print what would be inserted
+python scripts/seed_popular_bikes.py --count 5    # pick 5 instead of 3
+python scripts/seed_popular_bikes.py --bike "Giant|Revolt Advanced Pro" --bike "Trek|Marlin 5"   # your own list, in this order
+```
+
+The script targets `$DATABASE_URL` (the local `biker-pg` through `.env`) and **replaces** the table contents on every run.
+Without `--bike` it picks bikes that have complete data — a `bike_detail` row (the description the card shows), photos in
+`bike_detail_photos`, and a `POST /v1/bike/review` response already in the generic cache with a real (non-zero) `rating` —
+so every card shows points and a blurb. `--bike "Brand|Model"` (repeatable) overrides the automatic pick and fixes the
+order. Production gets the same rows only when the user decides to run it there.
 
 ### Docker image
 
@@ -341,6 +359,35 @@ Content-Type: application/json
 **Flow:** none — no outbound HTTP calls; one SQLite read of `bike` plus one upsert into `bike_missing_request`.
 
 **Tests:** `scripts/test_search.py` TC-27 – TC-29 against a live server: counter 1 → 2 plus a separate row for a second `missing_type` on a seeded fixture bike, with no generic-cache row (TC-27); unknown bike → 200, `bike_id: null`, `counter: 0`, no bike created (TC-28); invalid `missing_type` → 422 (TC-29).
+
+---
+
+### `GET /v1/bike/popular`
+
+The hand-curated "Najpopularniejsze rowery" list the home page shows before the first search (TODO-034). One row per bike in `bike_popular` (`bike_id` FK → `bike.id` ON DELETE CASCADE, unique; `position` = display order, 1 first, deliberately not unique), written only by `scripts/seed_popular_bikes.py` (see [Seed the popular bikes](#seed-the-popular-bikes-bike_popular)). A pure DB read via `app/popular_repository.py` — **no** AI call, **no** generic cache, no TTL. The expert rating shown on each card is **not** part of this response: the frontend asks `POST /v1/bike/review` for every bike separately.
+
+```http
+GET http://localhost:8000/v1/bike/popular
+```
+
+**Response:**
+```json
+{
+  "bikes": [
+    { "brand": "Giant", "model": "Revolt Advanced Pro", "description": "Pierwsze zdanie opisu. Drugie zdanie opisu." },
+    { "brand": "Trek", "model": "Marlin 5", "description": "" }
+  ]
+}
+```
+
+- Rows ordered by `position`, then `id`. `brand` / `model` are the `bike` row's values as stored (the single source of display casing).
+- `description` = the `text` of the bike's stored `BikeDescription` JSON (`bike_detail.description`) cut to its **first two sentences** by `popular_repository.first_sentences`: a sentence ends with `.` `!` `?` or `…` (plus an optional closing quote/bracket) followed by whitespace and an upper-case word, so `ok. 12 kg` or `np. 29-calowe` does not split; there is no abbreviation dictionary, so an upper-case brand right after an abbreviation (`m.in. Shimano`) still splits — a rare over-cut on a card blurb, accepted. `""` when the bike has no `bike_detail` row or its JSON does not parse (logged at WARNING). The details TTL is ignored — an old description is still a fine blurb.
+- Empty table → **200** `{ "bikes": [] }`. A DB error → **200** `{ "bikes": [] }` + ERROR log, never a 500 (the home page must render regardless).
+- `bike_popular` is created at startup by `init_db()` like every other table — no migration step. Deleting a `bike` row cascades to its `bike_popular` row.
+
+**Flow:** none — no outbound HTTP call; one DB read (`bike_popular` joined to `bike`, left-joined to `bike_detail`).
+
+**Tests:** `scripts/test_search.py` `case_popular` against a live server: two fixture bikes in `bike_popular` (B at position 1 without details, A at position 2 with a three-sentence description whose first sentence contains `ok. 12 kg`) → 200, B before A among the returned bikes, A's `description` = exactly the first two sentences, B's `""`, stored casing echoed, < 5 s, no generic-cache row.
 
 ---
 

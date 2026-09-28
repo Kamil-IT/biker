@@ -174,3 +174,24 @@ export interface ParseResponse {
   wheel_size?:     string
   is_electric?:    boolean
 }
+
+// Returned by GET /v1/bike/popular (TODO-034): the curated home-page list, already in
+// display order. `description` is the first one or two sentences of the stored overview
+// ("" when the bike has no details row) — the card shows it in the explanation slot.
+export interface PopularBike {
+  brand:       string
+  model:       string
+  description: string
+}
+
+export interface PopularBikesResponse {
+  bikes: PopularBike[]
+}
+
+// Expert rating of one popular bike, from its own POST /v1/bike/review call. 'error'
+// covers a failed call and a `rating` of 0 alike — both read "Brak oceny" on the card —
+// so `rating` is a number only in the 'loaded' state.
+export interface ExpertRating {
+  state:  'pending' | 'loaded' | 'error'
+  rating: number | null
+}

@@ -105,6 +105,17 @@ class MissingDataResponse(BaseModel):
     counter: int  # 0 when nothing was recorded
 
 
+class PopularBike(BaseModel):
+    """One curated home-page bike (TODO-034): the `bike` row's casing + a short blurb."""
+    brand: str
+    model: str
+    description: str = ""  # first two sentences of the stored details description; "" without details
+
+
+class PopularBikesResponse(BaseModel):
+    bikes: list[PopularBike] = []
+
+
 class SpecItem(BaseModel):
     key: str
     value: str
