@@ -121,7 +121,8 @@ Only call `set_cached` on the happy path — never cache error/fallback response
 For endpoints returning offers or reviews, only cache when the result is non-empty:
 - Offers: `if result.offers: set_cached(...)`
 - Reviews: `if result.ref: set_cached(...)`
-- Search/details: always cache (empty is a valid result)
+- Details: always cache (empty is a valid result)
+- **Exception: `/v1/bike/search` never uses the generic cache** (neither `get_cached` nor `set_cached`). The table has no TTL, so it kept serving pre-TODO-025 5-bike answers; search answers from the DB, then AI, and stores AI results only as data via `store.save_search`
 This mirrors the pattern used by `/v1/bike/ceneo`. (`/v1/bike/used/olx`, `/v1/bike/decathlon` and `/v1/bike/allegro` no longer call the API at all — they are DB reads of `bike_offer`, TODO-031 / TODO-032 / TODO-033; the searches behind them run in the searcher service via `/v1/bike/used/search`, `/v1/bike/decathlon/search` and `/v1/bike/allegro/search`, which are never cached.)
 
 ## Documentation Update Policy
@@ -273,12 +274,13 @@ A worktree backend's `SEARCHER_URL` must point at its own searcher port (`backen
 
 **Endpoint** `POST /v1/bike/search`
 - Request: all fields optional, at least one required — `search` (free text), `brand`, `model`, `year` (int), `wheel_size` (string), `is_electric` (bool), `bike_type` (string), `frame_size` (string). `price_max`, `rider_height_cm`, `rider_weight_kg`, `has_suspension` and `is_kids` were **removed** (TODO-023), and `gender`, `frame_material`, `brake_type`, `drivetrain`, `belt_drive` and `battery_capacity_wh` with the search form's "Opcje zaawansowane" group — Pydantic ignores them if sent, so a payload of only those is a 422
-- Structured fields are assembled into an enriched query string via `SearchRequest.enriched_query()` (e.g. `"Brand: Trek, Type: Gravel, Year: 2023 — trail riding"`); all fields participate in the SQLite cache key in `main.py`
-- **Cascade (TODO-024)**: (1) generic cache → (2) **DB details search** `repository.find_bikes_by_details(req)` — a bike matches when every given *checkable* field matches its `bike` / `bike_detail_component` rows; `bike_type`, `year` and free-text `search` are not checkable and ignored. ≥1 match returns **all** those bikes (no cap, TODO-025) with **zero** AI calls and **no** `set_cached`. A request with only non-checkable fields skips the DB → (3) **one** Claude call via `bike_finder.find_bikes(enriched)` returning every matching bike, min 1 (closest match with a low score and an explanation naming the unmet filter)
+- Structured fields are assembled into an enriched query string via `SearchRequest.enriched_query()` (e.g. `"Brand: Trek, Type: Gravel, Year: 2023 — trail riding"`)
+- **No generic cache**: the endpoint neither reads nor writes `endpoint_req_to_body_cache` — it has no TTL, so it kept serving answers frozen before TODO-025 (5 bikes) for the same request body. The old `/v1/bike/search` rows there are dead
+- **Cascade (TODO-024)**: (1) **DB details search** `repository.find_bikes_by_details(req)` — a bike matches when every given *checkable* field matches its `bike` / `bike_detail_component` rows; `bike_type`, `year` and free-text `search` are not checkable and ignored. ≥1 match returns **all** those bikes (no cap, TODO-025) with **zero** AI calls. A request with only non-checkable fields, or with no DB match, → (2) **one** Claude call via `bike_finder.find_bikes(enriched)` returning every matching bike, min 1 (closest match with a low score and an explanation naming the unmet filter)
 - DB-hit `match_score`/`explanation`/`accessories` come from the bike's latest `search_bike_rating_cache` row; otherwise score 10, `accessories=[]`, explanation in Polish, `"Pasuje: marka Trek, koła 29\", …"`
 - The category pipeline (11 scoring calls + per-category finders, `categories.py`, `anthropic_scorer.py`, `CategoryResult`) was **removed** in TODO-024
 - Returns `{ search, bikes: [{ brand, model, accessories, match_score, explanation }] }` — shape unchanged; `search` is the enriched query. `explanation` and `accessories` are Polish (brand/model and named components such as "Shimano GRX" stay untranslated)
-- On parse error: returns an empty list — never a 502 for bad JSON (an upstream API error is a 502). The AI result is cached (`set_cached` + `store.save_search`) only when non-empty
+- On parse error: returns an empty list — never a 502 for bad JSON (an upstream API error is a 502). A non-empty AI result is stored via `store.save_search` (bikes into `bike`, ratings into `search_cache` + `search_bike_rating_cache`), never in the generic cache
 
 **Endpoint** `GET /v1/bike/search-cache` (follow-up, cache-only — no web/Claude call)
 - `?query=<enriched query>` → `CachedSearchResponse` from `searches` + `bike_results` for an exact normalised repeat; 404 if missing/stale (24 h TTL); bikes returned in original score-weighted order (`ORDER BY position`)

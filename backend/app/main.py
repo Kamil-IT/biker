@@ -74,20 +74,9 @@ app = FastAPI(title="Biker API", version="1.0.0", lifespan=lifespan)
 
 @app.post("/v1/bike/search", response_model=BikeSearchResponse)
 async def bike_search(req: SearchRequest) -> BikeSearchResponse:
-    _fields = {k: str(v) for k, v in {
-        "search": req.search, "brand": req.brand, "model": req.model,
-        "year": req.year, "wheel_size": req.wheel_size,
-        "is_electric": req.is_electric,
-        "bike_type": req.bike_type, "frame_size": req.frame_size,
-    }.items() if v is not None}
-    cached = get_cached("/v1/bike/search", _fields, BikeSearchResponse)
-    if cached is not None:
-        # Backfill the follow-up table on the hit path too. Without this the
-        # semantic tables only ever fill on a generic-cache MISS, so a warm
-        # cache.db leaves them permanently empty — see TODO-011.
-        save_search(cached.search, cached.bikes)
-        return cached
-
+    # No generic cache (endpoint_req_to_body_cache) here, neither read nor write.
+    # It has no TTL and first write wins, so it kept serving answers frozen by
+    # older builds (the 5-bike cap removed in TODO-025) for the same request body.
     enriched = req.enriched_query()
 
     # TODO-024: DB first. find_bikes_by_details returns [] straight away when no
@@ -96,8 +85,6 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
     db_bikes = find_bikes_by_details(req)
     if db_bikes:
         logger.info("search served from DB | enriched_query=%r bikes=%d", enriched, len(db_bikes))
-        # Deliberately no set_cached: the generic cache has no TTL, so warming it
-        # from the DB would pin this answer even after the DB changes.
         return BikeSearchResponse(search=enriched, bikes=db_bikes)
 
     logger.info("search request (AI) | enriched_query=%r", enriched)
@@ -111,11 +98,12 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         "search complete | bikes=%d total_elapsed=%.2fs",
         len(bikes), time.perf_counter() - t_total,
     )
-    response = BikeSearchResponse(search=enriched, bikes=bikes)
+    # save_search is not a response cache: it stores the found bikes in `bike`
+    # (a later brand/model search finds them in the DB; spec filters also need
+    # their details) and their ratings.
     if bikes:
-        set_cached("/v1/bike/search", _fields, response)
         save_search(enriched, bikes)
-    return response
+    return BikeSearchResponse(search=enriched, bikes=bikes)
 
 
 @app.get("/v1/bike/search-cache", response_model=CachedSearchResponse)
@@ -154,7 +142,9 @@ async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
     _fields = {"company": req.company, "model": req.model}
     cached = get_cached("/v1/bike/details", _fields, BikeDetailsResponse)
     if cached is not None:
-        # Backfill on the hit path — see the note in /v1/bike/search above.
+        # Backfill the ORM details tables on the hit path too. Without this they
+        # only ever fill on a generic-cache MISS, so a warm cache leaves them
+        # empty — see TODO-011.
         save_bike_details(req.company, req.model, cached)
         return cached
 
