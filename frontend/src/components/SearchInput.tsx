@@ -8,8 +8,6 @@ interface SearchInputProps {
   onFilterChange: <K extends keyof SearchFilters>(key: K, val: SearchFilters[K]) => void
   showFilters: boolean
   onShowFiltersChange: (v: boolean) => void
-  showAdvanced: boolean
-  onShowAdvancedChange: (v: boolean) => void
   isParsing: boolean
   onSubmit: (payload: SearchPayload) => void
   isLoading: boolean
@@ -22,7 +20,6 @@ const labelClass = 'block font-mono text-[10px] text-muted uppercase tracking-wi
 
 const WHEEL_SIZES = ['12"', '14"', '16"', '20"', '24"', '26"', '27.5"', '28"', '29"', '700c', '650b']
 const FRAME_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
-const DRIVETRAINS = ['1x', '2x', '3x']
 
 // `value` is what the backend receives and matches against its English data —
 // only `label` is translated.
@@ -38,28 +35,11 @@ const BIKE_TYPES: Option[] = [
   { value: 'Cruiser',         label: 'Cruiser' },
   { value: 'Folding',         label: 'Składany' },
 ]
-const GENDERS: Option[] = [
-  { value: 'Male',      label: 'Męski' },
-  { value: 'Female',    label: 'Damski' },
-  { value: 'Universal', label: 'Uniwersalny' },
-]
-const FRAME_MATERIALS: Option[] = [
-  { value: 'Aluminum', label: 'Aluminium' },
-  { value: 'Carbon',   label: 'Karbon' },
-  { value: 'Steel',    label: 'Stal' },
-]
-const BRAKE_TYPES: Option[] = [
-  { value: 'Hydraulic Disc',  label: 'Tarczowe hydrauliczne' },
-  { value: 'Mechanical Disc', label: 'Tarczowe mechaniczne' },
-  { value: 'V-brake',         label: 'V-brake' },
-  { value: 'Rim',             label: 'Obręczowe' },
-]
 
 export default function SearchInput({
   value, onChange,
   filters, onFilterChange,
   showFilters, onShowFiltersChange,
-  showAdvanced, onShowAdvancedChange,
   isParsing,
   onSubmit, isLoading,
 }: SearchInputProps) {
@@ -70,9 +50,7 @@ export default function SearchInput({
     value.trim() ||
     f.brand.trim() || f.model.trim() || f.year.trim() || f.wheel_size ||
     f.bike_type || f.frame_size ||
-    f.gender || f.frame_material || f.brake_type || f.drivetrain ||
-    f.battery_capacity_wh.trim() ||
-    f.is_electric !== undefined || f.belt_drive !== undefined
+    f.is_electric !== undefined
   )
 
   const buildPayload = (): SearchPayload => {
@@ -84,14 +62,7 @@ export default function SearchInput({
     if (f.bike_type)                 p.bike_type           = f.bike_type
     if (f.wheel_size)                p.wheel_size          = f.wheel_size
     if (f.frame_size)                p.frame_size          = f.frame_size
-    if (f.gender)                    p.gender              = f.gender
-    if (f.frame_material)            p.frame_material      = f.frame_material
-    if (f.brake_type)                p.brake_type          = f.brake_type
-    if (f.drivetrain)                p.drivetrain          = f.drivetrain
     if (f.is_electric !== undefined)    p.is_electric      = f.is_electric
-    if (f.belt_drive !== undefined)     p.belt_drive       = f.belt_drive
-    if (f.is_electric === true && f.battery_capacity_wh.trim())
-      p.battery_capacity_wh = parseInt(f.battery_capacity_wh, 10)
     return p
   }
 
@@ -260,113 +231,6 @@ export default function SearchInput({
               <span className="font-body text-sm text-ink">Tylko rowery elektryczne (e-bike)</span>
             </label>
           </div>
-
-          {/* ── Advanced sub-toggle ───────────────────── */}
-          <button
-            type="button"
-            onClick={() => onShowAdvancedChange(!showAdvanced)}
-            aria-expanded={showAdvanced}
-            className="mt-4 flex items-center gap-1.5 font-mono text-[11px] text-muted uppercase tracking-wider hover:text-terra transition-colors duration-150"
-          >
-            <CaretDown
-              size={12}
-              aria-hidden="true"
-              style={{ transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 150ms' }}
-            />
-            {showAdvanced ? 'Mniej opcji zaawansowanych' : 'Opcje zaawansowane'}
-          </button>
-
-          {/* ── Advanced group ────────────────────────── */}
-          {showAdvanced && (
-            <div className="mt-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="bike-gender" className={labelClass}>Płeć</label>
-                  <select
-                    id="bike-gender"
-                    value={f.gender}
-                    onChange={e => onFilterChange('gender', e.target.value)}
-                    disabled={isLoading}
-                    className={`${fieldClass} appearance-none`}
-                  >
-                    <option value="">Dowolna</option>
-                    {GENDERS.map(g => <option key={g.value} value={g.value}>{g.label}</option>)}
-                  </select>
-                </div>
-
-                <div>
-                  <label htmlFor="bike-frame-material" className={labelClass}>Materiał ramy</label>
-                  <select
-                    id="bike-frame-material"
-                    value={f.frame_material}
-                    onChange={e => onFilterChange('frame_material', e.target.value)}
-                    disabled={isLoading}
-                    className={`${fieldClass} appearance-none`}
-                  >
-                    <option value="">Dowolny</option>
-                    {FRAME_MATERIALS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-                  </select>
-                </div>
-
-                <div>
-                  <label htmlFor="bike-brake-type" className={labelClass}>Typ hamulców</label>
-                  <select
-                    id="bike-brake-type"
-                    value={f.brake_type}
-                    onChange={e => onFilterChange('brake_type', e.target.value)}
-                    disabled={isLoading}
-                    className={`${fieldClass} appearance-none`}
-                  >
-                    <option value="">Dowolny</option>
-                    {BRAKE_TYPES.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
-                  </select>
-                </div>
-
-                <div>
-                  <label htmlFor="bike-drivetrain" className={labelClass}>Napęd</label>
-                  <select
-                    id="bike-drivetrain"
-                    value={f.drivetrain}
-                    onChange={e => onFilterChange('drivetrain', e.target.value)}
-                    disabled={isLoading}
-                    className={`${fieldClass} appearance-none`}
-                  >
-                    <option value="">Dowolny</option>
-                    {DRIVETRAINS.map(d => <option key={d} value={d}>{d}</option>)}
-                  </select>
-                </div>
-
-                {f.is_electric === true && (
-                  <div>
-                    <label htmlFor="bike-battery" className={labelClass}>Pojemność baterii (Wh)</label>
-                    <input
-                      id="bike-battery"
-                      type="number"
-                      value={f.battery_capacity_wh}
-                      onChange={e => onFilterChange('battery_capacity_wh', e.target.value)}
-                      placeholder="np. 500"
-                      min={0}
-                      disabled={isLoading}
-                      className={fieldClass}
-                    />
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2.5 pt-3">
-                <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={f.belt_drive === true}
-                    onChange={e => onFilterChange('belt_drive', e.target.checked ? true : undefined)}
-                    disabled={isLoading}
-                    className="w-4 h-4 accent-terra rounded"
-                  />
-                  <span className="font-body text-sm text-ink">Napęd pasowy (bez łańcucha)</span>
-                </label>
-              </div>
-            </div>
-          )}
         </div>
       )}
 

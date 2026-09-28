@@ -120,12 +120,6 @@ export interface SearchPayload {
   is_electric?:         boolean
   bike_type?:           string
   frame_size?:          string
-  gender?:              string
-  frame_material?:      string
-  brake_type?:          string
-  drivetrain?:          string
-  belt_drive?:          boolean
-  battery_capacity_wh?: number
 }
 
 // Form state for the search filters panel. Text/number inputs and
@@ -137,13 +131,7 @@ export interface SearchFilters {
   wheel_size:          string
   bike_type:           string
   frame_size:          string
-  gender:              string
-  frame_material:      string
-  brake_type:          string
-  drivetrain:          string
-  battery_capacity_wh: string
   is_electric:         boolean | undefined
-  belt_drive:          boolean | undefined
 }
 
 export const EMPTY_FILTERS: SearchFilters = {
@@ -153,13 +141,7 @@ export const EMPTY_FILTERS: SearchFilters = {
   wheel_size:          '',
   bike_type:           '',
   frame_size:          '',
-  gender:              '',
-  frame_material:      '',
-  brake_type:          '',
-  drivetrain:          '',
-  battery_capacity_wh: '',
   is_electric:         undefined,
-  belt_drive:          undefined,
 }
 
 // Bike-details sections a user can ask us to fill in (POST /v1/bike/missing, TODO-026/027).
