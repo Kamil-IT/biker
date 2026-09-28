@@ -4,6 +4,8 @@ import ResultCard from './components/ResultCard'
 import LoadingCard from './components/LoadingCard'
 import BikeDetailsView from './components/BikeDetailsView'
 import EquipmentDetailsView from './components/EquipmentDetailsView'
+import PopularBikesSection from './components/PopularBikesSection'
+import usePopularBikes from './hooks/usePopularBikes'
 import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse, EquipmentDetailsResponse, EquipmentReviewResponse, SearchPayload, ParseResponse, SearchFilters } from './types'
 import { EMPTY_FILTERS } from './types'
 
@@ -45,6 +47,10 @@ export default function App() {
 
   const updateFilter = <K extends keyof SearchFilters>(key: K, val: SearchFilters[K]) =>
     setFilters(prev => ({ ...prev, [key]: val }))
+
+  // Home-page "Najpopularniejsze rowery" (TODO-034): fetched once for the app's
+  // lifetime — coming back from the details view does not refetch.
+  const { bikes: popularBikes, ratings: popularRatings } = usePopularBikes()
 
   // Details state
   const [view, setView]                         = useState<AppView>('search')
@@ -519,6 +525,15 @@ export default function App() {
                 </div>
               )}
             </section>
+
+            {/* Popular bikes — home page only: gone while a search runs or shows results */}
+            {!showResults && popularBikes.length > 0 && (
+              <PopularBikesSection
+                bikes={popularBikes}
+                ratings={popularRatings}
+                onSelect={handleBikeSelect}
+              />
+            )}
 
             {/* Results */}
             {showResults && (

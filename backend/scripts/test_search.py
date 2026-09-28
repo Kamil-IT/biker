@@ -9,7 +9,7 @@ Every case seeds its own namespaced fixture rows and deletes them afterwards, so
 it passes on a cold or aged database. Endpoints covered here:
 
   no API   /v1/bike/search (DB hit) · /v1/bike/search-cache · /v1/bike/details-cache
-           /v1/bike/missing · /v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
+           /v1/bike/missing · /v1/bike/popular · /v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
            /v1/bike/decathlon · /v1/bike/decathlon/search (404 + foreign-brand skip always; the
            live house-brand search — the ONE paid searcher run in the suite — only when the searcher is up)
            /v1/bike/allegro · /v1/bike/allegro/search (404 only — no paid run)
@@ -49,6 +49,7 @@ SEARCH_URL = f"{BASE}/v1/bike/search"
 SEARCH_CACHE_URL = f"{BASE}/v1/bike/search-cache"
 DETAILS_CACHE_URL = f"{BASE}/v1/bike/details-cache"
 MISSING_URL = f"{BASE}/v1/bike/missing"
+POPULAR_URL = f"{BASE}/v1/bike/popular"
 USED_URL = f"{BASE}/v1/bike/used/olx"
 USED_SEARCH_URL = f"{BASE}/v1/bike/used/search"
 PARSE_URL = f"{BASE}/v1/bike/parse"
@@ -149,6 +150,7 @@ def _delete_bike(brand: str, model: str) -> None:
             f"DELETE FROM bike_offer_photos WHERE bike_offer_id IN (SELECT id FROM bike_offer WHERE bike_id IN {ids})",
             f"DELETE FROM bike_offer WHERE bike_id IN {ids}",
             f"DELETE FROM bike_missing_request WHERE bike_id IN {ids}",
+            f"DELETE FROM bike_popular WHERE bike_id IN {ids}",
             f"DELETE FROM search_bike_rating_cache WHERE bike_id IN {ids}",
             f"DELETE FROM bike_detail_photos WHERE bike_detail_id IN (SELECT id FROM bike_detail WHERE bike_id IN {ids})",
             f"DELETE FROM bike_detail_component WHERE bike_detail_id IN (SELECT id FROM bike_detail WHERE bike_id IN {ids})",
@@ -307,6 +309,49 @@ def case_missing():
         assert resp.json() == {"bike_id": bike_id, "missing_type": "photos", "counter": 1}, resp.json()
     finally:
         _delete_bike(FIX_MISSING_BRAND, FIX_MISSING_MODEL)
+
+
+FIX_POP_BRAND, FIX_POP_MODEL_A, FIX_POP_MODEL_B = "Smoke Fixture", "Popular Bike A", "Popular Bike B"
+# Three sentences, the first with an abbreviation the splitter must not cut on.
+FIX_POP_TEXT = "Rower waży ok. 12 kg i ma koła 29 cali. Drugie zdanie opisu. Trzecie zdanie nie może trafić na kartę."
+FIX_POP_BLURB = "Rower waży ok. 12 kg i ma koła 29 cali. Drugie zdanie opisu."
+
+
+def case_popular():
+    """/v1/bike/popular lists the bike_popular rows in position order with a two-sentence blurb (no AI, no cache; TODO-034)."""
+    for m in (FIX_POP_MODEL_A, FIX_POP_MODEL_B):
+        _delete_bike(FIX_POP_BRAND, m)
+    id_a = _insert_bike(FIX_POP_BRAND, FIX_POP_MODEL_A)
+    id_b = _insert_bike(FIX_POP_BRAND, FIX_POP_MODEL_B)
+    try:
+        # Bike A has details (the blurb source), bike B has none; B is listed first.
+        save_bike_details(FIX_POP_BRAND, FIX_POP_MODEL_A, BikeDetailsResponse(
+            company=FIX_POP_BRAND, model=FIX_POP_MODEL_A,
+            description=BikeDescription(text=FIX_POP_TEXT, segments=[], citations=[]),
+            components=[], photos=[],
+        ))
+        conn = _DB()
+        try:
+            for bike_id, position in ((id_b, 1), (id_a, 2)):
+                conn.execute("INSERT INTO bike_popular (bike_id, position, created_at) VALUES (?, ?, ?)", (bike_id, position, _now()))
+            conn.commit()
+        finally:
+            conn.close()
+        t0 = time.perf_counter()
+        resp = httpx.get(POPULAR_URL, timeout=10)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        bikes = resp.json()["bikes"]
+        # Real seeded rows may sit in the table too — assert on the fixture rows' relative order only.
+        mine = [b for b in bikes if b["brand"] == FIX_POP_BRAND and b["model"] in (FIX_POP_MODEL_A, FIX_POP_MODEL_B)]
+        assert [b["model"] for b in mine] == [FIX_POP_MODEL_B, FIX_POP_MODEL_A], f"position order / stored casing: {mine}"
+        assert mine[0]["description"] == "", mine[0]
+        assert mine[1]["description"] == FIX_POP_BLURB, mine[1]
+        assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
+        assert not _cache_row_exists("/v1/bike/popular", _norm_key({})), "/v1/bike/popular must not write a generic-cache row"
+    finally:
+        for m in (FIX_POP_MODEL_A, FIX_POP_MODEL_B):
+            _delete_bike(FIX_POP_BRAND, m)
 
 
 FIX_USED_BRAND, FIX_USED_MODEL = "Smoke Fixture", "Used Bike"
@@ -562,6 +607,7 @@ CASES = [
     (case_search_db_hit_and_search_cache, False),
     (case_details_cache, False),
     (case_missing, False),
+    (case_popular, False),
     (case_used, False),
     (case_used_search, False),
     (case_decathlon, False),

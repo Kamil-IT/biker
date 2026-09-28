@@ -76,6 +76,9 @@ export default function BikeDetailsView({
 }: BikeDetailsViewProps) {
   const { brand, model, accessories, match_score } = bike
   const scoreDisplay = match_score === 10 ? '10' : match_score.toFixed(1)
+  // A bike opened from the home page's popular list (TODO-034) has no search to be
+  // matched against — it arrives with match_score 0 and the header shows no score.
+  const hasMatchScore = match_score > 0
 
   // Each section: loading state for the first 5 s, then its data if any arrived,
   // otherwise a "Request data" button (also after an empty or failed response).
@@ -118,18 +121,20 @@ export default function BikeDetailsView({
               {model}
             </p>
           </div>
-          <div className="shrink-0 text-right mt-1">
-            <p className="font-mono text-[10px] text-muted uppercase tracking-widest mb-0.5">
-              Dopasowanie
-            </p>
-            <div
-              className="font-display font-bold text-charcoal leading-none tabular-nums text-[36px]"
-              aria-label={`Dopasowanie ${match_score} na 10`}
-            >
-              {scoreDisplay}
+          {hasMatchScore && (
+            <div className="shrink-0 text-right mt-1">
+              <p className="font-mono text-[10px] text-muted uppercase tracking-widest mb-0.5">
+                Dopasowanie
+              </p>
+              <div
+                className="font-display font-bold text-charcoal leading-none tabular-nums text-[36px]"
+                aria-label={`Dopasowanie ${match_score} na 10`}
+              >
+                {scoreDisplay}
+              </div>
+              <p className="font-mono text-[11px] text-muted">/ 10</p>
             </div>
-            <p className="font-mono text-[11px] text-muted">/ 10</p>
-          </div>
+          )}
         </div>
 
         {/* Photo gallery */}
