@@ -10,7 +10,7 @@ Cases
   E1  Search (brand + type, NO model)  -> search_cache + search_bike_rating_cache
       + bike. The card count / scores on screen must equal the rows written.
       No model is supplied on purpose so the DB-first branch (needs brand AND
-      model) is skipped and the AI/generic path actually writes the tables.
+      model) is skipped and the AI path actually writes the tables.
 
   E3  Open the top result   -> bike_detail + bike_detail_component (+ photos)
   E4  Spec-tree round-trip  -> #spec rows rendered == #non-NULL spec rows in DB
@@ -28,8 +28,9 @@ Cases
                                shown; the per-source rows are gone.
 
   E2  DB-first short-circuit -> re-search with the top bike's brand+model+an
-      unused year. That MISSES the generic cache (new key) yet must NOT add a new
-      '/v1/bike/search' row -> proves it returned from search_cache, skipping AI.
+      unused year (not DB-checkable). It must NOT add a search_cache row (only the
+      AI path's save_search writes one) -> proves the DB answered, skipping AI.
+      /v1/bike/search never uses the generic cache.
 
   E8  Cascade delete        -> delete the test bike row; all children gone and
       PRAGMA foreign_key_check clean (proves cache.py's PRAGMA foreign_keys=ON).
@@ -356,12 +357,14 @@ def case_review_offers(page, rep: Report, top_bike, args) -> None:
 def case_db_first(page, base_url, rep: Report, top_bike, args) -> None:
     brand, model = top_bike
     print(f"\n── E2  DB-first short-circuit for {brand} {model!r} ──")
-    before = offer_row_count("/v1/bike/search")
+    # Search never writes the generic cache any more; only the AI path writes
+    # search_cache (save_search), so an unchanged count proves the DB answered.
+    before = scalar("SELECT COUNT(*) FROM search_cache") or 0
     n = do_search(page, base_url, brand=brand, model=model, year=2099,
                   timeout_ms=args.search_timeout)
-    after = offer_row_count("/v1/bike/search")
+    after = scalar("SELECT COUNT(*) FROM search_cache") or 0
     rep.hard("E2.no_ai_write", after == before,
-             f"/v1/bike/search generic rows {before}->{after} (unchanged => DB-first, no AI)")
+             f"search_cache rows {before}->{after} (unchanged => DB-first, no AI)")
     rep.hard("E2.cards", n > 0, f"{n} card(s) served from DB")
 
 
