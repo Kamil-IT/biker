@@ -11,9 +11,9 @@ selects (unset -> SQLite cache.db), exactly as for the server.
     python scripts/seed_popular_bikes.py --db ../cache.db # another database: SQLite path or SQLAlchemy URL
 
 Automatic pick (default): a bike qualifies when its `bike_detail` row has >= 1
-photo and >= 20 component rows AND the generic cache holds its review (endpoint
-'/v1/bike/review', request = the app's own normalised key) with a `rating` > 0 —
-rows from before the aggregate rating existed do not qualify. Candidates rank by
+photo and >= 20 component rows AND its stored review (`bike_review`, TODO-037)
+has a `rating` > 0 — reviews from before the aggregate rating existed do not
+qualify. Candidates rank by
 marketplace offers desc, photos desc, component rows desc, then bike id; the list
 takes at most one bike per brand while enough candidates remain and only then
 fills up with repeats, so the top of the home page shows different brands.
@@ -46,14 +46,11 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_DIR))
 load_dotenv(BACKEND_DIR / ".env")  # DATABASE_URL selects the database, as for the server
 
-# _normalise builds the generic cache's request key, so the review lookup cannot drift from the app's.
-from app.cache import _normalise  # noqa: E402
 from app.models import (  # noqa: E402
-    Bike, BikeDetailComponent, BikeDetailPhoto, BikeDetails, BikeOffer, BikePopular,
-    configure_db, endpoint_req_to_body_cache, get_engine, get_session, init_db,
+    Bike, BikeDetailComponent, BikeDetailPhoto, BikeDetails, BikeOffer, BikePopular, BikeReview,
+    configure_db, get_engine, get_session, init_db,
 )
 
-REVIEW_ENDPOINT = "/v1/bike/review"
 MIN_PHOTOS = 1
 MIN_COMPONENTS = 20
 DESCRIPTION_CHARS = 60
@@ -92,7 +89,7 @@ class Candidate:
         if self.components < MIN_COMPONENTS:
             out.append(f"only {self.components} component rows (< {MIN_COMPONENTS})")
         if self.rating <= 0:
-            out.append("no cached review with a rating > 0")
+            out.append("no stored review with a rating > 0")
         return out
 
 
@@ -109,17 +106,11 @@ def _description_text(raw: str) -> str:
     return text if isinstance(text, str) else ""
 
 
-def load_ratings(session) -> dict[str, float]:
-    """Generic-cache request key -> review rating (0.0 when missing or unreadable)."""
-    t = endpoint_req_to_body_cache
-    rows = session.execute(select(t.c.request, t.c.response).where(t.c.endpoint == REVIEW_ENDPOINT))
-    ratings: dict[str, float] = {}
-    for request, response in rows:
-        try:
-            ratings[request] = float(json.loads(response).get("rating") or 0)
-        except (TypeError, ValueError, AttributeError):
-            ratings[request] = 0.0
-    return ratings
+def load_ratings(session) -> dict[int, float]:
+    """bike_id -> stored review rating (`bike_review`); a bike without a review is absent."""
+    return {bike_id: float(rating or 0) for bike_id, rating in session.execute(
+        select(BikeReview.bike_id, BikeReview.rating)
+    )}
 
 
 def _count_per_bike(session, child, fk_column) -> dict[int, int]:
@@ -151,7 +142,7 @@ def load_candidates(session) -> list[Candidate]:
     for bike_id, brand, model in session.execute(select(Bike.id, Bike.brand, Bike.model)):
         candidates.append(Candidate(
             bike_id=bike_id, brand=brand, model=model,
-            rating=ratings.get(_normalise({"company": brand, "model": model}), 0.0),
+            rating=ratings.get(bike_id, 0.0),
             photos=photos.get(bike_id, 0), components=components.get(bike_id, 0),
             offers=offers.get(bike_id, 0), description=descriptions.get(bike_id, ""),
         ))
@@ -266,14 +257,14 @@ def main() -> int:
     args = parse_args()
     if args.db:
         configure_db(args.db)
-    init_db()  # creates bike_popular on a database that predates TODO-034
+    init_db()  # creates bike_popular / bike_review on a database that predates TODO-034 / TODO-037
     print(f"database: {get_engine().url.render_as_string(hide_password=True)}")
 
     with get_session() as session:
         candidates = load_candidates(session)
     qualifying = sum(1 for c in candidates if c.qualifies)
     print(f"bikes: {len(candidates)} in `bike`, {qualifying} qualify "
-          f"(>= {MIN_PHOTOS} photo, >= {MIN_COMPONENTS} component rows, cached review with rating > 0)")
+          f"(>= {MIN_PHOTOS} photo, >= {MIN_COMPONENTS} component rows, stored review with rating > 0)")
 
     if args.bike:
         picks, wanted = pick_explicit(candidates, args.bike), len(args.bike)

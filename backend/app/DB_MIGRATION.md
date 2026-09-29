@@ -134,6 +134,51 @@ UNIQUE(bike_id, missing_type)
 New table only — `init_db()`'s `create_all()` creates it on an existing database at startup, so it needs no
 migration step.
 
+**`bike_review`** — the stored expert review of a bike (TODO-037)
+```
+id (PK)
+bike_id (FK → bike.id, ON DELETE CASCADE, UNIQUE, indexed)
+score: int (0–10)
+explanation: text
+rating: float (0–10 weighted aggregate)
+sources_used: int
+created_at, updated_at: datetime (naive UTC, like every other table)
+```
+
+**`bike_review_source`** — the review's `ref` URLs (TODO-037)
+```
+id (PK)
+review_id (FK → bike_review.id, ON DELETE CASCADE, indexed)
+url: str (≤ 2048)
+display_order: int (the tier-sorted `ref` order; read ORDER BY display_order, id)
+```
+Written only by the searcher (`POST /v1/search/review`), read by `app/reviews_repository.py` `get_review` for
+`POST /v1/bike/review` — no TTL, no generic cache. New tables: `init_db()` creates them, no schema migration.
+
+## Reviews copied out of the generic cache (TODO-037)
+
+Before TODO-037 each review was a JSON blob in `endpoint_req_to_body_cache` (endpoint `'/v1/bike/review'`). Carry
+them over once per database — the old cache rows stay behind as dead rows:
+
+```bash
+cd backend
+python scripts/copy_review_cache_to_table.py --dry-run   # $DATABASE_URL (backend/.env), else backend/cache.db
+python scripts/copy_review_cache_to_table.py
+python scripts/copy_review_cache_to_table.py --db path/to/copy.db
+python scripts/copy_review_cache_to_table.py --url postgresql+psycopg://biker:biker@localhost:5432/<db>
+python scripts/copy_review_cache_to_table.py --force     # overwrite reviews already in bike_review
+```
+
+- Copies only rows with a non-empty `ref` and `sources_used >= 1` (the rest → `skipped_degenerate`); unreadable JSON →
+  `unparseable`. The bike is found by Python-normalised brand/model and never created (miss → `skipped_unknown_bike`,
+  listed); a bike that already has a review → `skipped_existing` unless `--force`.
+- `ref` order → `display_order` 0..n-1; `created_at`/`updated_at` = the cache row's `time_stored`.
+- One transaction through the app's engine (SQLite and PostgreSQL); `--dry-run` rolls back and creates no tables; a
+  second run copies nothing. Importable: `copy_reviews(url_or_path=None, dry_run=False, force=False, verbose=True) ->
+  dict`. Exit code 1 on failure.
+- Local run on a copy of `cache.db` (2026-09-29): 26 cached rows → 17 copied (57 sources), 9 degenerate, 0 unknown
+  bikes, 0 unparseable; second run 0 copied / 17 skipped_existing.
+
 ## Migration Steps
 
 ### 1. Install SQLAlchemy

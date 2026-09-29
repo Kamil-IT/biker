@@ -19,7 +19,7 @@ Structured code implementation for biker backend endpoints and frontend componen
 ### Phase 1: Specification (5 min)
 Analyze requirements and existing patterns in the codebase.
 - For **endpoints**: Review app/main.py for route structure, app/schemas.py for request/response models
-- For **finders**: Study app/bike_finder.py, app/bike_review_finder.py as templates
+- For **finders**: Study app/bike_finder.py, app/bike_details_finder.py as templates (the review finder lives in searcher/app/review_finder.py)
 - For **frontend**: Check src/App.tsx for state management, src/components/ for component patterns
 
 ### Phase 2: Pseudocode (10 min)

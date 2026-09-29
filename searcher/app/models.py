@@ -1,7 +1,8 @@
-"""SQLAlchemy engine helpers and the four tables the searcher touches.
+"""SQLAlchemy engine helpers and the six tables the searcher touches.
 
-The DDL below is a verbatim copy of `bike`, `bike_offer`, `bike_offer_photos`
-and `bike_detail_photos` in backend/app/models.py — same names, columns, constraints and index names —
+The DDL below is a verbatim copy of `bike`, `bike_offer`, `bike_offer_photos`,
+`bike_detail_photos`, `bike_review` and `bike_review_source` in
+backend/app/models.py — same names, columns, constraints and index names —
 because both services share one database. Change it there first, then here.
 init_db() only checks that the tables exist — the backend creates them.
 """
@@ -13,9 +14,11 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     create_engine,
     event,
@@ -81,7 +84,9 @@ def get_session():
     return _SessionLocal()
 
 
-REQUIRED_TABLES = ("bike", "bike_offer", "bike_offer_photos", "bike_detail_photos")
+REQUIRED_TABLES = (
+    "bike", "bike_offer", "bike_offer_photos", "bike_detail_photos", "bike_review", "bike_review_source",
+)
 
 
 def init_db():
@@ -131,6 +136,7 @@ class Bike(Base):
         "BikeDetailPhoto", back_populates="bike", cascade="all, delete-orphan",
         order_by="BikeDetailPhoto.display_order, BikeDetailPhoto.id",
     )
+    review = relationship("BikeReview", back_populates="bike", uselist=False, cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("brand", "model", name="uq_bike_brand_model"),)
 
@@ -189,3 +195,43 @@ class BikeDetailPhoto(Base):
 
     # Relationships
     bike = relationship("Bike", back_populates="photos")
+
+
+class BikeReview(Base):
+    """The bike's expert review (TODO-037) — at most one per bike, no TTL.
+
+    Written by the searcher's review search (/v1/search/review), only when the
+    run found at least one source; read by the backend's /v1/bike/review.
+    """
+
+    __tablename__ = "bike_review"
+
+    id = Column(Integer, primary_key=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    score = Column(Integer, nullable=False, default=0)
+    explanation = Column(Text, nullable=False, default="")
+    rating = Column(Float, nullable=False, default=0.0)
+    sources_used = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    bike = relationship("Bike", back_populates="review")
+    sources = relationship(
+        "BikeReviewSource", back_populates="review", cascade="all, delete-orphan",
+        order_by="BikeReviewSource.display_order, BikeReviewSource.id",
+    )
+
+
+class BikeReviewSource(Base):
+    """One source URL of a bike review; display_order keeps the tier-sorted `ref` order."""
+
+    __tablename__ = "bike_review_source"
+
+    id = Column(Integer, primary_key=True)
+    review_id = Column(Integer, ForeignKey("bike_review.id", ondelete="CASCADE"), nullable=False, index=True)
+    url = Column(String(2048), nullable=False)
+    display_order = Column(Integer, nullable=False, default=0)
+
+    # Relationships
+    review = relationship("BikeReview", back_populates="sources")

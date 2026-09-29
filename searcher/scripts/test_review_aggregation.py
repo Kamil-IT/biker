@@ -1,33 +1,32 @@
-"""Pure unit tests for the TODO-018 review aggregation rules (backend/app/bike_review_finder.py).
+"""Pure unit tests for the TODO-018 review aggregation rules, now in searcher/app/review_finder.py (TODO-037).
 
-No network, no live server, no Anthropic API key needed: ANTHROPIC_API_KEY is
-stubbed below *before* importing app.bike_review_finder, because that module
-constructs an AsyncAnthropic() client at import time (module-level `_client`).
-AsyncAnthropic() itself does not validate the key eagerly, but a stub is set
-anyway so this file works even if that changes upstream, and so it never
-depends on a real .env being present.
+Ported from backend/scripts/test_review_aggregation.py when the review finder
+moved into the searcher; the assertions are unchanged, so they pin the rating
+logic to what the backend computed. No network, no CLI run, no database.
 
-Covers the two TODO-018 gaps:
+Covers:
   - source-disagreement rule (_aggregate_rating): spread > DISAGREEMENT_THRESHOLD
     anchors to Tier 1 (else Tier 2) instead of the weighted mean; the note text
     (_disagreement_note); malformed per_source entries are skipped, not raised.
   - ref priority ordering (_order_ref): Tier 1 -> Tier 2 -> Tier 3, stable
     within a tier, unknown URLs pushed to the end.
+  - build_review: <cite> stripping, disagreement sentence appended, score clamp,
+    fallback review without an explanation.
 
 Run:
-    cd backend
+    cd searcher
     python -m pytest scripts/test_review_aggregation.py -v
 """
 
-import os
-
-os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-dummy-key-not-real")
-
-from app.bike_review_finder import (  # noqa: E402
+from app.review_finder import (
     DISAGREEMENT_THRESHOLD,
+    EXPLANATION_MAX_LEN,
+    FALLBACK,
     _aggregate_rating,
     _disagreement_note,
     _order_ref,
+    build_review,
+    is_safe_review_url,
 )
 
 
@@ -256,3 +255,132 @@ def test_order_ref_is_stable_within_a_tier():
         "https://reddit.com/a",
         "https://mtbr.com/a",
     ]
+
+
+# --------------------------------------------------------------------------
+# build_review — the CLI answer -> BikeReview (searcher only)
+# --------------------------------------------------------------------------
+
+
+def test_build_review_strips_cite_orders_ref_and_appends_disagreement_note():
+    per_source = [
+        _source("community", 4, url="https://reddit.com/a"),
+        _source("pro_numeric", 9, url="https://bikeradar.com/a"),
+    ]
+    data = {
+        "score": 8,
+        "explanation": 'Dobry <cite index="1-2">rower</cite>.',
+        "per_source": per_source,
+        "ref": ["https://reddit.com/a", "https://bikeradar.com/a"],
+    }
+    lt = chr(60)  # the web-search citation markup: <cite index="…">…</cite>
+    data["explanation"] = f'Dobry {lt}cite index="1-2">rower{lt}/cite>.'
+
+    review = build_review(data)
+
+    assert review.explanation == f"Dobry rower. {_disagreement_note(_aggregate_rating(per_source)[2])}"
+    assert review.ref == ["https://bikeradar.com/a", "https://reddit.com/a"]
+    assert review.rating == 9.0
+    assert review.sources_used == 2
+    assert review.score == 8
+
+
+def test_build_review_clamps_score_and_keeps_empty_result():
+    review = build_review({"score": 14, "explanation": "Brak źródeł.", "per_source": [], "ref": []})
+
+    assert review.score == 10
+    assert review.ref == []
+    assert review.rating == 0.0
+    assert review.sources_used == 0
+
+
+def test_build_review_drops_banned_domains_before_aggregation():
+    per_source = [
+        _source("pro_numeric", 2, url="https://escapecollective.com/review/x"),
+        _source("pro_qualitative", 3, url="https://shop.velominati.com/y"),
+        _source("pro_numeric", 1, source="www.escapecollective.com"),  # no url: judged by source
+        _source("pro_numeric", 8, url="https://www.bikeradar.com/a"),
+        _source("community", 7, url="https://notescapecollective.com/a"),  # look-alike, not banned
+    ]
+    data = {
+        "score": 8,
+        "explanation": "Recenzja.",
+        "per_source": per_source,
+        "ref": [
+            "https://www.escapecollective.com/review/x",
+            "https://notescapecollective.com/a",
+            "https://shop.velominati.com/y",
+            "https://www.bikeradar.com/a",
+        ],
+    }
+
+    review = build_review(data)
+
+    # only bikeradar (8, x3) and the look-alike (7, x1) count: no disagreement, weighted mean
+    assert review.sources_used == 2
+    assert review.rating == round((8 * 3 + 7 * 1) / 4, 1)
+    assert review.explanation == "Recenzja."
+    assert review.ref == ["https://www.bikeradar.com/a", "https://notescapecollective.com/a"]
+
+
+def test_is_safe_review_url():
+    assert is_safe_review_url("https://www.bikeradar.com/a")
+    assert is_safe_review_url("http://forumrowerowe.org/t/1")
+    for bad in (
+        "javascript:alert(1)",
+        "data:text/html,x",
+        "ftp://bikeradar.com/a",
+        "//bikeradar.com/a",
+        "bikeradar.com/a",
+        "/reviews/a",
+        "https://",
+        " https://bikeradar.com/a",
+        "https://escapecollective.com/a",
+        "https://" + "a" * 2048,
+        "",
+        None,
+        123,
+    ):
+        assert not is_safe_review_url(bad), bad
+
+
+def test_build_review_drops_unsafe_urls_before_aggregation():
+    per_source = [
+        _source("pro_numeric", 1, url="javascript:alert(1)"),
+        _source("pro_numeric", 2, url="data:text/html,x"),
+        _source("pro_numeric", 2),  # no url at all
+        _source("pro_numeric", 8, url="https://www.bikeradar.com/a"),
+    ]
+    data = {
+        "score": 8,
+        "explanation": "Recenzja.",
+        "per_source": per_source,
+        "ref": ["javascript:alert(1)", "https://www.bikeradar.com/a", "reddit.com/r/x", 42],
+    }
+
+    review = build_review(data)
+
+    assert review.sources_used == 1
+    assert review.rating == 8.0
+    assert review.explanation == "Recenzja."  # the bad low scores never triggered a disagreement
+    assert review.ref == ["https://www.bikeradar.com/a"]
+
+
+def test_build_review_caps_explanation_length_keeping_the_disagreement_note():
+    long_text = "x" * 10_000
+    plain = build_review({"score": 5, "explanation": long_text, "per_source": [], "ref": []})
+    assert len(plain.explanation) == EXPLANATION_MAX_LEN
+
+    per_source = [
+        _source("pro_numeric", 9, url="https://bikeradar.com/a"),
+        _source("community", 2, url="https://reddit.com/a"),
+    ]
+    split = build_review({"score": 5, "explanation": long_text, "per_source": per_source, "ref": []})
+    note = _disagreement_note(_aggregate_rating(per_source)[2])
+    assert len(split.explanation) <= EXPLANATION_MAX_LEN
+    assert split.explanation.endswith(note)
+
+
+def test_build_review_without_explanation_is_the_fallback():
+    assert build_review({"score": 7, "per_source": [], "ref": []}) == FALLBACK
+    assert FALLBACK.explanation == "Recenzja niedostępna."

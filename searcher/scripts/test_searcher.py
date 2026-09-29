@@ -4,7 +4,7 @@
 
 Reads SEARCHER_URL (default http://localhost:8100) and SEARCHER_API_KEY from the
 environment or searcher/.env. Every case here is free: health, auth (401) and
-validation (422) on all four search routes (olx, decathlon, allegro, photos),
+validation (422) on all five search routes (olx, decathlon, allegro, photos, review),
 plus a photos request for a bike that already HAS photo rows, which must come
 back from the DB without a search (TC-11; the bike is SEARCHER_PHOTOS_BIKE
 "Brand|Model", else the first one with photos found through DATABASE_URL; it is
@@ -36,6 +36,7 @@ SEARCH_URL = f"{BASE_URL}/v1/search/olx"
 DECATHLON_URL = f"{BASE_URL}/v1/search/decathlon"
 ALLEGRO_URL = f"{BASE_URL}/v1/search/allegro"
 PHOTOS_URL = f"{BASE_URL}/v1/search/photos"
+REVIEW_URL = f"{BASE_URL}/v1/search/review"
 
 assert API_KEY, "SEARCHER_API_KEY must be set (env or searcher/.env)"
 
@@ -175,6 +176,20 @@ else:
     assert data["bike_id"] is not None, data
     assert elapsed < 5, f"took {elapsed:.1f}s — a CLI run must not have started"
     print(f"OK -- {len(data['photos'])} stored photos returned in {elapsed:.2f}s without a search")
+
+# ── [TC-12] POST /v1/search/review without X-Searcher-Key → 401 ──
+rv_body = {"company": "Canyon", "model": "Grizl CF 7 ESC"}
+resp = httpx.post(REVIEW_URL, json=rv_body, timeout=30)
+_show("[TC-12] review: no key", rv_body, resp)
+assert resp.status_code == 401, f"Expected 401 without a key, got {resp.status_code}"
+print("OK -- 401 without X-Searcher-Key on /v1/search/review")
+
+# ── [TC-13] POST /v1/search/review with the key but a blank model → 422 (no CLI run) ──
+bad_body = {"company": "Canyon", "model": "   "}
+resp = httpx.post(REVIEW_URL, json=bad_body, headers={"X-Searcher-Key": API_KEY}, timeout=30)
+_show("[TC-13] review: blank model", bad_body, resp)
+assert resp.status_code == 422, f"Expected 422 for a blank model, got {resp.status_code}"
+print("OK -- 422 for a blank model on /v1/search/review")
 
 print("\nALL OK")
 sys.exit(0)

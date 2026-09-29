@@ -182,8 +182,10 @@ class CachedSearchResponse(BaseModel):
 
 
 class BikeReviewRequest(BaseModel):
-    company: str
-    model: str
+    # Bounded to the bike.brand / bike.model column width: /v1/bike/review/search
+    # forwards both into the searcher's CLI prompt and its bike row (TODO-037).
+    company: str = Field(max_length=255)
+    model: str = Field(max_length=255)
 
     @field_validator("company", "model")
     @classmethod

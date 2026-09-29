@@ -338,6 +338,16 @@ export default function App() {
     setPhotosState('loaded')
   }
 
+  // The Review section's "Poproś o dane" button (TODO-037): the searcher runs the review
+  // prompt and stores the result. An empty answer (no `ref`, `sources_used` 0) keeps the
+  // button on screen, which then reads "Nie znaleziono recenzji".
+  const searchReview = async (bike: Bike) => {
+    const data = await postOnDemandSearch<BikeReviewResponse>('/v1/bike/review/search', bike)
+    if (!data) return
+    setReview(data)
+    setReviewState('loaded')
+  }
+
   const fetchEquipmentDetails = async (company: string, model: string) => {
     setEquipState('loading')
     setEquipError(null)
@@ -662,6 +672,7 @@ export default function App() {
             onSearchUsed={() => searchUsedBikes(selectedBike)}
             onSearchNew={() => searchNew(selectedBike)}
             onSearchPhotos={() => searchPhotos(selectedBike)}
+            onSearchReview={() => searchReview(selectedBike)}
           />
         )}
 

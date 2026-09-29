@@ -89,23 +89,27 @@ uvicorn app.main:app --reload --port 8000
 `POST /v1/bike/allegro/search` and `POST /v1/bike/photos/search` at the on-demand searcher (top-level `searcher/`, `http://localhost:8100` locally; the key
 is sent as `X-Searcher-Key` and must equal the searcher's own `SEARCHER_API_KEY`). `SEARCHER_TIMEOUT` (seconds, default 600)
 bounds one search. `SEARCHER_MAX_INFLIGHT` (default **10**, was 2) is how many distinct searches this backend lets run at once across
-all four routes — the "Nowe" card fires the Decathlon and Allegro searches together and a details page can add OLX and photos — and must never exceed the searcher's
+all five routes — the "Nowe" card fires the Decathlon and Allegro searches together and a details page can add OLX and photos — and must never exceed the searcher's
 capacity (`SEARCHER_MAX_CONCURRENT`, locally 10; on Cloud Run `--max-instances 10` with `--concurrency 1`); an eleventh search is
-refused with 503, nothing queues. The cap is per backend process: two backend instances admit up to 20 between them. Leave `SEARCHER_URL` unset to run without the searcher — all four routes then answer 503,
-while `POST /v1/bike/used/olx`, `POST /v1/bike/decathlon`, `POST /v1/bike/allegro` and `POST /v1/bike/photos` keep serving whatever is stored in
+refused with 503, nothing queues. The cap is per backend process: two backend instances admit up to 20 between them. Leave `SEARCHER_URL` unset to run without the searcher — all five routes then answer 503,
+while `POST /v1/bike/used/olx`, `POST /v1/bike/decathlon`, `POST /v1/bike/allegro` and `POST /v1/bike/photos` and `POST /v1/bike/review` keep serving whatever is stored in
 the database.
 
 ```bash
 # In a second terminal:
-python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, popular, used, used/search, decathlon, decathlon/search, allegro, allegro/search, photos, photos/search; add --ai for the API cases
+python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, popular, used, used/search, decathlon, decathlon/search, allegro, allegro/search, photos, photos/search, review, review/search; add --ai for the API cases
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
-python scripts/test_review.py   # smoke-test POST /v1/bike/review
 ```
 
 ```bash
 # One-off per existing database: re-key bike_detail_photos to bike_id (idempotent)
 python scripts/migrate_photos_bike_id.py --dry-run
 python scripts/migrate_photos_bike_id.py
+
+# One-off per existing database (TODO-037): copy the generic-cache bike reviews into bike_review / bike_review_source
+# (idempotent; --force overwrites, --db / --url pick another database). The tables themselves are created by init_db().
+python scripts/copy_review_cache_to_table.py --dry-run
+python scripts/copy_review_cache_to_table.py
 ```
 
 ### Seed the popular bikes (`bike_popular`)
@@ -122,7 +126,7 @@ python scripts/seed_popular_bikes.py --bike "Giant|Revolt Advanced Pro" --bike "
 
 The script targets `$DATABASE_URL` (the local `biker-pg` through `.env`) and **replaces** the table contents on every run.
 Without `--bike` it picks bikes that have complete data — a `bike_detail` row (the description the card shows), photos in
-`bike_detail_photos`, and a `POST /v1/bike/review` response already in the generic cache with a real (non-zero) `rating` —
+`bike_detail_photos`, and a stored review in `bike_review` with a real (non-zero) `rating` —
 so every card shows points and a blurb. `--bike "Brand|Model"` (repeatable) overrides the automatic pick and fixes the
 order. Production gets the same rows only when the user decides to run it there.
 
@@ -155,9 +159,9 @@ cd backend
 pytest -m "not llm"
 ```
 
-`pytest.ini` scopes default collection to `scripts/test_review_aggregation.py`,
-`scripts/test_browser_slots.py` and `scripts/test_searcher_client_photos.py`, so a bare `pytest` run covers the review-aggregation unit tests,
-the searcher client's photo route (mocked httpx: request, single-flight, busy mapping, in-flight cap 10, body validation)
+`pytest.ini` scopes default collection to `scripts/test_browser_slots.py`, `scripts/test_searcher_client_photos.py`,
+`scripts/test_searcher_client_review.py` and `scripts/test_reviews_repository.py`, so a bare `pytest` run covers the stored-review read and the cache-copy script (temp SQLite),
+the searcher client's photo and review routes (mocked httpx: request, single-flight, busy mapping, in-flight cap 10, body validation)
 and the browser-launch cap (a fake Playwright proves no scraper exceeds `BROWSER_MAX_CONCURRENCY`
 launches and always returns its slot). The rest of `scripts/`
 stays excluded — those are standalone smoke scripts that hit a live server at import
@@ -475,7 +479,7 @@ Content-Type: application/json
 **Response:** `{ "photos": [...] }` — the bike's photos as now stored, in display order (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `photos: []`.
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare) — checked **before** any searcher call, so anonymous traffic cannot spend a subscription run.
-- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Photos searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Photos searcher unavailable"` — the exception text stays in the log), or when no search slot is free (`"Photos searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 10) distinct searches across **all four** routes, the searcher answers 503 itself when its own slots are taken, and Cloud Run answers **429** once every `biker-searcher` instance is busy (`--max-instances 10`, `--concurrency 1`) — the 429 is mapped to the same 503 busy; nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Photos searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Photos searcher unavailable"` — the exception text stays in the log), or when no search slot is free (`"Photos searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 10) distinct searches across **all five** routes, the searcher answers 503 itself when its own slots are taken, and Cloud Run answers **429** once every `biker-searcher` instance is busy (`--max-instances 10`, `--concurrency 1`) — the 429 is mapped to the same 503 busy; nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
 - **502** when the searcher answers with a non-200/503/429 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body. Unlike the old in-backend finder, a failed CLI run is an error here (the UI button becomes clickable again), not an empty `photos`.
 - `company` / `model` must be non-empty and at most 255 characters (422).
 - **Security:** the page URL comes out of an LLM reading the web while the searcher's browser runs inside our network, so the CLI gets `WebSearch` only (no `WebFetch`), the product URL must be http/https on public addresses only, Playwright's request routing aborts every request to a non-public host (redirects, sub-resources, XHR, JS navigations; service workers blocked), and stored image URLs must be http/https, ≤ 2048 chars, not a local name or private IP literal. Accepted limitation: DNS rebinding.
@@ -494,7 +498,7 @@ Content-Type: application/json
 
 ### `POST /v1/bike/review`
 
-Return an aggregated review score, explanation, source links, and an aggregate rating derived from multiple curated review sources for a specific bike model.
+Return the expert review **stored in the database** for a specific bike model — a pure read of `bike_review` + `bike_review_source` (TODO-037, the same move `/v1/bike/allegro` made in TODO-033). **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/bike/review/search`](#post-v1bikereviewsearch)). The old `web_search` finder rows under the generic-cache key `/v1/bike/review` are not read any more; `scripts/copy_review_cache_to_table.py` carries the usable ones over once.
 
 ```http
 POST http://localhost:8000/v1/bike/review
@@ -517,34 +521,44 @@ Content-Type: application/json
 }
 ```
 
-- `explanation` — 5–10 sentences in **Polish** (forced by `app/prompts/bike_review.md` § Language; the fallback is `"Recenzja niedostępna."`).
-- `score` — a single synthesised editorial verdict (integer 0–10), as before.
-- `rating` — the **aggregate** rating (float 0–10) computed from per-source scores across the curated sources.
-- `sources_used` — count of curated sources that contributed a score to the aggregate; unaffected by the disagreement rule below — every consulted source still counts.
-- `ref` — source URLs, guaranteed-ordered Tier 1 → Tier 2 → Tier 3 (best professional source first), not just whatever order the model emitted them in.
+- Unknown bike, no stored review or a database error (that one also logs an **ERROR**) → **200** with the empty review `{ "score": 0, "explanation": "", "ref": [], "rating": 0.0, "sources_used": 0 }`, never an error. The frontend reads it as "no data" and shows the **Poproś o dane** button in the "Recenzja eksperta" section; the home page's popular cards read `rating` 0 as "Brak oceny".
+- `explanation` — Polish; `score` — integer 0–10 editorial verdict; `rating` — the weighted aggregate (float 0–10) computed by the searcher; `sources_used` — number of sources that contributed a score; `ref` — source URLs in the stored order (Tier 1 → Tier 2 → Tier 3), read `ORDER BY display_order, id`.
+- `company` / `model` must be non-empty and at most 255 characters (422).
+- The aggregation rules (source weights 3/2/1, `DISAGREEMENT_THRESHOLD` 3.0 anchoring, `ref` ordering) now live in `searcher/app/review_finder.py`; tier list in [`backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md`](../backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md).
 
-**Aggregation methodology** (curated source list and tier weights in [`backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md`](../backlog/TODO_018_REVIEW_SOURCE_DISAGREEMENT_AND_REF_ORDER.md)):
-Claude searches the curated sources and returns a per-source score for each source it found a review on, tagged with a `type`. The backend computes a weighted mean and normalises to 0–10:
+**Flow:** none — no outbound HTTP calls; one DB read of `bike` + `bike_review` + `bike_review_source`.
 
-| Source type | Examples | Weight |
-|---|---|---|
-| `pro_numeric` | bikeradar.com, cyclingweekly.com, bikeperfect.com | 3× |
-| `pro_qualitative` | pinkbike.com, bikemag.com, gcn.com | 2× |
-| `community` | mtbr.com, reddit.com, forumrowerowe.org / bikestats.pl | 1× |
+**Tests:** `scripts/test_search.py` `case_review` — a seeded fixture bike with a review and two sources → the stored values, `ref` in `display_order`, no generic-cache row, under 5 s; a bike without a review and an unknown bike → a fast empty-review 200. `scripts/test_reviews_repository.py` (pytest) covers `get_review` and the copy script.
 
-`rating = Σ(score × weight) / Σ(weight)`, rounded to 1 decimal. A non-zero rating **requires at least one professional (`pro_numeric` or `pro_qualitative`) source**; if only community sources are found, `rating` is `0.0` and `sources_used` is `0`.
+---
 
-**Source disagreement:** when the spread between the highest and lowest per-source score exceeds `DISAGREEMENT_THRESHOLD` (3.0 points, a module-level constant in `app/bike_review_finder.py`), a weighted mean would hide a genuinely divisive verdict, so `rating` is anchored instead — to the mean of the `pro_numeric` scores, falling back to `pro_qualitative` if no `pro_numeric` source is present. `sources_used` is not affected; every consulted source still counts. When the rule fires, the backend (not the model) appends a Polish sentence to `explanation` stating the spread and which camp the rating follows. Below the threshold, aggregation is the unchanged weighted mean above.
+### `POST /v1/bike/review/search`
 
-The curated list is a starting point, not a whitelist: if no curated source covers the model, Claude may use any other credible review site or owner forum, tagged with the closest matching `type`. This prevents a bike with real but non-curated coverage from returning nothing.
+Run the expert-review search **on demand** through the separate searcher service (`searcher/`, TODO-037) and wait for it. The searcher runs the Claude Code CLI once (subscription OAuth token — no Anthropic API key) over the curated review sources, computes the weighted `rating`, and **replaces** the bike's stored review and sources **only when `ref` is non-empty and `sources_used >= 1`** — an empty or degenerate result writes and deletes nothing. Triggered by the frontend's **Poproś o dane** button in the "Recenzja eksperta" section (alongside `POST /v1/bike/missing`); also usable from `curl`. Never cached.
 
-**Cache:** keyed on `{company, model}`; stored on the happy path only when `ref` is non-empty **and** `sources_used >= 1`. The extra `sources_used` condition stops a degenerate `rating: 0.0` response from being pinned in the cache for that bike forever. The full extended response — including `rating` and `sources_used` — is cached, so a repeat call returns the same rating.
+```http
+POST http://localhost:8000/v1/bike/review/search
+Content-Type: application/json
+
+{
+  "company": "Canyon",
+  "model": "Grizl CF 7 ESC"
+}
+```
+
+**Response:** the same shape as `/v1/bike/review` — the review now stored for the bike (the searcher's `bike_id` / `saved` are dropped); a search that found nothing usable is a **200** with the empty review.
+
+- **404** `"Bike not found"` when the bike is not in the `bike` table — checked **before** any searcher call.
+- **Already stored → returned without a searcher call:** when the bike already has a stored review with a non-empty `ref` and `sources_used >= 1`, that review is returned at once (200) — a repeat click or a scripted caller cannot spend another subscription run on it.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Review searcher is not configured"`), the searcher is unreachable / does not answer within `SEARCHER_TIMEOUT` (`"Review searcher unavailable"`), or no search slot is free (`"Review searcher is busy — try again in a moment"`; the in-flight cap `SEARCHER_MAX_INFLIGHT` and the searcher's slots are shared with all other searcher routes, Cloud Run's 429 maps to the same 503) — nothing queues. Identical concurrent requests for the same bike share one search.
+- **502** with the searcher's `detail` (≤ 300 chars) when it fails (wrong key, `claude` CLI error, DB error) or answers with a malformed body.
+- `company` / `model` must be non-empty and at most 255 characters (422).
 
 **Flow:**
-1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches the curated sources, returns a per-source score array plus a synthesised overall score, 5–10 sentence explanation, and source URLs; the backend then computes the weighted aggregate rating
-2. `POST https://api.anthropic.com/v1/messages` × 0–1 — **repair pass, only if step 1 ended in prose instead of the JSON object.** Re-sends step 1's text findings with no tools and an assistant prefill of `{`, so the model can only emit the object. Avoids discarding an already-paid-for web search
+1. DB read of `bike` (404 when missing) and of `bike_review` / `bike_review_source` — a usable stored review is returned here, with **no** outbound call.
+2. Otherwise `POST {SEARCHER_URL}/v1/search/review` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once (`WebSearch` + `WebFetch`, no browser) and writes `bike_review` / `bike_review_source`. The backend itself makes no Anthropic call.
 
-The response parser scans **every** text block for the first balanced `{...}` rather than assuming the last block is pure JSON, and strips any `<cite>` markup `web_search` injects into the explanation.
+**Tests:** `scripts/test_search.py` `case_review_search` — an unknown bike is a **404** before any searcher call, and a bike with a seeded review gets that review back fast without a searcher call (no paid run); `scripts/test_searcher_client_review.py` covers the client with a mocked transport; `searcher/scripts/test_searcher.py` covers the searcher route without a paid run.
 
 ---
 
@@ -609,7 +623,7 @@ Content-Type: application/json
 **Response:** the searcher's `{ offers, info }` — the same shape as `POST /v1/bike/allegro` (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `offers: []` (the stored rows are kept).
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/used/search`) — checked **before** any searcher call, so anonymous traffic can neither mint `bike` rows nor spend a subscription run.
-- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Allegro searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Allegro searcher unavailable"` — the exception text stays in the log), or when no search slot is free (`"Allegro searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 10) distinct searches across **all four** routes, the searcher answers 503 itself when its own slots are taken, and Cloud Run answers **429** "Rate exceeded" once every `biker-searcher` instance is busy (`--max-instances 10`, `--concurrency 1`) — the 429 is mapped to the same 503 busy; nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Allegro searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Allegro searcher unavailable"` — the exception text stays in the log), or when no search slot is free (`"Allegro searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 10) distinct searches across **all five** routes, the searcher answers 503 itself when its own slots are taken, and Cloud Run answers **429** "Rate exceeded" once every `biker-searcher` instance is busy (`--max-instances 10`, `--concurrency 1`) — the 429 is mapped to the same 503 busy; nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
 - **502** when the searcher answers with a non-200/503/429 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
 - `company` / `model` must be non-empty and at most 255 characters (422) — they reach the searcher's CLI prompt and its `bike` row.
 - A run takes a minute or two: the 2026-09-26 probes with the CLI-tuned prompt found 3 real offers in 67 s (Kross Level 3.0) and 75 s (Trek Marlin 4). The ~10 s Playwright photo pass those probes still ran returned 0 photos every time (DataDome 403 on the offer pages), which is why it was removed — the route launches no browser now. The SDK-era prompt had needed 286 s (Trek Marlin 5) or given up empty, which is why it was rewritten.
@@ -681,7 +695,7 @@ Content-Type: application/json
 **Response:** the searcher's `{ offers, info }` — the same shape as `POST /v1/bike/used/olx` (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `offers: []`.
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/missing`). The searcher itself creates missing bikes for direct `curl` calls, but the backend never lets anonymous web traffic mint `bike` rows — they would surface in the DB-first search — nor spend a subscription run on them.
-- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"OLX searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"OLX searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"OLX searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 10, never more than the searcher's `SEARCHER_MAX_CONCURRENT`) distinct searches across all four routes and the searcher answers 503 itself when its slots are taken (Cloud Run's 429 at `--max-instances` counts as busy too) — nothing queues, because a queued search would outlive the timeout and end in a second paid run. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"OLX searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"OLX searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"OLX searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 10, never more than the searcher's `SEARCHER_MAX_CONCURRENT`) distinct searches across all five routes and the searcher answers 503 itself when its slots are taken (Cloud Run's 429 at `--max-instances` counts as busy too) — nothing queues, because a queued search would outlive the timeout and end in a second paid run. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
 - **502** when the searcher answers with a non-200/503/429 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
 - `company` / `model` must be non-empty and at most 255 characters (422).
 
