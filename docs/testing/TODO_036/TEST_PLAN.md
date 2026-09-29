@@ -1,6 +1,6 @@
 # TODO-036 — Bike discovery queue — test plan and results
 
-Test basis: `backlog/TODO_036_BIKE_DISCOVERY_QUEUE.md`. Rounds 1 and 2 tested 2026-09-29, round 3
+Test basis: `backlog/done/DONE_036_BIKE_DISCOVERY_QUEUE.md`. Rounds 1 and 2 tested 2026-09-29, round 3
 2026-09-30 (after the merge of PR #115), on the worktree `feature/bike-discovery-queue`, backend
 `:8003`, frontend `:5176`, local PostgreSQL `biker-pg`. Anthropic API credits were exhausted, so only
 DB-served paths were exercised; a search with no DB match answers 400 from Anthropic, which is the
