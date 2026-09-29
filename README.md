@@ -141,6 +141,95 @@ at `BROWSER_MAX_CONCURRENCY=2` (each ≈ 0.5–0.9 GiB; only the bike / equipmen
 OLX photo scraper lives in the searcher, and Allegro / Decathlon offers carry no photos), so a burst of uncached details requests queues for a browser
 instead of exceeding the 2 GiB and getting the instance killed; raise it only together with `--memory`.
 
+## Bike discovery (local)
+
+TODO-036: the catalogue can fill itself from a shop listing instead of from user searches. Everything lives in
+`webscraper/centrumrowerowe/` and runs by hand on your machine — **no AI call** (page parsing only), no endpoint, no
+searcher route, no GCP deployment, and `backend/app/**` is not modified (the scripts import it). Three steps:
+
+1. **Scrape** the centrumrowerowe.pl listing (`https://www.centrumrowerowe.pl/rowery/`, all `?page=N`; each page is
+   tried twice, a page that fails both times is skipped with a warning). The ~2044 listing rows are colour/size
+   variants; they collapse to one queue row per `pd…` product ID. Only `https://(www.)centrumrowerowe.pl` links with a
+   `pd…` ID are queued; anything else is counted as "skipped (bad url)".
+2. **Queue** — the products are upserted into the `bike_discovery` table (re-scraping refreshes name, type, link, price
+   and `last_seen_at` but never re-queues rows already processed).
+3. **Process** — `process_queue.py` claims a batch, fetches each product page, parses it (JSON-LD, the "Specyfikacja"
+   table, the variant selector, the photo gallery) and stores `bike` + `bike_detail` + photos + components through the
+   backend's `repository.save_bike_details`, so the bike shows up in DB-first search without an Anthropic call. The
+   frontend's details view calls `POST /v1/bike/details`, which reads only the generic cache and never `bike_detail`, so
+   after a verified save the processor also writes the generic-cache entry `/v1/bike/details` `{company, model}`
+   (the bike's stored casing; an existing entry — e.g. AI-made — is kept, first write wins; a cache failure only logs a
+   WARNING and does not fail the row). That is what makes the details view open without an Anthropic call.
+
+```powershell
+backend\.venv\Scripts\python.exe -m pip install -r webscraper\centrumrowerowe\requirements.txt   # first time: beautifulsoup4 + pytest
+$env:PYTHONUTF8 = "1"
+cd webscraper\centrumrowerowe
+..\..\backend\.venv\Scripts\python.exe scrape_rowery.py --dry-run          # counts only, no DB
+..\..\backend\.venv\Scripts\python.exe scrape_rowery.py                    # upsert into bike_discovery
+..\..\backend\.venv\Scripts\python.exe process_queue.py --limit 20         # process 20 due rows
+```
+
+| Script | Flag | Default | Meaning |
+|---|---|---|---|
+| `scrape_rowery.py` | `--csv` | off | also write `rowery.csv` (one row per listing entry, `;`-separated) |
+| | `--dry-run` | off | fetch the listing and print counts only; nothing is written to the DB |
+| | `--max-pages N` | all | stop after N listing pages (testing) |
+| | `--allow-remote` | off | permit a non-local database (see **Database**) |
+| `process_queue.py` | `--limit N` | 20 | rows to claim in this run (≥ 1) |
+| | `--delay S` | 1.0 | seconds between page fetches (≥ 0) |
+| | `--source NAME` | all | only rows of this source, e.g. `centrumrowerowe.pl` |
+| | `--retry-failed` | off | put every `failed` row back to `pending` first, exhausted ones too (attempts reset to 0) |
+| | `--dry-run` | off | fetch + parse + print the rows a real run would claim; claims and writes nothing (prints the target instead of refusing a remote one). With `--sync-cache` it counts what would be written |
+| | `--sync-cache` | off | no fetching, no claiming: for every bike of a `done` row (`--source` respected) copy its stored details into the generic `/v1/bike/details` cache unless an entry exists; prints `cache sync: written=… already present=… missing details=… failed=…` (missing = no fresh details, > 30 d or gone). Use it for rows processed before the cache write existed; a second run writes 0 |
+| | `--allow-remote` | off | permit a non-local database (see **Database**) |
+
+The scraper prints `listing rows / products seen / skipped (bad url)` and then `target database`, `products seen /
+inserted / updated`; the processor logs `database: …` and ends with `done=… skipped=… failed=…` (plus `lost=…` when a
+lease was taken over).
+
+**Table `bike_discovery`** (created on first use by the scripts via `ensure_table()` — no migration step): `id`, `source`
+(`centrumrowerowe.pl`), `source_product_id` (`pd27404`), `raw_name`, `company`, `model`, `bike_type`, `details_link`
+(product URL without `?v_Id=`), `price` (lowest seen among the variants), `status`, `attempts`, `last_error`,
+`locked_at`, `next_attempt_at`, `bike_id` (FK → `bike.id`, `ON DELETE SET NULL`), `first_seen_at`, `last_seen_at`,
+`updated_at`. Unique key `(source, source_product_id)`, index on `(status, next_attempt_at)`. `bike_id IS NOT NULL`
+means the bike exists in `bike`; `status = 'done'` means it has full `bike_detail` data. A re-scrape keeps `company` /
+`model` once `bike_id` is set (the processor set them to the bike's stored casing) and never touches `status`,
+`attempts` or `bike_id`.
+
+**Status lifecycle:**
+
+| Status | Meaning |
+|---|---|
+| `pending` | queued by the scraper, not tried yet |
+| `in_progress` | claimed by a processor (`locked_at` set, `attempts` +1); the lease is refreshed when work on each row starts. Lease of **15 min**: an older `in_progress` row is claimable again; one that already used its 3rd attempt becomes `failed` ("lease expired on the last attempt") |
+| `done` | parsed and stored; `bike_id` set, `company`/`model` set to the bike's stored brand/model. A save counts only when the bike's `bike_detail.updated_at` is at or after the save start (`save_bike_details` swallows errors, and an older row would otherwise look like success) |
+| `failed` | fetch/parse/save error, `last_error` filled. Retried after a backoff of **1 h, then 6 h** (`next_attempt_at`; the 24 h step is only reached with a higher attempt limit); the **3rd** failure is final until `--retry-failed` |
+| `skipped` | HTTP 404/410 (product gone), or the bike already has details fresher than the 30-day details TTL — nothing is overwritten (AI-collected or earlier data wins) |
+
+Outcome `lost` (not a stored status): another run took the row's lease over, so this run writes nothing for it.
+Ctrl+C hands claimed-but-unprocessed rows back as `pending` without counting the attempt. On PostgreSQL rows are claimed
+with `FOR UPDATE SKIP LOCKED`, so two processors never take the same row.
+
+**Fetch safety:** the URL allowlist (https, host `centrumrowerowe.pl` / `www.centrumrowerowe.pl`, default port) is
+checked when the scraper upserts and again before every page fetch; redirects are followed by hand (max 3) and each hop is
+checked too. Photo URLs kept from a page must be http/https.
+
+**Database:** the scripts read `DATABASE_URL` / `PGPASSFILE` from `backend/.env` (variables already set in the
+environment win), i.e. the **local `biker-pg`** container when that is what `.env` points at (`docker start biker-pg`).
+Both scripts print the target with the password masked and **refuse any non-local database** — local means SQLite, or a
+`localhost` / `127.0.0.1` / `::1` host on a port other than 6543; port 6543 (the Cloud SQL proxy) and `/cloudsql` sockets count
+as remote — unless `--allow-remote` is passed. Never point them at the production Cloud SQL without an explicit decision.
+
+**Tests** (fixtures are saved product pages in `webscraper/centrumrowerowe/tests/fixtures/`; every test uses a throwaway
+SQLite file, never the real database):
+
+```powershell
+$env:PYTHONUTF8 = "1"
+cd webscraper\centrumrowerowe
+..\..\backend\.venv\Scripts\python.exe -m pytest tests -q
+```
+
 ## Other useful commands
 
 | Command | What it does |
@@ -230,16 +319,20 @@ biker/
             ├── RequestDataButton.tsx  # "Request data" button for empty bike-details sections (POST /v1/bike/missing); in the Used card also runs the OLX search, in the New card the Decathlon + Allegro searches at once
             ├── EquipmentDetailsView.tsx   # Equipment details page: Overview, Review, Specs (no offers)
             └── BikeDetailsShared.tsx  # Shared building blocks for both detail views
-└── searcher/                          # On-demand OLX + Decathlon + Allegro searcher (TODO-031 / 032 / 033) — FastAPI on :8100, Claude Code CLI + Playwright (OLX photos only)
-    ├── app/
-    │   ├── main.py                    # POST /v1/search/olx + /v1/search/decathlon + /v1/search/allegro (X-Searcher-Key, SEARCHER_MAX_CONCURRENT shared slots, default 2) + GET /health
-    │   ├── claude_cli.py              # subprocess wrapper around `claude -p --json-schema …`
-    │   ├── olx_finder.py              # the former backend bike_used_finder (CLI call + photo scrape)
-    │   ├── decathlon_finder.py        # the former backend bike_offer_decathlon_finder (CLI call only, no photos)
-    │   ├── allegro_finder.py          # the former backend bike_offer_finder (CLI call only, no photos — allegro.pl 403s every automated fetch; ≤ 3 offers)
-    │   ├── olx_image_fetcher.py       # Playwright: up to 4 OLX CDN photos per listing
-    │   ├── repository.py / models.py  # save_offers: writes bike_offer + bike_offer_photos (replace per bike + source)
-    │   └── prompts/                   # bike_offer_olx.md + bike_offer_decathlon.md + bike_offer_allegro.md — the search prompts (moved from the backend)
-    ├── scripts/test_searcher.py       # Smoke test (health, auth + validation on all three routes — no paid runs)
-    └── Dockerfile                     # Python 3.14 + Node 24 + claude CLI + Chromium for the OLX photos (Cloud Run image)
+├── searcher/                          # On-demand OLX + Decathlon + Allegro searcher (TODO-031 / 032 / 033) — FastAPI on :8100, Claude Code CLI + Playwright (OLX photos only)
+│   ├── app/
+│   │   ├── main.py                    # POST /v1/search/olx + /v1/search/decathlon + /v1/search/allegro (X-Searcher-Key, SEARCHER_MAX_CONCURRENT shared slots, default 2) + GET /health
+│   │   ├── claude_cli.py              # subprocess wrapper around `claude -p --json-schema …`
+│   │   ├── olx_finder.py              # the former backend bike_used_finder (CLI call + photo scrape)
+│   │   ├── decathlon_finder.py        # the former backend bike_offer_decathlon_finder (CLI call only, no photos)
+│   │   ├── allegro_finder.py          # the former backend bike_offer_finder (CLI call only, no photos — allegro.pl 403s every automated fetch; ≤ 3 offers)
+│   │   ├── olx_image_fetcher.py       # Playwright: up to 4 OLX CDN photos per listing
+│   │   ├── repository.py / models.py  # save_offers: writes bike_offer + bike_offer_photos (replace per bike + source)
+│   │   └── prompts/                   # bike_offer_olx.md + bike_offer_decathlon.md + bike_offer_allegro.md — the search prompts (moved from the backend)
+│   ├── scripts/test_searcher.py       # Smoke test (health, auth + validation on all three routes — no paid runs)
+│   └── Dockerfile                     # Python 3.14 + Node 24 + claude CLI + Chromium for the OLX photos (Cloud Run image)
+└── webscraper/centrumrowerowe/        # Local bike discovery (TODO-036), no AI: scrape_rowery.py -> bike_discovery queue -> process_queue.py -> bike + bike_detail
+    ├── db.py                          # backend engine/.env + BikeDiscovery model + local-database guard (--allow-remote)
+    ├── name_split.py / product_parser.py / spec_mapping.py   # listing name split; product page -> BikeDetailsResponse; Polish label -> English tree
+    └── tests/                         # pytest on saved product pages (tests/fixtures/)
 ```

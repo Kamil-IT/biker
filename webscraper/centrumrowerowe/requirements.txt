@@ -1,0 +1,4 @@
+# Needed by webscraper/centrumrowerowe/ beyond backend/requirements.txt
+# (SQLAlchemy, httpx, pydantic, python-dotenv come from the backend venv).
+beautifulsoup4
+pytest
