@@ -166,6 +166,150 @@ at `BROWSER_MAX_CONCURRENCY=2` (each ≈ 0.5–0.9 GiB; only the equipment photo
 OLX and bike photo scrapers live in the searcher, and Allegro / Decathlon offers carry no photos), so a burst of uncached details requests queues for a browser
 instead of exceeding the 2 GiB and getting the instance killed; raise it only together with `--memory`.
 
+## Bike discovery (local)
+
+TODO-036: the catalogue can fill itself from a shop listing instead of from user searches. Everything lives in
+`webscraper/centrumrowerowe/` and runs by hand on your machine — **no AI call** (page parsing only), no endpoint, no
+searcher route, and `backend/app/**` is not modified (the scripts import it). Nothing runs on GCP by itself: the only
+thing there is a one-off **copy** of the queue and the parsed bikes, made with `copy_to_db.py` (see below). Three steps:
+
+1. **Scrape** the centrumrowerowe.pl listing (`https://www.centrumrowerowe.pl/rowery/`, all `?page=N`; each page is
+   tried twice, a page that fails both times is skipped with a warning). The ~2044 listing rows are colour/size
+   variants; they collapse to one queue row per `pd…` product ID. Only `https://(www.)centrumrowerowe.pl` links with a
+   `pd…` ID are queued; anything else is counted as "skipped (bad url)".
+2. **Queue** — the products are upserted into the `bike_discovery` table (re-scraping refreshes name, type, link, price
+   and `last_seen_at` but never re-queues rows already processed).
+3. **Process** — `process_queue.py` claims a batch, fetches each product page, parses it (JSON-LD, the "Specyfikacja"
+   table, the variant selector, the photo gallery) and stores `bike` + `bike_detail` + components through the backend's
+   `repository.save_bike_details`, so the bike shows up in DB-first search without an Anthropic call. Three more
+   things are handled by the shared module `bike_store.py`, each because a different backend reader needs it:
+   - **Details cache** — the frontend's details view calls `POST /v1/bike/details`, which reads only the generic cache and
+     never `bike_detail`, so after a verified save the processor also writes the generic-cache entry `/v1/bike/details`
+     `{company, model}` (the bike's stored casing; an existing entry — e.g. AI-made — is kept, first write wins; a cache
+     failure only logs a WARNING and does not fail the row).
+   - **Photos** — `BikeDetailsResponse` has no photos since PR #115. The parsed shop photos (up to 8, http/https) are stored
+     per bike through the backend's `photos_repository.save_bike_photos` (table `bike_detail_photos`, keyed by
+     `bike_id`), **only when the bike has none**; a failure is a WARNING and the row stays `done`. The details view reads
+     them through `POST /v1/bike/photos`. Photos are also stored for a bike whose details were kept (`skipped`) if it has none.
+   - **Never overwrite** — a bike that already has *any* `bike_detail` row is kept as is (upstream has no details TTL any
+     more), whoever wrote it.
+
+```powershell
+backend\.venv\Scripts\python.exe -m pip install -r webscraper\centrumrowerowe\requirements.txt   # first time: beautifulsoup4 + pytest
+$env:PYTHONUTF8 = "1"
+cd webscraper\centrumrowerowe
+..\..\backend\.venv\Scripts\python.exe scrape_rowery.py --dry-run          # counts only, no DB
+..\..\backend\.venv\Scripts\python.exe scrape_rowery.py                    # upsert into bike_discovery
+..\..\backend\.venv\Scripts\python.exe process_queue.py --limit 20         # process 20 due rows
+```
+
+| Script | Flag | Default | Meaning |
+|---|---|---|---|
+| `scrape_rowery.py` | `--csv` | off | also write `rowery.csv` (one row per listing entry, `;`-separated) |
+| | `--dry-run` | off | fetch the listing and print counts only; nothing is written to the DB |
+| | `--max-pages N` | all | stop after N listing pages (testing) |
+| | `--allow-remote` | off | permit a non-local database (see **Database**) |
+| `process_queue.py` | `--limit N` | 20 | rows to claim in this run (≥ 1) |
+| | `--delay S` | 1.0 | seconds between page fetches (≥ 0) |
+| | `--source NAME` | all | only rows of this source, e.g. `centrumrowerowe.pl` |
+| | `--retry-failed` | off | put every `failed` row back to `pending` first, exhausted ones too (attempts reset to 0) |
+| | `--dry-run` | off | fetch + parse + print the rows a real run would claim; claims and writes nothing (prints the target instead of refusing a remote one). With `--sync-cache` it counts what would be written |
+| | `--sync-cache` | off | no fetching, no claiming: for every bike of a `done` row (`--source` respected) copy its stored details into the generic `/v1/bike/details` cache unless an entry exists; prints `cache sync: written=… already present=… missing details=… failed=…` (missing = the bike has no details row). Use it for rows processed before the cache write existed; a second run writes 0 |
+| | `--allow-remote` | off | permit a non-local database (see **Database**) |
+
+The scraper prints `listing rows / products seen / skipped (bad url)` and then `target database`, `products seen /
+inserted / updated`; the processor logs `database: …` and ends with `done=… skipped=… failed=…` (plus `lost=…` when a
+lease was taken over).
+
+**Table `bike_discovery`** (created on first use by the scripts via `ensure_table()` — no migration step): `id`, `source`
+(`centrumrowerowe.pl`), `source_product_id` (`pd27404`), `raw_name`, `company`, `model`, `bike_type`, `details_link`
+(product URL without `?v_Id=`), `price` (lowest seen among the variants), `status`, `attempts`, `last_error`,
+`locked_at`, `next_attempt_at`, `bike_id` (FK → `bike.id`, `ON DELETE SET NULL`), `first_seen_at`, `last_seen_at`,
+`updated_at`. Unique key `(source, source_product_id)`, index on `(status, next_attempt_at)`. `bike_id IS NOT NULL`
+means the bike exists in `bike`; `status = 'done'` means it has full `bike_detail` data. A re-scrape keeps `company` /
+`model` once `bike_id` is set (the processor set them to the bike's stored casing) and never touches `status`,
+`attempts` or `bike_id`.
+
+**Status lifecycle:**
+
+| Status | Meaning |
+|---|---|
+| `pending` | queued by the scraper, not tried yet |
+| `in_progress` | claimed by a processor (`locked_at` set, `attempts` +1); the lease is refreshed when work on each row starts. Lease of **15 min**: an older `in_progress` row is claimable again; one that already used its 3rd attempt becomes `failed` ("lease expired on the last attempt") |
+| `done` | parsed and stored; `bike_id` set, `company`/`model` set to the bike's stored brand/model. A save counts only when the bike's `bike_detail.updated_at` is at or after the save start (`save_bike_details` swallows errors, and an older row would otherwise look like success) |
+| `failed` | fetch/parse/save error, `last_error` filled. Retried after a backoff of **1 h, then 6 h** (`next_attempt_at`; the 24 h step is only reached with a higher attempt limit); the **3rd** failure is final until `--retry-failed` |
+| `skipped` | HTTP 404/410 (product gone), or the bike already has a `bike_detail` row (any age) — nothing is overwritten, AI-collected or earlier data wins; its photos are still stored if it has none |
+
+Outcome `lost` (not a stored status): another run took the row's lease over, so this run writes nothing for it.
+Ctrl+C hands claimed-but-unprocessed rows back as `pending` without counting the attempt. On PostgreSQL rows are claimed
+with `FOR UPDATE SKIP LOCKED`, so two processors never take the same row.
+
+**Fetch safety:** the URL allowlist (https, host `centrumrowerowe.pl` / `www.centrumrowerowe.pl`, default port) is
+checked when the scraper upserts and again before every page fetch; redirects are followed by hand (max 3) and each hop is
+checked too. Photo URLs kept from a page must be http/https.
+
+**Database:** the scripts read `DATABASE_URL` / `PGPASSFILE` from `backend/.env` (variables already set in the
+environment win), i.e. the **local `biker-pg`** container when that is what `.env` points at (`docker start biker-pg`).
+Both scripts print the target with the password masked and **refuse any non-local database** — local means SQLite, or a
+`localhost` / `127.0.0.1` / `::1` host on a port other than 6543; port 6543 (the Cloud SQL proxy) and `/cloudsql` sockets count
+as remote — unless `--allow-remote` is passed. Never point them at the production Cloud SQL without an explicit decision.
+
+**Copy to another database — `copy_to_db.py`** (puts the local result on GCP Cloud SQL without re-fetching a single shop
+page; done once on 2026-09-30 at the user's explicit request). Two phases: (1) the source — the `DATABASE_URL` from
+`backend/.env` unless `--source-url` — is read completely into memory (queue rows + details and photos of each
+`done`/`skipped` row's bike) and closed; (2) the target is written: each bike's details through the same verified save as
+the processor (`bike_store.store_details`), its photos (only when the target bike has none), the `/v1/bike/details` cache
+entry, then every queue row upserted by `(source, source_product_id)`.
+
+- **Never downgrade**: details already in the target are kept and only linked; a queue row that is already `done` /
+  `skipped` / `in_progress` in the target stays as it is; only a target `pending`/`failed` row is promoted to the source's
+  `done`/`skipped`. `bike_id` is the **target's** bike id (found by normalised brand + model, the stored casing reused),
+  never the source's; `locked_at` is dropped; a source `in_progress` row arrives as `pending` (attempts 0), and a
+  `done`/`skipped` row whose bike could not be written arrives as `pending` so the processor fetches it.
+- **Idempotent**: a second run changes nothing (rows unchanged, details kept, cache and photos present).
+- **Refuses** a target that is the same database as the source, and a non-local target without `--allow-remote`
+  (a `--dry-run` only prints the target and reports what would change, writing nothing). The password is never in the URL:
+  it comes from `PGPASSFILE` / `PGPASSWORD`.
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--target-url URL` | required | SQLAlchemy URL of the database to write, e.g. `postgresql+psycopg://user@127.0.0.1:6543/biker` (no password) |
+| `--source-url URL` | `DATABASE_URL` of `backend/.env` | database to read |
+| `--source NAME` | all | only queue rows of this shop, e.g. `centrumrowerowe.pl` |
+| `--limit N` | all | copy at most N queue rows (>= 1) |
+| `--dry-run` | off | report what would change; write nothing |
+| `--allow-remote` | off | required when the target is not a local database |
+
+It prints `source:` / `target:` (password masked), `read N queue rows, M bikes (… with details, … with photos)` and a
+counter line (`rows_inserted`, `rows_updated`, `rows_unchanged`, `rows_failed`, `bikes_written`, `bikes_kept`,
+`bikes_failed`, `cache_*`, `photos_*`).
+
+```powershell
+# Terminal 1: the Cloud SQL proxy on the host port the guard treats as remote (gcloud login / ADC needed)
+cloud-sql-proxy --gcloud-auth --port 6543 biker-engine-prod:europe-central2:biker-pg
+# Terminal 2: PGPASSFILE = the gitignored pgpass file of the Cloud SQL user (never put the password in the URL)
+$env:PYTHONUTF8 = "1"; $env:PGPASSFILE = "<path to the pgpass file>"
+cd webscraper\centrumrowerowe
+..\..\backend\.venv\Scripts\python.exe copy_to_db.py --target-url "postgresql+psycopg://<user>@127.0.0.1:6543/<db>" --allow-remote --dry-run
+..\..\backend\.venv\Scripts\python.exe copy_to_db.py --target-url "postgresql+psycopg://<user>@127.0.0.1:6543/<db>" --allow-remote
+```
+
+State on GCP after the 2026-09-30 copy: the queue holds 1304 rows (49 `done`, 1 `skipped`, 1254 `pending`) and 49 bikes with
+details, photos and cache entries. Nothing there runs by itself — processing the remaining 1254 rows would be a manual
+`process_queue.py --allow-remote` run against the proxy, only on an explicit decision.
+
+**Tests** (fixtures are saved product pages in `webscraper/centrumrowerowe/tests/fixtures/`; every test uses a throwaway
+SQLite file, never the real database; 160 pass on 2026-09-30):
+
+```powershell
+$env:PYTHONUTF8 = "1"
+cd webscraper\centrumrowerowe
+..\..\backend\.venv\Scripts\python.exe -m pytest tests -q
+```
+
+Manual test plan and results (13 of 13 cases pass in round 3, after the merge of PR #115; photos asserted through
+`POST /v1/bike/photos`): `docs/testing/TODO_036/TEST_PLAN.md`.
+
 ## Other useful commands
 
 | Command | What it does |
@@ -254,17 +398,21 @@ biker/
             ├── RequestDataButton.tsx  # "Request data" button for empty bike-details sections (POST /v1/bike/missing); in the Used card also runs the OLX search, in the New card the Decathlon + Allegro searches at once
             ├── EquipmentDetailsView.tsx   # Equipment details page: Overview, Review, Specs (no offers)
             └── BikeDetailsShared.tsx  # Shared building blocks for both detail views
-└── searcher/                          # On-demand OLX + Decathlon + Allegro + photos searcher (TODO-031 / 032 / 033 / 035) — FastAPI on :8100, Claude Code CLI + Playwright (OLX listing photos, bike photos)
-    ├── app/
-    │   ├── main.py                    # POST /v1/search/olx + /decathlon + /allegro + /photos (X-Searcher-Key, SEARCHER_MAX_CONCURRENT shared slots, default 10) + GET /health
-    │   ├── claude_cli.py              # subprocess wrapper around `claude -p --json-schema …`
-    │   ├── olx_finder.py              # the former backend bike_used_finder (CLI call + photo scrape)
-    │   ├── decathlon_finder.py        # the former backend bike_offer_decathlon_finder (CLI call only, no photos)
-    │   ├── allegro_finder.py          # the former backend bike_offer_finder (CLI call only, no photos — allegro.pl 403s every automated fetch; ≤ 3 offers)
-    │   ├── olx_image_fetcher.py       # Playwright: up to 4 OLX CDN photos per listing
-    │   ├── photos_finder.py           # the former backend bike_photos_finder (CLI finds the manufacturer page, Playwright takes ≤ 8 photos)
-    │   ├── repository.py / models.py  # save_offers: writes bike_offer + bike_offer_photos (replace per bike + source); save_photos: bike_detail_photos, insert-only
-    │   └── prompts/                   # bike_offer_olx.md + bike_offer_decathlon.md + bike_offer_allegro.md + bike_photos.md — the search prompts (moved from the backend)
-    ├── scripts/test_searcher.py       # Smoke test (health, auth + validation on all four routes, stored photos — no paid runs)
-    └── Dockerfile                     # Python 3.14 + Node 24 + claude CLI + Chromium for the OLX and bike photos (Cloud Run image)
+├── searcher/                          # On-demand OLX + Decathlon + Allegro + photos searcher (TODO-031 / 032 / 033 / 035) — FastAPI on :8100, Claude Code CLI + Playwright (OLX listing photos, bike photos)
+│   ├── app/
+│   │   ├── main.py                    # POST /v1/search/olx + /decathlon + /allegro + /photos (X-Searcher-Key, SEARCHER_MAX_CONCURRENT shared slots, default 10) + GET /health
+│   │   ├── claude_cli.py              # subprocess wrapper around `claude -p --json-schema …`
+│   │   ├── olx_finder.py              # the former backend bike_used_finder (CLI call + photo scrape)
+│   │   ├── decathlon_finder.py        # the former backend bike_offer_decathlon_finder (CLI call only, no photos)
+│   │   ├── allegro_finder.py          # the former backend bike_offer_finder (CLI call only, no photos — allegro.pl 403s every automated fetch; ≤ 3 offers)
+│   │   ├── olx_image_fetcher.py       # Playwright: up to 4 OLX CDN photos per listing
+│   │   ├── photos_finder.py           # the former backend bike_photos_finder (CLI finds the manufacturer page, Playwright takes ≤ 8 photos)
+│   │   ├── repository.py / models.py  # save_offers: writes bike_offer + bike_offer_photos (replace per bike + source); save_photos: bike_detail_photos, insert-only
+│   │   └── prompts/                   # bike_offer_olx.md + bike_offer_decathlon.md + bike_offer_allegro.md + bike_photos.md — the search prompts (moved from the backend)
+│   ├── scripts/test_searcher.py       # Smoke test (health, auth + validation on all four routes, stored photos — no paid runs)
+│   └── Dockerfile                     # Python 3.14 + Node 24 + claude CLI + Chromium for the OLX and bike photos (Cloud Run image)
+└── webscraper/centrumrowerowe/        # Local bike discovery (TODO-036), no AI: scrape_rowery.py -> bike_discovery queue -> process_queue.py -> bike + bike_detail
+    ├── db.py                          # backend engine/.env + BikeDiscovery model + local-database guard (--allow-remote)
+    ├── name_split.py / product_parser.py / spec_mapping.py   # listing name split; product page -> BikeDetailsResponse; Polish label -> English tree
+    └── tests/                         # pytest on saved product pages (tests/fixtures/)
 ```
