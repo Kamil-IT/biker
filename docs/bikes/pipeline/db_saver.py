@@ -18,6 +18,7 @@ from pydantic import BaseModel
 import pipeline.common  # noqa: F401
 
 from app.models import init_db
+from app.photos_repository import get_bike_photos, save_bike_photos
 from app.repository import get_bike_details, save_bike_details
 from app.schemas import (
     BikeCategory,
@@ -73,7 +74,6 @@ def _to_response(agg: Aggregate) -> BikeDetailsResponse:
             for c in agg.components
             if isinstance(c, dict)
         ],
-        photos=agg.photos,
     )
 
 
@@ -85,10 +85,16 @@ def health() -> dict:
 @app.post("/save")
 def save(agg: Aggregate) -> dict:
     if get_bike_details(agg.brand, agg.model) is not None:
+        # Photos are keyed on the bike and stored only while it has none, so a
+        # bike with details but no photos still gets them (a no-op otherwise).
+        save_bike_photos(agg.brand, agg.model, agg.photos)
         logger.info("skipped_fresh | %s %s", agg.brand, agg.model)
         return {"stored": True, "status": "skipped_fresh", "verified": True, "error": None}
 
     save_bike_details(agg.brand, agg.model, _to_response(agg))
+    # Photos are keyed on the bike, not the details row: stored separately, and
+    # only while the bike has none (an existing photo set is never replaced).
+    save_bike_photos(agg.brand, agg.model, agg.photos)
 
     check = get_bike_details(agg.brand, agg.model)
     ok = check is not None and bool(check.components)
@@ -103,7 +109,7 @@ def save(agg: Aggregate) -> dict:
                 for s in c.subcategories
                 for e in s.elements
             ),
-            "bike_detail_photos": len(check.photos) if ok else 0,
+            "bike_detail_photos": len(get_bike_photos(agg.brand, agg.model).photos) if ok else 0,
         },
         "error": None if ok else "read-back failed after save_bike_details",
     }

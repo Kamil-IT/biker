@@ -1,7 +1,7 @@
-"""SQLAlchemy engine helpers and the three tables the searcher touches.
+"""SQLAlchemy engine helpers and the four tables the searcher touches.
 
-The DDL below is a verbatim copy of `bike`, `bike_offer` and `bike_offer_photos`
-in backend/app/models.py — same names, columns, constraints and index names —
+The DDL below is a verbatim copy of `bike`, `bike_offer`, `bike_offer_photos`
+and `bike_detail_photos` in backend/app/models.py — same names, columns, constraints and index names —
 because both services share one database. Change it there first, then here.
 init_db() only checks that the tables exist — the backend creates them.
 """
@@ -81,6 +81,9 @@ def get_session():
     return _SessionLocal()
 
 
+REQUIRED_TABLES = ("bike", "bike_offer", "bike_offer_photos", "bike_detail_photos")
+
+
 def init_db():
     """Check the shared tables exist; the backend's init_db() is what creates them.
 
@@ -94,11 +97,20 @@ def init_db():
     if os.getenv("SEARCHER_CREATE_TABLES", "").strip().lower() in ("1", "true", "yes"):
         Base.metadata.create_all(engine)
         return
-    missing = [t for t in ("bike", "bike_offer", "bike_offer_photos") if not inspect(engine).has_table(t)]
+    inspector = inspect(engine)
+    missing = [t for t in REQUIRED_TABLES if not inspector.has_table(t)]
     if missing:
         raise RuntimeError(
             f"tables {missing} are missing in the database — start the backend first (its init_db() "
             "creates the schema), or set SEARCHER_CREATE_TABLES=true for a standalone database"
+        )
+    # A database from before photos moved to the searcher still keys bike_detail_photos
+    # on bike_detail_id; every photo write would fail, so say so at startup instead.
+    photo_columns = {c["name"] for c in inspector.get_columns("bike_detail_photos")}
+    if "bike_id" not in photo_columns:
+        raise RuntimeError(
+            "bike_detail_photos has no bike_id column — run backend/scripts/migrate_photos_bike_id.py "
+            "on this database first"
         )
 
 
@@ -115,6 +127,10 @@ class Bike(Base):
 
     # Relationships
     offers = relationship("BikeOffer", back_populates="bike", cascade="all, delete-orphan")
+    photos = relationship(
+        "BikeDetailPhoto", back_populates="bike", cascade="all, delete-orphan",
+        order_by="BikeDetailPhoto.display_order, BikeDetailPhoto.id",
+    )
 
     __table_args__ = (UniqueConstraint("brand", "model", name="uq_bike_brand_model"),)
 
@@ -153,3 +169,23 @@ class BikeOfferPhoto(Base):
 
     # Relationships
     offer = relationship("BikeOffer", back_populates="photos")
+
+
+class BikeDetailPhoto(Base):
+    """Photos of a bike, keyed on the bike itself (not on its details row).
+
+    Photos are written by the searcher's photo search and are independent of
+    `bike_detail`: a details re-save or delete leaves them alone. The table
+    kept its old name; `bike_id` replaced `bike_detail_id`
+    (scripts/migrate_photos_bike_id.py migrates an existing database).
+    """
+
+    __tablename__ = "bike_detail_photos"
+
+    id = Column(Integer, primary_key=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
+    url = Column(String(2048), nullable=False)
+    display_order = Column(Integer, default=0)
+
+    # Relationships
+    bike = relationship("Bike", back_populates="photos")

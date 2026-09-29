@@ -17,6 +17,7 @@ BACKEND = Path(__file__).resolve().parents[2] / "backend"
 sys.path.insert(0, str(BACKEND))
 
 from app.models import init_db  # noqa: E402
+from app.photos_repository import get_bike_photos, save_bike_photos  # noqa: E402
 from app.repository import get_bike_details, save_bike_details  # noqa: E402
 from app.schemas import (  # noqa: E402
     BikeCategory,
@@ -59,7 +60,6 @@ def _to_response(doc: dict) -> BikeDetailsResponse:
             )
             for c in doc.get("components", [])
         ],
-        photos=doc.get("photos", []),
     )
 
 
@@ -70,10 +70,14 @@ def store_spool(spool_path: str | Path) -> dict:
     brand, model = doc["brand"], doc["model"]
 
     if get_bike_details(brand, model) is not None:
+        # Photos are stored only while the bike has none — backfill them even here.
+        save_bike_photos(brand, model, doc.get("photos", []))
         return {"brand": brand, "model": model, "status": "skipped_fresh",
                 "verified": True, "db_rows": {}, "error": None}
 
     save_bike_details(brand, model, _to_response(doc))
+    # Photos are keyed on the bike, stored separately and only while it has none.
+    save_bike_photos(brand, model, doc.get("photos", []))
 
     # save_bike_details swallows its own exceptions (logs a warning, rolls back),
     # so a successful return proves nothing — read it back instead.
@@ -91,7 +95,7 @@ def store_spool(spool_path: str | Path) -> dict:
                 for s in c.subcategories
                 for e in s.elements
             ),
-            "bike_detail_photos": len(check.photos) if ok else 0,
+            "bike_detail_photos": len(get_bike_photos(brand, model).photos) if ok else 0,
         },
         "error": None if ok else "read-back failed after save_bike_details",
     }

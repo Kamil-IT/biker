@@ -6,7 +6,7 @@ import BikeDetailsView from './components/BikeDetailsView'
 import EquipmentDetailsView from './components/EquipmentDetailsView'
 import PopularBikesSection from './components/PopularBikesSection'
 import usePopularBikes from './hooks/usePopularBikes'
-import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse, EquipmentDetailsResponse, EquipmentReviewResponse, SearchPayload, ParseResponse, SearchFilters } from './types'
+import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikePhotosResponse, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse, EquipmentDetailsResponse, EquipmentReviewResponse, SearchPayload, ParseResponse, SearchFilters } from './types'
 import { EMPTY_FILTERS } from './types'
 
 type AppState     = 'idle' | 'loading' | 'results' | 'error'
@@ -62,7 +62,9 @@ export default function App() {
   const [detailsState, setDetailsState]         = useState<DetailsState>('loading')
   const [bikeCategories, setBikeCategories]     = useState<BikeCategory[] | null>(null)
   const [bikeDescription, setBikeDescription]   = useState<BikeDescription | null>(null)
-  const [bikePhotos, setBikePhotos]             = useState<string[]>([])
+  // Photos are their own DB read (POST /v1/bike/photos), independent of the details request.
+  const [bikePhotos, setBikePhotos]             = useState<BikePhotosResponse | null>(null)
+  const [photosState, setPhotosState]           = useState<OfferState>('loading')
   const [detailsError, setDetailsError]         = useState<string | null>(null)
 
   // Review state
@@ -189,7 +191,6 @@ export default function App() {
     setDetailsError(null)
     setBikeCategories(null)
     setBikeDescription(null)
-    setBikePhotos([])
 
     try {
       const res = await fetch('/v1/bike/details', {
@@ -206,7 +207,6 @@ export default function App() {
       const data: BikeDetailsResponse = await res.json()
       setBikeCategories(data.components)
       setBikeDescription(data.description ?? null)
-      setBikePhotos(data.photos ?? [])
       setDetailsState('loaded')
     } catch (err) {
       setDetailsError(err instanceof Error ? err.message : 'Coś poszło nie tak. Spróbuj ponownie.')
@@ -235,7 +235,10 @@ export default function App() {
   // Stored offers of one marketplace, read when the details view opens. All three
   // (/v1/bike/allegro, /v1/bike/used/olx, /v1/bike/decathlon) are fast DB reads of the
   // rows the searcher wrote — no AI call (TODO-031 / TODO-032 / TODO-033) — and differ
-  // only in path and state pair, hence one reader.
+  // only in path and state pair, hence one reader. The stored photos (/v1/bike/photos)
+  // are read the same way. An answer (or failure) that lands after another bike was
+  // opened is dropped, like the on-demand searches' — it would show the previous bike's
+  // rows or flip the new bike's section to the button.
   const fetchStoredOffers = async <T,>(
     path: string,
     bike: Bike,
@@ -251,9 +254,12 @@ export default function App() {
         body:    JSON.stringify({ company: bike.brand, model: bike.model }),
       })
       if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
-      setData(await res.json() as T)
+      const data = await res.json() as T
+      if (selectedBikeRef.current !== bike) return
+      setData(data)
       setState('loaded')
     } catch {
+      if (selectedBikeRef.current !== bike) return
       setState('error')
     }
   }
@@ -321,6 +327,15 @@ export default function App() {
     const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
     const gotRows = results.some(r => r.status === 'fulfilled' && r.value)
     if (failures.length > 0 && !gotRows) throw failures[0].reason
+  }
+
+  // The gallery's "Poproś o dane" button. The searcher only writes photos for a bike
+  // that has none, so the answer is the full gallery in display order.
+  const searchPhotos = async (bike: Bike) => {
+    const data = await postOnDemandSearch<BikePhotosResponse>('/v1/bike/photos/search', bike)
+    if (!data) return
+    setBikePhotos(data)
+    setPhotosState('loaded')
   }
 
   const fetchEquipmentDetails = async (company: string, model: string) => {
@@ -394,6 +409,7 @@ export default function App() {
     fetchStoredOffers<BikeOfferResponse>('/v1/bike/allegro', bike, setOffers, setOfferState)
     fetchStoredOffers<UsedBikeResponse>('/v1/bike/used/olx', bike, setUsedBikes, setUsedBikeState)
     fetchStoredOffers<BikeOfferResponse>('/v1/bike/decathlon', bike, setDecathlonOffers, setDecathlonState)
+    fetchStoredOffers<BikePhotosResponse>('/v1/bike/photos', bike, setBikePhotos, setPhotosState)
   }
 
   const handleBackToResults = () => {
@@ -417,7 +433,8 @@ export default function App() {
     selectedBikeRef.current = null
     setBikeCategories(null)
     setBikeDescription(null)
-    setBikePhotos([])
+    setBikePhotos(null)
+    setPhotosState('loading')
     setDetailsState('loading')
     setDetailsError(null)
     setReviewState('loading')
@@ -627,7 +644,8 @@ export default function App() {
             bike={selectedBike}
             categories={bikeCategories}
             description={bikeDescription}
-            photos={bikePhotos}
+            photos={bikePhotos?.photos ?? []}
+            photosState={photosState}
             state={detailsState}
             error={detailsError}
             review={review}
@@ -643,6 +661,7 @@ export default function App() {
             onEquipmentSelect={handleEquipmentSelect}
             onSearchUsed={() => searchUsedBikes(selectedBike)}
             onSearchNew={() => searchNew(selectedBike)}
+            onSearchPhotos={() => searchPhotos(selectedBike)}
           />
         )}
 

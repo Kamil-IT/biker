@@ -10,7 +10,6 @@ from sqlalchemy import text
 from .models import (
     Bike,
     BikeDetails,
-    BikeDetailPhoto,
     BikeDetailComponent,
     BikeMissingRequest,
     dialect_insert,
@@ -28,8 +27,6 @@ from .schemas import (
 )
 
 logger = logging.getLogger(__name__)
-
-TTL_DETAILS = 30 * 24 * 60 * 60  # 30 days
 
 # The search cache (search_cache + search_bike_rating_cache) lives in store.py.
 # This module owns the bike-details helpers and the DB-first search below.
@@ -81,12 +78,13 @@ def rebuild_components(rows) -> list[BikeCategory]:
     ]
 
 
-def save_bike_details(company: str, model: str, data: BikeDetailsResponse, ttl: int = TTL_DETAILS) -> None:
+def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> None:
     """Store bike details by company and model.
 
-    `ttl` is accepted for call-compatibility with `store.save_bike_details` but is
-    no longer persisted — staleness is measured against the module-level
-    TTL_DETAILS, mirroring how save_search/get_search_by_query use TTL_SEARCH.
+    Updates the bike's bike_detail row in place (its id stays stable) and
+    replaces its component rows. Photos are keyed on `bike`, not on the details row, so
+    they are neither written nor touched here — a re-save keeps them
+    (photos_repository owns them).
     """
     session = get_session()
     try:
@@ -100,27 +98,24 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse, ttl: 
             session.add(bike)
             session.flush()
 
-        # Remove old details if exists
-        old_details = session.query(BikeDetails).filter_by(bike_id=bike.id).first()
-        if old_details:
-            session.delete(old_details)
-            session.flush()
-
-        # Create new details
-        details = BikeDetails(
-            bike_id=bike.id,
-            description=data.description.model_dump_json(),
-        )
-        session.add(details)
-        session.flush()
-
-        # Add photos
-        for idx, photo_url in enumerate(data.photos):
-            session.add(BikeDetailPhoto(
+        # Update the details row in place — never delete it. On a database not
+        # yet run through migrate_photos_bike_id.py, bike_detail_photos still
+        # FKs bike_detail ON DELETE CASCADE, so a delete would wipe the photos.
+        details = session.query(BikeDetails).filter_by(bike_id=bike.id).first()
+        if details:
+            details.description = data.description.model_dump_json()
+            details.updated_at = datetime.now(timezone.utc)
+            session.query(BikeDetailComponent).filter_by(
                 bike_detail_id=details.id,
-                url=photo_url,
-                display_order=idx,
-            ))
+            ).delete(synchronize_session=False)
+            session.expire(details, ["components"])
+        else:
+            details = BikeDetails(
+                bike_id=bike.id,
+                description=data.description.model_dump_json(),
+            )
+            session.add(details)
+        session.flush()
 
         # Flatten the whole tree into one row per spec, each carrying its
         # element/subcategory/category ancestry. `component_order` is a running
@@ -172,7 +167,10 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse, ttl: 
 
 
 def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
-    """Retrieve bike details by company and model."""
+    """Retrieve bike details by company and model, whatever their age (no TTL).
+
+    Photos are not part of the details any more — see photos_repository.
+    """
     session = get_session()
     try:
         bike = session.query(Bike).filter_by(
@@ -189,19 +187,6 @@ def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
             logger.info("bike_details miss | company=%r model=%r", company, model)
             return None
 
-        # Check TTL (handle both naive and aware datetimes)
-        now = datetime.now(timezone.utc)
-        updated_at = details.updated_at
-        if updated_at.tzinfo is None:
-            updated_at = updated_at.replace(tzinfo=timezone.utc)
-        age = (now - updated_at).total_seconds()
-        if age > TTL_DETAILS:
-            logger.info("bike_details stale | company=%r model=%r", company, model)
-            return None
-
-        # Fetch photos
-        photos = [p.url for p in sorted(details.photos, key=lambda x: x.display_order)]
-
         # Parse stored JSON
         description = BikeDescription.model_validate_json(details.description)
 
@@ -212,7 +197,6 @@ def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
             model=bike.model,
             description=description,
             components=components,
-            photos=photos,
         )
 
         logger.info("bike_details hit | company=%r model=%r", company, model)
