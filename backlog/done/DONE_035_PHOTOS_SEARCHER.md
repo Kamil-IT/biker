@@ -2,8 +2,7 @@
 
 Reference write-ups: `docs/OLX_SEARCHER_MIGRATION.md`, `docs/DECATHLON_SEARCHER_MIGRATION.md`,
 `docs/ALLEGRO_SEARCHER_MIGRATION.md`; this task's own: `docs/PHOTOS_SEARCHER_MIGRATION.md`. Branch
-`feature/photos-searcher`. Stays `TODO_` here until the PR has merged to `main` (then rename to `DONE_` and move to
-`backlog/done/`, and update `backlog/done/README.md`).
+`feature/photos-searcher`. Merged as PR #115 (`main` `1781f00`) and deployed to GCP on 2026-09-29.
 
 ## Goal (as the user stated it)
 Bike photos should work like the Allegro offers: a fast database read when a bike is opened, and a paid search

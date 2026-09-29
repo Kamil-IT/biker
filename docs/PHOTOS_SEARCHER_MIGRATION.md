@@ -4,8 +4,7 @@ Zapis zmiany z datą 2026-09-29: co i dlaczego przeniesiono, jak wygląda przep�
 migracja, decyzje z wywiadu, różnice względem starego scrapera, testy, znane ograniczenia i lista rzeczy do zrobienia przy
 wdrożeniu. Czwarta powtórka schematu z `docs/OLX_SEARCHER_MIGRATION.md` (TODO-031),
 `docs/DECATHLON_SEARCHER_MIGRATION.md` (TODO-032) i `docs/ALLEGRO_SEARCHER_MIGRATION.md` (TODO-033). Branch
-`feature/photos-searcher`, zadanie `backlog/TODO_035_PHOTOS_SEARCHER.md` (zostaje `TODO_`, dopóki PR nie zostanie
-zmergowany). Zmiany są niezacommitowane w chwili pisania tego dokumentu; **produkcyjna baza i wdrożenie nie były ruszane**.
+`feature/photos-searcher`, zadanie `backlog/done/DONE_035_PHOTOS_SEARCHER.md`. PR #115 zmergowany i wdrożony na GCP 2026-09-29 — patrz § 9.
 
 ## 1. Punkt wyjścia
 
@@ -219,7 +218,7 @@ zapisane zdjęcia z `saved: 0`; regresja kart popularnych rowerów, ofert, recen
 - Zdjęcia w wynikach wyszukiwania (`TODO_ISSUE_008`) nadal niezałatwione; pipeline offline
   (`docs/bikes/pipeline/db_saver.py`) używa teraz `photos_repository.save_bike_photos` (tak samo insert-only).
 
-## 9. Lista kontrolna wdrożenia (nic z tego nie zostało wykonane)
+## 9. Lista kontrolna wdrożenia (wykonana 2026-09-29, poza krokiem 5)
 
 **Kolejność jest krytyczna dla bezpieczeństwa danych.** Migracja musi przejść na bazie PRZED tym, zanim nowy backend lub searcher zacznie na niej działać:
 
@@ -235,6 +234,28 @@ zapisane zdjęcia z `saved: 0`; regresja kart popularnych rowerów, ofert, recen
 | 3b | ja | frontend na końcu |
 | 4 | ja | weryfikacja na publicznych URL-ach: `POST /v1/bike/photos` (pusty dla roweru bez zdjęć), nieznany rower → 404 na `/photos/search`, jedno prawdziwe wyszukiwanie, powtórka z bazy |
 | 5 | do sprawdzenia | `max_connections` Cloud SQL względem 10 instancji searchera + 2 backendu |
+
+### Wynik wdrożenia (2026-09-29)
+
+| Element | Wynik |
+|---|---|
+| PR | #115 zmergowany, `main` = `1781f00` |
+| Kopia zapasowa Cloud SQL | na żądanie, „before photos bike_id migration (PR 115)” |
+| Migracja Cloud SQL | przed i po 4459 wierszy zdjęć, 541 rowerów, 0 sierot, `RESULT: migrated` (uruchomił użytkownik) |
+| Cloud Run | `biker-searcher-00004`, `biker-backend-00009`, `biker-frontend-00007`, obraz `1781f00` |
+| Lokalne bazy | `backend/cache.db` (4451 wierszy, 540 rowerów) i Postgres `biker` (4828 wierszy, 588 rowerów) zmigrowane, 0 sierot |
+| Krok 5 (`max_connections`) | nadal niesprawdzony |
+
+Test ścieżki głównej na produkcji (Playwright, 3 z 3 kroków):
+
+| Krok | Rower | Wynik |
+|---|---|---|
+| Zapisane zdjęcia | Trek Marlin 5 | 8 zdjęć w kolejności z `/v1/bike/photos`, 0 wyszukiwań, `/v1/bike/details` bez pola `photos` |
+| „Poproś o dane” | Trek Marlin 6 | pusta lista → przycisk, „Szukam zdjęć…”, 8 zdjęć po 42 s, jedno `/photos/search` i jedno `/missing` |
+| Przeładowanie | Trek Marlin 6 | 8 zdjęć z bazy, 0 wyszukiwań |
+
+W konsoli przeglądarki były odpowiedzi 400 z `/v1/bike/details` i `/v1/bike/review`: te endpointy nadal używają klucza
+Anthropic API (nie subskrypcji), a konto nie ma kredytów. Zdjęć to nie dotyczy.
 
 ## 10. Jak tego używać
 
