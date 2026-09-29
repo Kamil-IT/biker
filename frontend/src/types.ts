@@ -49,6 +49,12 @@ export interface BikeDetailsResponse {
   model: string
   description: BikeDescription
   components: BikeCategory[]
+}
+
+// Returned by POST /v1/bike/photos (DB read of the stored photos, in display order) and
+// POST /v1/bike/photos/search (on-demand photo searcher). Photos are no longer part of
+// the details response.
+export interface BikePhotosResponse {
   photos: string[]
 }
 

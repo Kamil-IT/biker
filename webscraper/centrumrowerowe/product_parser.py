@@ -104,8 +104,7 @@ class ParsedBike:
                 citations=[],
             ),
             components=[c.model_copy(deep=True) for c in self.components],
-            photos=list(self.photos),
-        )
+        )  # photos are not part of details: the caller stores self.photos via photos_repository
 
 
 # ── JSON-LD ──────────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@ import pytest
 
 import process_queue as pq
 from db import DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, SOURCE, BikeDiscovery, models, repository, utcnow
+from app import photos_repository
 from app.schemas import (
     BikeCategory, BikeDescription, BikeDetailsResponse, BikeSubcategory, ComponentElement, SpecItem,
 )
@@ -31,8 +32,15 @@ class StubParsed:
             model=model,
             description=BikeDescription(text="Rower trekkingowy.", segments=[], citations=[]),
             components=self.components,
-            photos=self.photos,
-        )
+        )  # photos are not part of details any more — process_row stores self.photos itself
+
+
+def stored_photos(brand, model):
+    return photos_repository.get_bike_photos(brand, model).photos
+
+
+def add_photos(brand, model, urls):
+    assert photos_repository.save_bike_photos(brand, model, urls) == len(urls)
 
 
 def stub_parse(brand="Romet", model="Wagant 3"):
@@ -82,7 +90,8 @@ def test_happy_path_stores_details(temp_db):
     assert (row.company, row.model) == ("Romet", "Wagant 3")
     assert bike_rows() == [(row.bike_id, "Romet", "Wagant 3")]
     details = repository.get_bike_details("Romet", "Wagant 3")
-    assert details.photos == ["https://example.com/a.jpg", "https://example.com/b.jpg"]
+    # the details view's gallery reads POST /v1/bike/photos → photos_repository.get_bike_photos
+    assert stored_photos("ROMET", "wagant 3") == ["https://example.com/a.jpg", "https://example.com/b.jpg"]
     assert details.components[0].subcategories[0].elements[0].specs[0].value == '28"'
     with pq.session() as s:
         assert s.query(models.BikeDetailPhoto).count() == 2
@@ -106,7 +115,8 @@ def test_real_parser_on_fixture(temp_db, fixture, brand, model, electric):
     row = get_row(row_id)
     assert (row.company, row.model) == (brand, model)
     details = repository.get_bike_details(brand, model)
-    assert details is not None and details.description.text and details.photos and details.components
+    assert details is not None and details.description.text and details.components
+    assert stored_photos(brand, model)
     categories = {c.category for c in details.components}
     assert ("Electric / Powertrain" in categories) is electric
     assert len(bike_rows()) == 1
@@ -119,9 +129,9 @@ def test_real_parser_error_fails(temp_db):
     assert get_row(row_id).last_error.startswith("ParseError")
 
 
-def test_existing_fresh_details_skipped_unchanged(temp_db):
-    original = StubParsed().to_details_response("Romet", "Wagant 3").model_copy(update={"photos": ["https://x/orig.jpg"]})
-    repository.save_bike_details("Romet", "Wagant 3", original)
+def test_existing_details_and_photos_skipped_unchanged(temp_db):
+    repository.save_bike_details("Romet", "Wagant 3", StubParsed().to_details_response("Romet", "Wagant 3"))
+    add_photos("Romet", "Wagant 3", ["https://x/orig.jpg"])
     before = repository.get_bike_details("Romet", "Wagant 3")
     row_id = add_row()
     assert claim_and_process(stub_parse("ROMET", "WAGANT 3")) == [SKIPPED]
@@ -130,6 +140,16 @@ def test_existing_fresh_details_skipped_unchanged(temp_db):
     assert (row.company, row.model) == ("Romet", "Wagant 3")
     assert len(bike_rows()) == 1
     assert repository.get_bike_details("Romet", "Wagant 3") == before
+    assert stored_photos("Romet", "Wagant 3") == ["https://x/orig.jpg"]  # never replaced
+
+
+def test_existing_details_without_photos_get_the_shop_photos(temp_db):
+    repository.save_bike_details("Romet", "Wagant 3", StubParsed().to_details_response("Romet", "Wagant 3"))
+    before = repository.get_bike_details("Romet", "Wagant 3")
+    add_row()
+    assert claim_and_process(stub_parse()) == [SKIPPED]
+    assert repository.get_bike_details("Romet", "Wagant 3") == before
+    assert stored_photos("Romet", "Wagant 3") == ["https://example.com/a.jpg", "https://example.com/b.jpg"]
 
 
 def test_existing_bike_without_details_filled_with_stored_casing(temp_db):
@@ -141,16 +161,42 @@ def test_existing_bike_without_details_filled_with_stored_casing(temp_db):
     row = get_row(row_id)
     assert (row.company, row.model, row.bike_id) == ("Romet", "Wagant 3", bike_rows()[0][0])
     assert repository.get_bike_details("Romet", "Wagant 3") is not None
+    assert len(stored_photos("Romet", "Wagant 3")) == 2
 
 
-def test_stale_details_are_refreshed(temp_db):
-    repository.save_bike_details("Romet", "Wagant 3", StubParsed().to_details_response("Romet", "Wagant 3"))
+def test_photos_of_a_bike_without_details_are_kept(temp_db):
     with pq._tx() as s:
-        s.query(models.BikeDetails).update({models.BikeDetails.updated_at: utcnow() - timedelta(days=31)})
+        s.add(models.Bike(brand="Romet", model="Wagant 3"))
+    add_photos("Romet", "Wagant 3", ["https://searcher/1.jpg"])  # e.g. from the photo searcher
     add_row()
     assert claim_and_process(stub_parse()) == [DONE]
-    assert repository.get_bike_details("Romet", "Wagant 3") is not None
+    assert stored_photos("Romet", "Wagant 3") == ["https://searcher/1.jpg"]
+
+
+def test_old_details_are_kept_no_ttl(temp_db):
+    repository.save_bike_details("Romet", "Wagant 3", StubParsed().to_details_response("Romet", "Wagant 3"))
+    with pq._tx() as s:
+        s.query(models.BikeDetails).update({models.BikeDetails.updated_at: utcnow() - timedelta(days=400)})
+    add_row()
+    assert claim_and_process(stub_parse()) == [SKIPPED]
     assert len(bike_rows()) == 1
+
+
+def test_page_without_photos_still_done(temp_db):
+    parsed = StubParsed()
+    parsed.photos = []
+    add_row()
+    assert claim_and_process(lambda html, url: parsed) == [DONE]
+    assert stored_photos("Romet", "Wagant 3") == []
+
+
+def test_photo_write_failure_leaves_row_done(temp_db, monkeypatch):
+    monkeypatch.setattr(photos_repository, "save_bike_photos", lambda *a, **k: 0)  # swallowed failure
+    row_id = add_row()
+    assert claim_and_process(stub_parse()) == [DONE]
+    assert get_row(row_id).last_error is None
+    assert repository.get_bike_details("Romet", "Wagant 3") is not None
+    assert stored_photos("Romet", "Wagant 3") == []
 
 
 @pytest.mark.parametrize("status", [404, 410])
@@ -275,20 +321,24 @@ def test_main_dry_run_cli(temp_db, monkeypatch):
 # ── review fixes: save verification, per-row lease, fetch safety, DB target guard ──
 
 
-def test_failed_save_over_stale_details_is_failed_and_untouched(temp_db, monkeypatch):
-    original = StubParsed().to_details_response("Romet", "Wagant 3").model_copy(update={"photos": ["https://x/orig.jpg"]})
-    repository.save_bike_details("Romet", "Wagant 3", original)
-    old = utcnow() - timedelta(days=31)
+def test_failed_save_is_failed_and_writes_nothing(temp_db, monkeypatch):
     with pq._tx() as s:
-        s.query(models.BikeDetails).update({models.BikeDetails.updated_at: old})
+        s.add(models.Bike(brand="Romet", model="Wagant 3"))
     monkeypatch.setattr(repository, "save_bike_details", lambda *a, **k: None)  # swallowed failure
     row_id = add_row()
     assert claim_and_process(stub_parse()) == [FAILED]
     assert "save_bike_details stored nothing" in get_row(row_id).last_error
     with pq.session() as s:
-        details = s.query(models.BikeDetails).one()
-        assert abs(pq._aware(details.updated_at) - old) < timedelta(seconds=1)
-        assert [p.url for p in details.photos] == ["https://x/orig.jpg"]
+        assert s.query(models.BikeDetails).count() == 0
+    assert stored_photos("Romet", "Wagant 3") == []  # nothing half-written: photos come after the details
+
+
+def test_saved_details_must_be_new(temp_db):
+    """A details row older than the save start does not count as written (bike_store._saved_bike_id)."""
+    import bike_store
+    repository.save_bike_details("Romet", "Wagant 3", StubParsed().to_details_response("Romet", "Wagant 3"))
+    assert bike_store._saved_bike_id("Romet", "Wagant 3", utcnow() - timedelta(minutes=1)) is not None
+    assert bike_store._saved_bike_id("Romet", "Wagant 3", utcnow() + timedelta(minutes=1)) is None
 
 
 def test_row_taken_over_before_start_is_left_alone(temp_db):

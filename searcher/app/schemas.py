@@ -44,6 +44,12 @@ class SearchResponse(BaseModel):
     saved: int = 0              # bike_offer rows written for this search
 
 
+class PhotosResponse(BaseModel):
+    photos: list[str]           # the bike's photo URLs in display order — stored ones or the new ones
+    bike_id: int | None = None  # the bike row the photos belong to (null: unknown bike, nothing found)
+    saved: int = 0              # bike_detail_photos rows written by this call (0 when returned from the DB)
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
     claude_cli: str | None = None  # `claude --version` output, null when the CLI is missing

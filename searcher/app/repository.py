@@ -7,6 +7,9 @@ rows under the bike's id tagged with the marketplace `source` ('olx.pl' for
 display_order. Every write is scoped to one (bike, source) pair, so the three
 searches never touch each other's rows — even when two of them run at once
 for the same bike (the UI fires Decathlon + Allegro together).
+
+Bike photos (/v1/search/photos) go into bike_detail_photos keyed on bike_id,
+written once and never replaced: get_stored_photos / save_photos below.
 """
 import logging
 from datetime import datetime, timezone
@@ -18,6 +21,7 @@ from .models import (
     Bike,
     BikeOffer as BikeOfferRow,  # aliased: schemas.BikeOffer is the response shape
     BikeOfferPhoto as BikeOfferPhotoRow,
+    BikeDetailPhoto,
     dialect_insert,
     get_session,
 )
@@ -158,6 +162,65 @@ def save_offers(
     except Exception as exc:
         session.rollback()
         logger.error("offers store failed | source=%r company=%r model=%r | %s", source, company, model, exc)
+        raise
+    finally:
+        session.close()
+
+
+def _photo_urls(session, bike_id: int) -> list[str]:
+    return [
+        r.url for r in session.query(BikeDetailPhoto.url)
+        .filter(BikeDetailPhoto.bike_id == bike_id)
+        .order_by(BikeDetailPhoto.display_order, BikeDetailPhoto.id)
+    ]
+
+
+def get_stored_photos(company: str, model: str) -> tuple[Optional[int], list[str]]:
+    """(bike_id, stored photo URLs in display order); (None, []) for an unknown bike. Never creates anything."""
+    session = get_session()
+    try:
+        bike_id = _find_bike_id(session, company, model)
+        if bike_id is None:
+            return None, []
+        return bike_id, _photo_urls(session, bike_id)
+    finally:
+        session.close()
+
+
+def save_photos(company: str, model: str, photos: list[str]) -> tuple[Optional[int], list[str], int]:
+    """Store `photos` for a bike that has none; returns (bike_id, the bike's photos now, rows written).
+
+    Photos are never deleted or replaced: when the bike already has photo rows
+    (another search for it finished first — a second process or instance) they
+    are returned and nothing is written. The check and the insert run under a
+    row lock on the bike (SELECT … FOR UPDATE; a no-op on SQLite, whose writers
+    are serialised in one process by the caller's single-flight), so two
+    concurrent searches for one bike cannot both insert. An empty `photos`
+    writes nothing — not even a bike row. The bike row is otherwise created
+    with the caller's casing when it is missing. Raises on a DB error after
+    rolling back.
+    """
+    session = get_session()
+    try:
+        if not photos:
+            bike_id = _find_bike_id(session, company, model)
+            logger.warning("no photos to store — nothing written | company=%r model=%r", company, model)
+            return bike_id, (_photo_urls(session, bike_id) if bike_id is not None else []), 0
+        bike_id = _get_or_create_bike(session, company, model)
+        session.query(Bike.id).filter(Bike.id == bike_id).with_for_update().one()
+        existing = _photo_urls(session, bike_id)
+        if existing:
+            session.rollback()
+            logger.info("photos already stored — kept, nothing written | bike_id=%d stored=%d", bike_id, len(existing))
+            return bike_id, existing, 0
+        for idx, url in enumerate(photos):
+            session.add(BikeDetailPhoto(bike_id=bike_id, url=url, display_order=idx))
+        session.commit()
+        logger.info("photos stored | company=%r model=%r bike_id=%d saved=%d", company, model, bike_id, len(photos))
+        return bike_id, list(photos), len(photos)
+    except Exception as exc:
+        session.rollback()
+        logger.error("photos store failed | company=%r model=%r | %s", company, model, exc)
         raise
     finally:
         session.close()

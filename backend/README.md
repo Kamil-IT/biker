@@ -66,43 +66,46 @@ python -m venv .venv && .venv\Scripts\activate
 pip install -r requirements.txt
 pip install -U anthropic   # existing venv: -r never upgrades an installed unpinned package; the Docker image always gets the newest
 copy .env.example .env   # then edit .env with your real ANTHROPIC_API_KEY
-python scripts/migrate_bike_details.py   # REQUIRED on an existing cache.db — see note below
+python scripts/migrate_photos_bike_id.py --dry-run   # REQUIRED once on every existing database — see note below
+python scripts/migrate_photos_bike_id.py
 uvicorn app.main:app --reload --port 8000
 ```
 
-> **Run the migration before starting the app on a pre-existing `cache.db`.** `init_db()` uses
-> SQLAlchemy's `create_all()`, which creates missing tables but never `ALTER`s an existing one — so an
-> older `bike_results` table keeps its old columns and gains neither `search_id` nor `position`.
-> `repository.save_search` then raises `OperationalError` on every write. Nothing is cached, the
-> DB-first search branch never hits, and **every search falls through to the AI call**. `repository`
-> detects this specific failure and logs it at **ERROR** naming the remedy, so it no longer blends
-> into routine non-fatal cache warnings — but that is a detector, not a fix. See
-> [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md) for how to verify.
+> **Run `scripts/migrate_photos_bike_id.py` once on every existing database before starting the app** — SQLite
+> `cache.db` or PostgreSQL (`--db <sqlite file>` / `--url <sqlalchemy url>` pick another one; the default is
+> `$DATABASE_URL`, else `cache.db`). Bike photos are keyed on `bike.id` now, not on the details row, and `init_db()`'s
+> `create_all()` never `ALTER`s an existing table, so an older `bike_detail_photos` keeps `bike_detail_id`. Until the
+> script has run, `POST /v1/bike/photos` answers `{"photos": []}` and logs an **ERROR** naming the script, and the
+> **searcher refuses to start**.
 >
-> The same script also repairs placeholder (all-lowercase) brand casing left by earlier builds, on
-> **every** run — no `--force` needed — as long as `search_cache` still exists.
+> **Deploy order (data safety):** the migration must run against a database BEFORE the new backend or searcher runs against it. On
+> production: (1) migrate Cloud SQL, (2) deploy backend and searcher together right after, (3) deploy the frontend. Once migrated, the
+> **old** backend breaks on that database (it still writes `bike_detail_id`): expect a short window between steps 1 and 2 in which
+> its details save fails (rolls back, logs a warning, no data lost). The new `save_bike_details` updates the `bike_detail` row in
+> place instead of deleting it, so it can no longer cascade-delete photos through the old `bike_detail_id` foreign key. See [Photos migration](#photos-migration-scriptsmigrate_photos_bike_idpy) below and
+> [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md).
 
-`SEARCHER_URL` / `SEARCHER_API_KEY` (TODO-031/032/033) point `POST /v1/bike/used/search`, `POST /v1/bike/decathlon/search`
-and `POST /v1/bike/allegro/search` at the on-demand searcher (top-level `searcher/`, `http://localhost:8100` locally; the key
+`SEARCHER_URL` / `SEARCHER_API_KEY` (TODO-031/032/033/035) point `POST /v1/bike/used/search`, `POST /v1/bike/decathlon/search`,
+`POST /v1/bike/allegro/search` and `POST /v1/bike/photos/search` at the on-demand searcher (top-level `searcher/`, `http://localhost:8100` locally; the key
 is sent as `X-Searcher-Key` and must equal the searcher's own `SEARCHER_API_KEY`). `SEARCHER_TIMEOUT` (seconds, default 600)
-bounds one search. `SEARCHER_MAX_INFLIGHT` (default **2**) is how many distinct searches this backend lets run at once across
-all three sources — the "Nowe" card fires the Decathlon and Allegro searches together — and must never exceed the searcher's
-capacity (`SEARCHER_MAX_CONCURRENT`, locally 2; on Cloud Run `--max-instances 2` with `--concurrency 1`); a third search is
-refused with 503, nothing queues. Leave `SEARCHER_URL` unset to run without the searcher — all three routes then answer 503,
-while `POST /v1/bike/used/olx`, `POST /v1/bike/decathlon` and `POST /v1/bike/allegro` keep serving whatever is stored in
-`bike_offer`.
+bounds one search. `SEARCHER_MAX_INFLIGHT` (default **10**, was 2) is how many distinct searches this backend lets run at once across
+all four routes — the "Nowe" card fires the Decathlon and Allegro searches together and a details page can add OLX and photos — and must never exceed the searcher's
+capacity (`SEARCHER_MAX_CONCURRENT`, locally 10; on Cloud Run `--max-instances 10` with `--concurrency 1`); an eleventh search is
+refused with 503, nothing queues. The cap is per backend process: two backend instances admit up to 20 between them. Leave `SEARCHER_URL` unset to run without the searcher — all four routes then answer 503,
+while `POST /v1/bike/used/olx`, `POST /v1/bike/decathlon`, `POST /v1/bike/allegro` and `POST /v1/bike/photos` keep serving whatever is stored in
+the database.
 
 ```bash
 # In a second terminal:
-python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, popular, used, used/search, decathlon, decathlon/search, allegro, allegro/search; add --ai for the API cases
+python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, popular, used, used/search, decathlon, decathlon/search, allegro, allegro/search, photos, photos/search; add --ai for the API cases
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
 python scripts/test_review.py   # smoke-test POST /v1/bike/review
 ```
 
 ```bash
-# One-off: backfill legacy blob bike details into the ORM tables (idempotent)
-python scripts/migrate_bike_details.py
-pytest scripts/test_details_parity.py -v   # blob vs ORM read parity
+# One-off per existing database: re-key bike_detail_photos to bike_id (idempotent)
+python scripts/migrate_photos_bike_id.py --dry-run
+python scripts/migrate_photos_bike_id.py
 ```
 
 ### Seed the popular bikes (`bike_popular`)
@@ -127,8 +130,8 @@ order. Production gets the same rows only when the user decides to run it there.
 
 `backend/Dockerfile` is the image docker compose and Cloud Run both use: Python 3.14 slim, `patchright install --with-deps chromium`,
 non-root user, `uvicorn` on `$PORT` (default 8000). `.env`/`cache.db` are excluded by `.dockerignore` — `ANTHROPIC_API_KEY`
-and `DATABASE_URL` come from the environment; under compose the Cloud SQL password arrives as the mounted pgpass file (`PGPASSFILE`). `PLAYWRIGHT_HEADLESS=true` (read by `app/browser_config.py`) runs the bike / equipment
-photo scrapers without a display; unset keeps the visible browser for local debugging (the OLX image scraper moved to
+and `DATABASE_URL` come from the environment; under compose the Cloud SQL password arrives as the mounted pgpass file (`PGPASSFILE`). `PLAYWRIGHT_HEADLESS=true` (read by `app/browser_config.py`) runs the equipment
+photo scraper without a display; unset keeps the visible browser for local debugging (the OLX image scraper moved to
 `searcher/` in TODO-031, the Allegro one was deleted in TODO-033 without a replacement — allegro.pl answers 403 to Chromium,
 so Allegro offers carry no photos — and the backend launches no marketplace browser any more). See the root
 `README.md` § Run with Docker.
@@ -140,7 +143,7 @@ references (`db-password`, `anthropic-api-key`). libpq picks `PGPASSWORD` up exa
 `app/` changes between compose and Cloud Run. See the root `README.md` § Deploy to GCP.
 
 Browser launches are capped per process by `BROWSER_MAX_CONCURRENCY` (default 2, `app/browser_config.py` `BROWSER_SLOTS`):
-every scraper left in the backend (the bike and equipment photo finders) holds one slot around `sync_playwright()` + `chromium.launch()`.
+every scraper left in the backend (only the equipment photo finder since TODO-035 — the bike photo scraper moved to the searcher) holds one slot around `sync_playwright()` + `chromium.launch()`.
 One launch costs 0.5–0.9 GiB (node driver + Chromium tree, and Cloud Run's `/tmp` is memory-backed), so two fit in the
 2 GiB instance next to the app; a third request waits for a slot instead of getting the instance OOM-killed. Raise it only
 together with `--memory` in `scripts/deploy.ps1`.
@@ -152,8 +155,9 @@ cd backend
 pytest -m "not llm"
 ```
 
-`pytest.ini` scopes default collection to `scripts/test_review_aggregation.py` and
-`scripts/test_browser_slots.py`, so a bare `pytest` run covers the review-aggregation unit tests
+`pytest.ini` scopes default collection to `scripts/test_review_aggregation.py`,
+`scripts/test_browser_slots.py` and `scripts/test_searcher_client_photos.py`, so a bare `pytest` run covers the review-aggregation unit tests,
+the searcher client's photo route (mocked httpx: request, single-flight, busy mapping, in-flight cap 10, body validation)
 and the browser-launch cap (a fake Playwright proves no scraper exceeds `BROWSER_MAX_CONCURRENCY`
 launches and always returns its slot). The rest of `scripts/`
 stays excluded — those are standalone smoke scripts that hit a live server at import
@@ -182,12 +186,12 @@ Two queryable layers (in the same `cache.db`) sit **on top of** the generic resp
 | Layer | Tables | Key | TTL |
 |-------|--------|-----|-----|
 | Search | `searches` + `bike_results` + `accessories` | `searches.query` — the `norm()`'d enriched query | 24 h |
-| Details | `bikes` + `bike_details` + `bike_detail_photos` | `bikes.(brand_norm, model_norm)` — `.strip().lower()` of brand+model | 30 days |
+| Details | `bike` + `bike_detail` + `bike_detail_component` | `bike.(brand_norm, model_norm)` — `.strip().lower()` of brand+model | none (TODO-035) |
 
 Both reference the shared `bikes` identity row, so a bike found by search and a bike with cached details are the same row.
 
 - Both are indexed on their key columns and upsert on conflict (a re-run refreshes the entry).
-- Freshness: searches check `searches.created_at + ttl_seconds`; details check `bike_details.updated_at + ttl_seconds`. A stale row is treated as a miss (never served).
+- Freshness: searches are fresh for 24 h (`store.SEARCH_TTL_SECONDS`, a module constant on `time_stored`; there is no per-row `ttl_seconds` column) and a stale one is treated as a miss (never served). **Details have no TTL** since TODO-035 (`repository.TTL_DETAILS` was removed): a stored details row is served whatever its age.
 - Search results carry an explicit **`position`** — the bikes are returned best match first, so their order is meaningful, and a row set (unlike the old JSON blob) does not preserve it for free. Reads order by `position`.
 - Searches are also queryable **by attribute** — `find_bikes_by_brand(brand)` returns de-duplicated bikes of that brand across fresh cached searches, powering `GET /v1/bike/search-cache?brand=`.
 - Writes are best-effort: a cache-table failure is logged but never breaks the underlying request.
@@ -203,31 +207,37 @@ Bike details used to live in a `bike_details_cache` JSON-blob table in `app/stor
 - Lookup goes through the normalised companion columns **`brand_norm` / `model_norm`**, populated by `models.norm()` (Python `.strip().lower()`) via a `@validates("brand", "model")` handler on `Bike` — which fires on construction *and* on later assignment, though not on a bulk `query().update()` — and constrained by `UNIQUE(brand_norm, model_norm)`. Lookups match those columns exactly, so `"Trek"`/`"Marlin 5"` and `"trek"`/`"marlin 5"` resolve to the same row — matching what the blob cache's `strip().lower()` key achieved. A save reuses an existing identity rather than creating a second one.
 - **Do not replace this with SQL `lower()`.** SQLite's built-in `lower()` is ASCII-only and Python's is not; they diverge only when an **uppercase non-ASCII** character is involved — `RIESE & MÜLLER` lowercases to `riese & mÜller` in SQLite but `riese & müller` in Python, and `Škoda` stays `Škoda` in SQLite against Python's `škoda`. The canonical spelling `Riese & Müller` is unaffected, which is what makes this easy to miss. When it does hit, the lookup misses and `save_bike_details` mints a duplicate `bikes` identity — precisely the case-split problem this migration exists to fix.
 - The response echoes the **caller's** casing, not the stored row's — same as the blob path did.
-- `photos` are rows in `bike_detail_photos` ordered by `display_order`, not a JSON array. Zero rows deserialise back to `photos: []`.
+- **Photos are not part of the details response any more** (TODO-035): `BikeDetailsResponse` has no `photos` field. They live in `bike_detail_photos`, keyed on `bike_id` (not on the details row), are read by `POST /v1/bike/photos` (`app/photos_repository.py`, `display_order, id`) and written only by the searcher's photo search — insert-only, for a bike that has none. `save_bike_details` neither writes nor deletes them.
 - `description` and `components` remain JSON columns on `bike_details`.
-- Re-saving an unchanged row refreshes its TTL, because `updated_at` carries `onupdate=now` — the same behaviour the blob upsert had when it rewrote `time_stored`.
+- `save_bike_details` updates the bike's `bike_detail` row **in place** (stable id, description replaced, component rows deleted and re-inserted) instead of deleting and re-creating it. `updated_at` is set on every save, but nothing reads it for freshness any more.
 
 See [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md) for the full schema and what is still pending (search).
 
-#### `scripts/migrate_bike_details.py`
+#### Photos migration (`scripts/migrate_photos_bike_id.py`)
 
-One-off backfill that copies every `bike_details_cache` row into `bikes` + `bike_details` + `bike_detail_photos`, preserving each row's real age (`time_stored` → `created_at`/`updated_at`, `ttl` → `ttl_seconds`) and the original photo ordering (array index → `display_order`). It also brings `bikes` up to the current schema: adds `brand_norm` / `model_norm` if absent and backfills them for **every pre-existing `bikes` row** (not just the ones it creates — older rows would otherwise be invisible to the normalised lookup and get duplicated on the next save), merges `bikes` rows that share a normalised identity, creates the `uq_bike_brand_model_norm` unique index, and removes the test-script leftovers (`bike_results` / `accessories` rows, and any `bikes` row nothing references).
+`bike_detail_photos` used to hang off the details row (`bike_detail_id` → `bike_detail.id`); with the photos searcher
+(TODO-035) it hangs off the bike: `bike_detail_id` is **replaced** by `bike_id INTEGER NOT NULL REFERENCES bike(id) ON DELETE
+CASCADE` (indexed). Columns afterwards: `id`, `bike_id`, `url`, `display_order`. The table keeps its name.
 
 ```bash
 cd backend
-python scripts/migrate_bike_details.py                # idempotent — re-running is a no-op
-python scripts/migrate_bike_details.py --force        # rebuild details rows that already exist
-python scripts/migrate_bike_details.py --drop-legacy  # also DROP TABLE bike_details_cache
-python scripts/migrate_bike_details.py --db other.db  # operate on a different SQLite file
+python scripts/migrate_photos_bike_id.py --dry-run     # report only; database: $DATABASE_URL (backend/.env), else cache.db
+python scripts/migrate_photos_bike_id.py               # migrate
+python scripts/migrate_photos_bike_id.py --db path/to/copy.db
+python scripts/migrate_photos_bike_id.py --url postgresql+psycopg://biker:biker@localhost:5432/<db>
 ```
 
-It is importable too — `migrate(db_path=None, drop_blob_table=False, force=False, verbose=True) -> dict` returns a stats dict (rows migrated, photos written, rows merged, leftovers deleted, plus `blob_tables_dropped`, a **list of dropped table names**). Dropping the legacy blob tables is opt-in from both entry points — `migrate(drop_blob_table=True)` or `--drop-legacy` — so a default call from either keeps them.
-
-A bike that already has a `bike_details` row is left alone, so the default run is safe to repeat. Dropping the legacy blob tables (`bike_details_cache`, `search_cache`) is deliberately **not** part of a default run — the parity test needs to read the blob tables alongside the ORM ones. Pass `--drop-legacy` once parity is green.
-
-#### `scripts/test_details_parity.py`
-
-Pytest regression for the ORM read path (`pytest scripts/test_details_parity.py -v`). For each cached bike it reads the same record through the legacy blob path and the ORM path and asserts the two `BikeDetailsResponse` objects are equal field for field — `company`/`model` casing echo, full `description`, the whole `components` tree including nested `SpecItem` ordering, and `photos` in the same order — plus a forced-stale row returning `None` from both. It runs against a **copy** of the pre-migration `cache.db` in the scratchpad (override with `TODO019_SNAPSHOT_DB`), so staleness can be forced without touching real data, and it carries its own ~15-line blob reader rather than importing the removed `store` helpers, so it stays runnable after the cutover.
+- One transaction on SQLite and PostgreSQL; SQLite rebuilds the table, PostgreSQL alters it in place. Before committing it
+  checks row by row that every photo kept its id, url and `display_order` and points at the bike its old details row belonged to —
+  any mismatch rolls back and leaves the database unchanged (exit code 1).
+- Photo rows whose details row (or that row's bike) is missing cannot be re-keyed: they are listed, copied into the table
+  `bike_detail_photos_orphans` (`id, bike_detail_id, bike_id, url, display_order`) in the same transaction (and that copy is verified),
+  and left out of the migrated table — never dropped silently. Row and bike counts are printed before and after.
+- PostgreSQL runs under `LOCK TABLE … SHARE ROW EXCLUSIVE` on the photos and details tables, so concurrent writes cannot skew the verification.
+- Idempotent: an already migrated table is re-checked (`NOT NULL`, the FK to `bike` with `ON DELETE CASCADE`, the `bike_id` index) and only a missing piece is repaired; an absent table is left to `init_db()`, which creates it with the new schema. Importable as
+  `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict`.
+- **Required on every existing database, and BEFORE the new backend or searcher runs against it** (production order: migrate Cloud SQL, deploy backend + searcher together, then the frontend): the searcher refuses to start on an unmigrated database, the backend answers `{"photos": []}` (ERROR log) until it has run, and the old backend breaks on a migrated database.
+- The older `migrate_bike_details.py` / `test_details_parity.py` (blob → ORM backfill and parity test) no longer exist in the tree.
 
 ## Search Cache
 
@@ -325,15 +335,15 @@ Returns 422 if neither `query` nor `brand` is provided.
 
 ### `GET /v1/bike/details-cache`
 
-Follow-up details lookup served **purely from the ORM details tables** (`bikes` + `bike_details` + `bike_detail_photos`, read via `app/repository.py`) — makes **no** web/Claude call. Returns 404 if the `(company, model)` pair is not cached or the entry is older than its 30-day TTL. The `company`/`model` match is case-insensitive, and the response echoes the casing you asked with.
+Follow-up details lookup served **purely from the ORM details tables** (`bike` + `bike_detail` + `bike_detail_component`, read via `app/repository.py`) — makes **no** web/Claude call. Returns 404 if the `(company, model)` pair is not stored; there is **no TTL** (a stored row is served whatever its age, TODO-035). The `company`/`model` match is case-insensitive, and the response echoes the casing you asked with.
 
 ```http
 GET http://localhost:8000/v1/bike/details-cache?company=Canyon&model=Grizl%20CF%207%20ESC
 ```
 
-**Response:** identical shape to `POST /v1/bike/details` (`company`, `model`, `description`, `components`, `photos`).
+**Response:** identical shape to `POST /v1/bike/details` (`company`, `model`, `description`, `components` — no `photos`; use `POST /v1/bike/photos`).
 
-**Flow:** none — SQLite read only.
+**Flow:** none — database read only.
 
 ---
 
@@ -409,16 +419,76 @@ Content-Type: application/json
 }
 ```
 
-**Response includes:** `description` (4–5 sentence plain-text overview, written in Polish), `components` (category tree — each element `description` is Polish, while category/subcategory/spec keys, element names and spec values stay English), `photos` (up to 8 manufacturer product image URLs).
+**Response includes:** `description` (4–5 sentence plain-text overview, written in Polish), `components` (category tree — each element `description` is Polish, while category/subcategory/spec keys, element names and spec values stay English). **No `photos`** since TODO-035 — they come from [`POST /v1/bike/photos`](#post-v1bikephotos).
 
-On the happy path the result is also written to the queryable ORM details tables via `repository.save_bike_details` (see [Details storage — normalised ORM tables](#details-storage--normalised-orm-tables)). A cached repeat is served from those tables with **zero outbound calls**; the lookup is case-insensitive and the response echoes the caller's casing.
+On the happy path the result is also written to the queryable ORM details tables via `repository.save_bike_details` (see [Details storage — normalised ORM tables](#details-storage--normalised-orm-tables)). A repeat is served from those tables with **zero outbound calls** and no expiry; the lookup is case-insensitive and the response echoes the caller's casing. It writes no photos and never touches the stored ones.
 
-**Flow (all three run in parallel via `asyncio.gather`):**
+**Flow (both run in parallel via `asyncio.gather`):**
 1. `POST https://api.anthropic.com/v1/messages` × 8 — Claude Haiku with `web_search_20250305` tool, one focused search per component category (sequential): Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories
 2. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool + prompt caching, generates a 4–5 sentence bike overview in Polish
-3. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool finds the official manufacturer product page URL, then Playwright (`PLAYWRIGHT_HEADLESS`; unset = visible browser) scrapes up to 8 product `<img>` URLs from the rendered page
+
+No photo search runs here any more (the bike photo finder moved to the searcher).
 
 **Parsing:** each category response goes through the shared `app/json_extract.py` `extract_json()`, which pulls the first parseable fenced block or balanced `{...}` / `[...]` out of surrounding prose. The model routinely narrates ("I'll search for the Brakes specifications...") before emitting the JSON, so a parser that assumed the whole response was JSON silently dropped whole categories. A category with genuinely no JSON in its response is logged and skipped — never a 502.
+
+---
+
+### `POST /v1/bike/photos`
+
+Return the photos **stored in the database** for a bike (TODO-035) — a pure read of `bike_detail_photos` through `app/photos_repository.py`, ordered by `display_order, id`. **No AI call, no generic cache, no TTL.** The details page calls it when it opens; the rows get there only through `POST /v1/bike/photos/search` below.
+
+```http
+POST http://localhost:8000/v1/bike/photos
+Content-Type: application/json
+
+{
+  "company": "Trek",
+  "model": "Marlin 5"
+}
+```
+
+**Response:** `{ "photos": ["https://...jpg", "https://...jpg"] }` — an unknown bike, a bike with no stored photos or a database error (an unmigrated `bike_detail_photos` included — that one also logs an **ERROR** naming `scripts/migrate_photos_bike_id.py`) is a **200** `{ "photos": [] }`, never an error. The frontend then shows the **Poproś o dane** button in the gallery slot.
+
+- `company` / `model` must be non-empty and at most 255 characters (422).
+- The app never replaces or deletes a photo; a details re-save leaves them alone.
+
+**Flow:** none — no outbound HTTP calls; one DB read of `bike` + `bike_detail_photos`.
+
+**Tests:** `scripts/test_search.py` `case_photos` — a seeded fixture bike with three photo rows inserted out of order and **no** `bike_detail` row → exactly those URLs in `display_order`, no generic-cache row, under 5 s; an unknown bike → a fast empty 200.
+
+---
+
+### `POST /v1/bike/photos/search`
+
+Run the bike photo search **on demand** through the separate searcher service (`searcher/`, TODO-035) and wait for it. Given a bike that already has stored photos, the searcher returns them straight from the database without a search. Otherwise it runs the Claude Code CLI once (subscription OAuth token — no Anthropic API key) with `bike_photos.md` to find the official manufacturer product page, checks that URL is a public http(s) address, opens the page with Playwright once (`domcontentloaded` + 4 s wait) and takes up to 8 product `<img>` URLs (the former backend scraper, same `_IMG_SRC` / `_SKIP` regexes), then stores them in `bike_detail_photos` — **only for a bike that has none, and never replacing anything**. A search that finds nothing writes nothing. Triggered by the frontend's **Poproś o dane** button in the gallery slot (alongside `POST /v1/bike/missing`); also usable from `curl`. Never cached.
+
+```http
+POST http://localhost:8000/v1/bike/photos/search
+Content-Type: application/json
+
+{
+  "company": "Trek",
+  "model": "Marlin 5"
+}
+```
+
+**Response:** `{ "photos": [...] }` — the bike's photos as now stored, in display order (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `photos: []`.
+
+- **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare) — checked **before** any searcher call, so anonymous traffic cannot spend a subscription run.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Photos searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Photos searcher unavailable"` — the exception text stays in the log), or when no search slot is free (`"Photos searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 10) distinct searches across **all four** routes, the searcher answers 503 itself when its own slots are taken, and Cloud Run answers **429** once every `biker-searcher` instance is busy (`--max-instances 10`, `--concurrency 1`) — the 429 is mapped to the same 503 busy; nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **502** when the searcher answers with a non-200/503/429 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body. Unlike the old in-backend finder, a failed CLI run is an error here (the UI button becomes clickable again), not an empty `photos`.
+- `company` / `model` must be non-empty and at most 255 characters (422).
+- **Security:** the page URL comes out of an LLM reading the web while the searcher's browser runs inside our network, so the CLI gets `WebSearch` only (no `WebFetch`), the product URL must be http/https on public addresses only, Playwright's request routing aborts every request to a non-public host (redirects, sub-resources, XHR, JS navigations; service workers blocked), and stored image URLs must be http/https, ≤ 2048 chars, not a local name or private IP literal. Accepted limitation: DNS rebinding.
+- **No rate limit** on this trigger yet: with the limit at 10, anyone can start up to 10 parallel subscription runs for existing bikes, and a bike whose search found nothing can be searched again without limit (the UI disables the button, `curl` does not). The per-IP rate limit ("Step 2" of the deploy) is the planned answer.
+- With 10 slots but 2 browsers per searcher process, a local/compose searcher can make searches queue for a browser and exceed the backend's 600 s timeout (the backend answers 503; the searcher still finishes and stores the photos, so a retry returns them without a second paid run). On Cloud Run (`--concurrency 1`) this does not occur.
+- The searcher's `saved` is the number written by the search; a caller that joined a running search gets the same value although it wrote nothing (the backend drops the field).
+- Known pre-existing issue, out of scope: `save_bike_details` finds the bike by exact brand/model while the photo lookup uses the normalised identity, and duplicate `bike` rows that differ only by casing exist, so photos on the newer duplicate are unreachable through this endpoint.
+- A run took 36 s end to end in the searcher's 2026-09-29 probe (Trek Marlin 4: CLI 18 s, scrape 17 s, 6 photos); the repeat request was answered from the database in 0.5 s.
+
+**Flow:**
+1. `POST {SEARCHER_URL}/v1/search/photos` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), waited for up to `SEARCHER_TIMEOUT`; it reads `bike_detail_photos`, and only if the bike has none runs the `claude` CLI once (`WebSearch` only), opens the manufacturer page with Playwright once and writes the rows. The backend itself makes no Anthropic call and launches no browser for this route.
+
+**Tests:** `scripts/test_search.py` `case_photos_search` — an unknown bike is a **404** before any searcher call. Deliberately no live photo run (every searcher run is a paid subscription search); `searcher/scripts/test_searcher.py` covers the searcher's own route without one.
 
 ---
 
@@ -539,7 +609,7 @@ Content-Type: application/json
 **Response:** the searcher's `{ offers, info }` — the same shape as `POST /v1/bike/allegro` (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `offers: []` (the stored rows are kept).
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/used/search`) — checked **before** any searcher call, so anonymous traffic can neither mint `bike` rows nor spend a subscription run.
-- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Allegro searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Allegro searcher unavailable"` — the exception text stays in the log), or when no search slot is free (`"Allegro searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 2) distinct searches across **all three** sources, the searcher answers 503 itself when its own slots are taken, and Cloud Run answers **429** "Rate exceeded" once every `biker-searcher` instance is busy (`--max-instances 2`, `--concurrency 1`) — the 429 is mapped to the same 503 busy; nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Allegro searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Allegro searcher unavailable"` — the exception text stays in the log), or when no search slot is free (`"Allegro searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 10) distinct searches across **all four** routes, the searcher answers 503 itself when its own slots are taken, and Cloud Run answers **429** "Rate exceeded" once every `biker-searcher` instance is busy (`--max-instances 10`, `--concurrency 1`) — the 429 is mapped to the same 503 busy; nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
 - **502** when the searcher answers with a non-200/503/429 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
 - `company` / `model` must be non-empty and at most 255 characters (422) — they reach the searcher's CLI prompt and its `bike` row.
 - A run takes a minute or two: the 2026-09-26 probes with the CLI-tuned prompt found 3 real offers in 67 s (Kross Level 3.0) and 75 s (Trek Marlin 4). The ~10 s Playwright photo pass those probes still ran returned 0 photos every time (DataDome 403 on the offer pages), which is why it was removed — the route launches no browser now. The SDK-era prompt had needed 286 s (Trek Marlin 5) or given up empty, which is why it was rewritten.
@@ -611,7 +681,7 @@ Content-Type: application/json
 **Response:** the searcher's `{ offers, info }` — the same shape as `POST /v1/bike/used/olx` (the searcher's extra `bike_id` / `saved` fields are dropped). A search that finds nothing is a **200** with `offers: []`.
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/missing`). The searcher itself creates missing bikes for direct `curl` calls, but the backend never lets anonymous web traffic mint `bike` rows — they would surface in the DB-first search — nor spend a subscription run on them.
-- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"OLX searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"OLX searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"OLX searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 2 since TODO-033, never more than the searcher's `SEARCHER_MAX_CONCURRENT`) distinct searches across all three sources and the searcher answers 503 itself when its slots are taken (Cloud Run's 429 at `--max-instances` counts as busy too) — nothing queues, because a queued search would outlive the timeout and end in a second paid run. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"OLX searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"OLX searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"OLX searcher is busy — try again in a moment"`): the backend admits `SEARCHER_MAX_INFLIGHT` (default 10, never more than the searcher's `SEARCHER_MAX_CONCURRENT`) distinct searches across all four routes and the searcher answers 503 itself when its slots are taken (Cloud Run's 429 at `--max-instances` counts as busy too) — nothing queues, because a queued search would outlive the timeout and end in a second paid run. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
 - **502** when the searcher answers with a non-200/503/429 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
 - `company` / `model` must be non-empty and at most 255 characters (422).
 
@@ -721,7 +791,7 @@ Content-Type: application/json
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/used/search`) — checked **before** any searcher call, so anonymous traffic can neither mint `bike` rows nor spend a subscription run.
 - **200** `{ "offers": [], "info": "Decathlon nie sprzedaje marki Trek — w sklepie są tylko marki własne (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt)." }` **immediately, with no searcher call**, when `company` is not a Decathlon house brand (`app/decathlon_brands.py`: `rockrider`, `btwin`, `triban`, `vanrysel`, `elops`, `riverside`, `stilus`, `tilt`, `decathlon`, compared lower-cased with apostrophes, hyphens, dots and whitespace removed, so `B'Twin` / `b-twin` / `VAN RYSEL` all match). Decathlon sells only its own brands, so this is what closes `TODO_ISSUE_010` (Decathlon offers always empty for foreign brands).
-- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Decathlon searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Decathlon searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"Decathlon searcher is busy — try again in a moment"`): the `SEARCHER_MAX_INFLIGHT` slots (default 2 since TODO-033) are **shared with the OLX and Allegro searches** — they mirror the searcher's capacity, and the "Nowe" card fires this search together with `/v1/bike/allegro/search` — and the searcher answers 503 itself when its slots are taken (Cloud Run's 429 at `--max-instances` counts as busy too); nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Decathlon searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Decathlon searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"Decathlon searcher is busy — try again in a moment"`): the `SEARCHER_MAX_INFLIGHT` slots (default 10) are **shared with the OLX, Allegro and photo searches** — they mirror the searcher's capacity, and the "Nowe" card fires this search together with `/v1/bike/allegro/search` — and the searcher answers 503 itself when its slots are taken (Cloud Run's 429 at `--max-instances` counts as busy too); nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
 - **502** when the searcher answers with a non-200/503/429 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
 - `company` / `model` must be non-empty and at most 255 characters (422) — they reach the searcher's CLI prompt and its `bike` row.
 

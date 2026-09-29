@@ -5,7 +5,7 @@ import pytest
 
 import copy_to_db as ctd
 from bike_store import DETAILS_ENDPOINT, tx
-from app import cache
+from app import cache, photos_repository
 from app.schemas import BikeDetailsResponse
 from db import DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, SOURCE, BikeDiscovery, ensure_table, models, repository, \
     session, utcnow
@@ -29,18 +29,20 @@ def use(url):
     models.configure_db(url)
 
 
-def details(brand, model, photo="https://src/a.jpg"):
-    return StubParsed(brand, model).to_details_response(brand, model).model_copy(update={"photos": [photo]})
-
-
 def add_bike(brand, model, photo="https://src/a.jpg", with_details=True):
     if with_details:
-        repository.save_bike_details(brand, model, details(brand, model, photo))
+        repository.save_bike_details(brand, model, StubParsed(brand, model).to_details_response(brand, model))
     else:
         with tx() as s:
             s.add(models.Bike(brand=brand, model=model))
+    if photo:
+        photos_repository.save_bike_photos(brand, model, [photo])
     with session() as s:
         return s.query(models.Bike).filter_by(brand=brand, model=model).one().id
+
+
+def photos(brand, model):
+    return photos_repository.get_bike_photos(brand, model).photos
 
 
 def add_row(pid, status=PENDING, bike_id=None, **kw):
@@ -89,7 +91,8 @@ def test_full_copy(dbs):
     assert (r["pd2"].status, r["pd2"].bike_id, r["pd2"].last_error) == (SKIPPED, None, "HTTP 404: product gone")
     assert (r["pd3"].status, r["pd4"].status, r["pd4"].locked_at, r["pd4"].attempts) == (PENDING, PENDING, None, 0)
     assert (r["pd5"].status, r["pd5"].attempts, r["pd5"].last_error) == (FAILED, 2, "ParseError: x")
-    assert repository.get_bike_details("Romet", "Wagant 3").photos == ["https://src/a.jpg"]
+    assert repository.get_bike_details("Romet", "Wagant 3") is not None
+    assert photos("Romet", "Wagant 3") == ["https://src/a.jpg"] and counts["photos written"] == 1
     hit = cache.get_cached(DETAILS_ENDPOINT, {"company": "Romet", "model": "Wagant 3"}, BikeDetailsResponse)
     assert hit is not None and hit.company == "Romet"
 
@@ -101,13 +104,13 @@ def test_second_run_changes_nothing(dbs):
     before = (bikes(), {k: (v.status, v.bike_id, v.updated_at) for k, v in rows().items()})
     counts = copy(dbs)
     assert (counts["rows inserted"], counts["rows updated"], counts["rows unchanged"]) == (0, 0, 5)
-    assert (counts["bikes written"], counts["bikes kept"], counts["cache written"], counts["cache present"]) == \
-        (0, 1, 0, 1)
+    assert (counts["bikes written"], counts["bikes kept"], counts["cache written"], counts["cache present"],
+            counts["photos written"], counts["photos present"]) == (0, 1, 0, 1, 0, 1)
     use(dbs["tgt"])
     assert (bikes(), {k: (v.status, v.bike_id, v.updated_at) for k, v in rows().items()}) == before
 
 
-def test_target_fresh_details_under_other_casing_are_kept(dbs):
+def test_target_details_and_photos_under_other_casing_are_kept(dbs):
     seed_source(dbs)
     use(dbs["tgt"])
     add_bike("ROMET", "WAGANT 3", photo="https://tgt/own.jpg")
@@ -115,7 +118,7 @@ def test_target_fresh_details_under_other_casing_are_kept(dbs):
     assert (counts["bikes kept"], counts["bikes written"]) == (1, 0)
     use(dbs["tgt"])
     assert bikes() == [("ROMET", "WAGANT 3")]
-    assert repository.get_bike_details("ROMET", "WAGANT 3").photos == ["https://tgt/own.jpg"]
+    assert photos("ROMET", "WAGANT 3") == ["https://tgt/own.jpg"] and counts["photos present"] == 1
     r = rows()["pd1"]
     assert (r.status, r.bike_id, r.company, r.model) == (DONE, 1, "ROMET", "WAGANT 3")
 
@@ -123,13 +126,34 @@ def test_target_fresh_details_under_other_casing_are_kept(dbs):
 def test_target_bike_without_details_filled_under_target_casing(dbs):
     seed_source(dbs)
     use(dbs["tgt"])
-    add_bike("romet", "wagant 3", with_details=False)
+    add_bike("romet", "wagant 3", photo=None, with_details=False)
     counts = copy(dbs)
     assert counts["bikes written"] == 1
     use(dbs["tgt"])
     assert bikes() == [("romet", "wagant 3")]
     got = repository.get_bike_details("romet", "wagant 3")
-    assert (got.company, got.model, got.photos) == ("romet", "wagant 3", ["https://src/a.jpg"])
+    assert (got.company, got.model) == ("romet", "wagant 3")
+    assert photos("romet", "wagant 3") == ["https://src/a.jpg"]
+
+
+def test_target_details_without_photos_get_the_source_photos(dbs):
+    seed_source(dbs)
+    use(dbs["tgt"])
+    add_bike("Romet", "Wagant 3", photo=None)
+    counts = copy(dbs)
+    assert (counts["bikes kept"], counts["photos written"]) == (1, 1)
+    use(dbs["tgt"])
+    assert photos("Romet", "Wagant 3") == ["https://src/a.jpg"]
+
+
+def test_target_photos_without_details_are_kept(dbs):
+    seed_source(dbs)
+    use(dbs["tgt"])
+    add_bike("Romet", "Wagant 3", photo="https://searcher/1.jpg", with_details=False)
+    counts = copy(dbs)
+    assert (counts["bikes written"], counts["photos present"]) == (1, 1)
+    use(dbs["tgt"])
+    assert photos("Romet", "Wagant 3") == ["https://searcher/1.jpg"]
 
 
 def test_target_done_row_not_downgraded_pending_promoted(dbs):
@@ -159,11 +183,18 @@ def test_failed_bike_write_copies_row_as_pending(dbs, monkeypatch):
     assert (r.status, r.bike_id, r.attempts) == (PENDING, None, 0)
 
 
-def test_source_details_stale_row_copied_as_pending(dbs):
+def test_old_source_details_are_copied_no_ttl(dbs):
     seed_source(dbs)
     use(dbs["src"])
     with tx() as s:
-        s.query(models.BikeDetails).update({models.BikeDetails.updated_at: utcnow() - timedelta(days=31)})
+        s.query(models.BikeDetails).update({models.BikeDetails.updated_at: utcnow() - timedelta(days=400)})
+    assert copy(dbs)["bikes written"] == 1
+
+
+def test_source_bike_without_details_row_copied_as_pending(dbs):
+    use(dbs["src"])
+    bike_id = add_bike("Romet", "Wagant 3", with_details=False)
+    add_row("pd1", DONE, bike_id)
     counts = copy(dbs)
     assert counts["bikes written"] == 0
     use(dbs["tgt"])
@@ -173,9 +204,12 @@ def test_source_details_stale_row_copied_as_pending(dbs):
 def test_dry_run_writes_nothing(dbs):
     seed_source(dbs)
     counts = copy(dbs, dry_run=True)
-    assert (counts["rows inserted"], counts["bikes written"], counts["cache written"]) == (5, 1, 1)
+    assert (counts["rows inserted"], counts["bikes written"], counts["cache written"], counts["photos written"]) == \
+        (5, 1, 1, 1)
     use(dbs["tgt"])
     assert rows() == {} and bikes() == []
+    with session() as s:
+        assert s.query(models.BikeDetailPhoto).count() == 0
     assert cache.get_cached(DETAILS_ENDPOINT, {"company": "Romet", "model": "Wagant 3"}, BikeDetailsResponse) is None
 
 

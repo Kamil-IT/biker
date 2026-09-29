@@ -10,12 +10,12 @@ Setup / run:
     python scripts/test_details.py                # terminal 2
 
 What this validates (shape, not exact content — real web data varies):
-  * Response conforms to BikeDetailsResponse (company, model, description, components[], photos[]).
+  * Response conforms to BikeDetailsResponse (company, model, description, components[]).
   * Component categories are a subset of the 8 expected (Frame .. Accessories), no duplicates,
     every returned category having a non-empty name and well-formed subcategories/elements/specs.
   * No parsing artifacts: no ``` code fences, no leaked raw-JSON wrappers ({...}/[...]) in any text field.
   * Description is a plain string (the BikeDescription.text field), free of fences/JSON wrappers.
-  * Photos are valid http(s) URLs.
+  * No 'photos' key — photos moved to POST /v1/bike/photos (DB) and /v1/bike/photos/search (searcher).
   * The structurally universal categories (Frame, Drivetrain, Wheels, Brakes) are always
     present — every real bike has them, so a missing one is a pipeline defect, not a data gap.
   * Graceful degradation: an occasionally-empty optional category is fine (skipped, not 502).
@@ -86,7 +86,7 @@ def validate_bike(bike: dict) -> None:
     _assert(data.get("company") == bike["company"], "company mismatch")
     _assert(data.get("model") == bike["model"], "model mismatch")
     _assert(isinstance(data.get("components"), list), "'components' must be a list")
-    _assert(isinstance(data.get("photos"), list), "'photos' must be a list")
+    _assert("photos" not in data, "'photos' must not be in details any more — see /v1/bike/photos")
     _assert("description" in data, "'description' field missing")
 
     # --- description is a plain string (BikeDescription.text) --------------
@@ -138,11 +138,7 @@ def validate_bike(bike: dict) -> None:
                     _no_artifacts(str(spec.get("key", "")), f"[{cname}/{sname}/{ename}] spec.key")
                     _no_artifacts(str(spec.get("value", "")), f"[{cname}/{sname}/{ename}] spec.value")
 
-    # --- photos are valid URLs -------------------------------------------
-    for p in data["photos"]:
-        _assert(isinstance(p, str) and p.startswith(("http://", "https://")), f"invalid photo URL: {p!r}")
-
-    print(f"  OK — {len(names)} categories, {len(data['photos'])} photos, no artifacts")
+    print(f"  OK — {len(names)} categories, no artifacts")
 
 
 def main() -> int:

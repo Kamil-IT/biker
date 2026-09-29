@@ -1,4 +1,4 @@
-# Full stack on one machine: backend + frontend + OLX/Decathlon/Allegro searcher, database = Cloud SQL on GCP (TODO-029/031/032/033).
+# Full stack on one machine: backend + frontend + OLX/Decathlon/Allegro/photos searcher, database = Cloud SQL on GCP (TODO-029/031/032/033).
 #   docker compose up --build   →   http://localhost:8080
 # Needs (all gitignored / outside the repo):
 #   backend/.env                    ANTHROPIC_API_KEY, SEARCHER_API_KEY
@@ -44,9 +44,10 @@ services:
       - "8000:8000"
     shm_size: "1gb"   # Chromium crashes with Docker's default 64 MB /dev/shm
 
-  # On-demand OLX / Decathlon / Allegro searcher (TODO-031/032/033): three routes, claude CLI + Playwright photos for
-  # OLX only (none for Decathlon or Allegro — allegro.pl 403s every automated fetch, so its scrape was dropped),
-  # writes bike_offer into the same database; two searches at once by default.
+  # On-demand OLX / Decathlon / Allegro / photos searcher (TODO-031/032/033/035): four routes, claude CLI + Playwright for
+  # OLX listing photos and bike photos (none for Decathlon or Allegro — allegro.pl 403s every automated fetch, so its scrape was dropped),
+  # writes bike_offer / bike_detail_photos into the same database; ten searches at once by default (SEARCHER_MAX_CONCURRENT,
+  # browsers capped at 2 per process — RAM is the limit here, lower it in searcher/.env if needed).
   searcher:
     build: ./searcher
     env_file: searcher/.env

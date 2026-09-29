@@ -134,7 +134,10 @@ def _count_per_bike(session, child, fk_column) -> dict[int, int]:
 
 def load_candidates(session) -> list[Candidate]:
     """Every `bike` row with its counts, rating and description — a handful of aggregate queries."""
-    photos = _count_per_bike(session, BikeDetailPhoto, BikeDetailPhoto.bike_detail_id)
+    # Photos are keyed on the bike itself (migrate_photos_bike_id.py), not on its details row.
+    photos = dict(session.execute(
+        select(BikeDetailPhoto.bike_id, func.count(BikeDetailPhoto.id)).group_by(BikeDetailPhoto.bike_id)
+    ).all())
     components = _count_per_bike(session, BikeDetailComponent, BikeDetailComponent.bike_detail_id)
     offers = dict(session.execute(
         select(BikeOffer.bike_id, func.count(BikeOffer.id)).group_by(BikeOffer.bike_id)

@@ -26,7 +26,7 @@ from db import (  # noqa: E402
 )
 from bike_store import (  # noqa: E402,F401  (re-exported for callers and tests)
     CACHE_FAILED, CACHE_MISSING, CACHE_PRESENT, CACHE_WRITTEN, DETAILS_ENDPOINT, KEPT,
-    cache_details, store_details,
+    cache_details, store_details, store_photos,
 )
 from bike_store import aware as _aware, tx as _tx  # noqa: E402
 from scrape_rowery import UA  # noqa: E402
@@ -225,12 +225,16 @@ def process_row(row_id: int, fetch: Fetch = http_fetch, parse=None, claimed_at: 
         parsed = parse(html, url)
         outcome, bike_id, company, model, response = store_details(
             parsed.brand, parsed.model, parsed.to_details_response)
-        if outcome == KEPT:  # fresh details (AI- or earlier-parsed) win; nothing overwritten
-            logger.info("skipped | %s | fresh details for bike %s %r %r", pid, bike_id, company, model)
+        # Photos are independent of details: stored whenever the bike has none, never replaced.
+        photos = store_photos(bike_id, company, model, parsed.photos)
+        if outcome == KEPT:  # existing details (AI- or earlier-parsed) win; nothing overwritten
+            logger.info("skipped | %s | details exist for bike %s %r %r | photos %s",
+                        pid, bike_id, company, model, photos)
             return finish(SKIPPED, bike_id=bike_id, company=company, model=model,
                           last_error=None, next_attempt_at=None)
         cache_outcome = cache_details(company, model, response)
-        logger.info("done | %s | bike %s %r %r | cache %s", pid, bike_id, company, model, cache_outcome)
+        logger.info("done | %s | bike %s %r %r | cache %s | photos %s",
+                    pid, bike_id, company, model, cache_outcome, photos)
         return finish(DONE, bike_id=bike_id, company=company, model=model,
                       last_error=None, next_attempt_at=None)
     except KeyboardInterrupt:
@@ -245,7 +249,7 @@ def process_row(row_id: int, fetch: Fetch = http_fetch, parse=None, claimed_at: 
 def sync_cache(source: Optional[str], dry_run: bool = False) -> dict[str, int]:
     """--sync-cache: put the stored details of every done row's bike into the generic details cache.
 
-    No fetching, no claiming. Missing = the bike has no fresh details (> TTL or gone).
+    No fetching, no claiming. Missing = the bike has no details row (any more).
     A dry run counts what would be written and writes nothing.
     """
     counts = {CACHE_WRITTEN: 0, CACHE_PRESENT: 0, CACHE_MISSING: 0, CACHE_FAILED: 0}

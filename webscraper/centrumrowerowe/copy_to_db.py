@@ -1,8 +1,9 @@
 """Copy what bike discovery stored in one database into another (TODO-036) — no page is re-fetched.
 
-Phase 1 reads the source (bike_discovery rows + the details of each done/skipped row's bike) into
-memory and closes it; phase 2 writes the target: bike details through the same verified save as the
-processor, the /v1/bike/details cache, then every queue row upserted by (source, source_product_id).
+Phase 1 reads the source (bike_discovery rows + the details and photos of each done/skipped row's
+bike) into memory and closes it; phase 2 writes the target: bike details through the same verified
+save as the processor, the bike's photos (only when the target bike has none), the /v1/bike/details
+cache, then every queue row upserted by (source, source_product_id).
 
     python copy_to_db.py --target-url "postgresql+psycopg://user@127.0.0.1:6543/biker" --allow-remote
     python copy_to_db.py --target-url ... --dry-run      # report what would change, write nothing
@@ -20,8 +21,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import db  # noqa: E402  (puts backend/ on sys.path, loads backend/.env)
 from db import DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, BikeDiscovery, models, repository, session  # noqa: E402
 from bike_store import (  # noqa: E402
-    CACHE_FAILED, CACHE_PRESENT, CACHE_WRITTEN, KEPT, WRITTEN, bike_state, cache_details, store_details, tx,
+    CACHE_FAILED, CACHE_PRESENT, CACHE_WRITTEN, KEPT, PHOTOS_FAILED, PHOTOS_NONE, PHOTOS_PRESENT, PHOTOS_WRITTEN,
+    WRITTEN, bike_state, cache_details, store_details, store_photos, tx,
 )
+from app import photos_repository  # noqa: E402
 from app.schemas import BikeDetailsResponse  # noqa: E402
 from sqlalchemy import inspect  # noqa: E402
 from sqlalchemy.engine import make_url  # noqa: E402
@@ -41,6 +44,7 @@ class SourceBike:
     brand: str
     model: str
     details: Optional[BikeDetailsResponse]
+    photos: list[str] = field(default_factory=list)  # bike_detail_photos, display order
 
 
 @dataclass
@@ -82,8 +86,9 @@ def read_source(source_url: str, shop: Optional[str] = None, limit: Optional[int
             bike_ids = {r["src_bike_id"] for r in snap.rows if r["src_bike_id"] is not None and r["status"] in FINAL}
             for bike in s.query(models.Bike).filter(models.Bike.id.in_(bike_ids)) if bike_ids else []:
                 snap.bikes[bike.id] = SourceBike(bike.brand, bike.model, None)
-        for bike in snap.bikes.values():  # None when the source's details are missing or stale
+        for bike in snap.bikes.values():  # details None when the source bike has no details row
             bike.details = repository.get_bike_details(bike.brand, bike.model)
+            bike.photos = photos_repository.get_bike_photos(bike.brand, bike.model).photos
         return snap
     finally:
         models.dispose_engine()
@@ -113,21 +118,25 @@ class TargetIndex:
 
 
 def copy_bike(bike: SourceBike, index: TargetIndex, counts: dict, dry_run: bool) -> Optional[tuple[int, str, str]]:
-    """Write one bike's details to the target; (target bike id, stored brand, stored model) or None.
+    """Write one bike's details and photos to the target; (target bike id, stored brand, stored model) or None.
 
-    Fresh details already in the target are kept (only linked). In a dry run the id is -1 for a
-    bike that would be created. Never raises: a failure is logged and counted.
+    Details already in the target are kept (only linked); photos go in only when the target bike
+    has none. In a dry run the id is -1 for a bike that would be created. Never raises: a failure
+    is logged and counted.
     """
     try:
         if dry_run:
             bike_id = index.find(bike.brand, bike.model)
-            brand, model, fresh = bike_state(bike_id) if bike_id is not None else (bike.brand, bike.model, False)
-            counts["bikes " + (KEPT if fresh else WRITTEN)] += 1
-            if not fresh and bike.details is None:
+            brand, model, has = bike_state(bike_id) if bike_id is not None else (bike.brand, bike.model, False)
+            counts["bikes " + (KEPT if has else WRITTEN)] += 1
+            if not has and bike.details is None:
                 return None
             counts["cache " + cache_details(brand, model, bike.details, write=False)] += 1
+            photos = (store_photos(bike_id, brand, model, bike.photos, write=False) if bike_id is not None
+                      else PHOTOS_WRITTEN if bike.photos else PHOTOS_NONE)
+            counts["photos " + photos] += 1
             return (bike_id if bike_id is not None else -1), brand, model
-        if bike.details is None:  # nothing to write; link only when the target already has fresh details
+        if bike.details is None:  # nothing to write; link only when the target already has details
             bike_id = index.find(bike.brand, bike.model)
             if bike_id is None or not bike_state(bike_id)[2]:
                 return None
@@ -139,6 +148,7 @@ def copy_bike(bike: SourceBike, index: TargetIndex, counts: dict, dry_run: bool)
                 find_id=index.find)
             index.add(brand, model, bike_id)
         counts["bikes " + outcome] += 1
+        counts["photos " + store_photos(bike_id, brand, model, bike.photos)] += 1
         if response is None:  # kept: cache the target's own details (first write wins anyway)
             response = repository.get_bike_details(brand, model)
         if response is not None:
@@ -191,7 +201,9 @@ def write_target(target_url: str, snap: Snapshot, dry_run: bool = False) -> dict
     """Phase 2: bikes first (commit per bike), then every queue row (commit per row)."""
     counts = {k: 0 for k in ("rows inserted", "rows updated", "rows unchanged", "rows failed",
                              "bikes " + WRITTEN, "bikes " + KEPT, "bikes failed",
-                             "cache " + CACHE_WRITTEN, "cache " + CACHE_PRESENT, "cache " + CACHE_FAILED)}
+                             "cache " + CACHE_WRITTEN, "cache " + CACHE_PRESENT, "cache " + CACHE_FAILED,
+                             "photos " + PHOTOS_WRITTEN, "photos " + PHOTOS_PRESENT, "photos " + PHOTOS_NONE,
+                             "photos " + PHOTOS_FAILED)}
     models.configure_db(target_url)
     try:
         has_table = inspect(models.get_engine()).has_table(BikeDiscovery.__tablename__)
@@ -238,7 +250,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     snap = read_source(source_url, args.source, args.limit)
     print(f"read {len(snap.rows)} queue rows, {len(snap.bikes)} bikes "
-          f"({sum(b.details is not None for b in snap.bikes.values())} with fresh details)")
+          f"({sum(b.details is not None for b in snap.bikes.values())} with details, "
+          f"{sum(bool(b.photos) for b in snap.bikes.values())} with photos)")
     counts = write_target(args.target_url, snap, dry_run=args.dry_run)
     prefix = "dry run, would be: " if args.dry_run else ""
     print(prefix + " ".join(f"{k.replace(' ', '_')}={v}" for k, v in counts.items()))

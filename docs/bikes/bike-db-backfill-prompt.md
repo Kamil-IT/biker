@@ -305,9 +305,9 @@ def store_spool(spool_path: str) -> dict:
                 ],
             ) for c in doc["components"]
         ],
-        photos=doc.get("photos", []),
     )
     save_bike_details(brand, model, resp)
+    save_bike_photos(brand, model, doc.get("photos", []))  # app.photos_repository — insert-only, only for a bike with no photos
 
     # save_bike_details swallows its own exceptions (logs a warning, rolls back),
     # so a successful return proves nothing — read it back instead.
@@ -321,7 +321,8 @@ def store_spool(spool_path: str) -> dict:
             "bike_detail_component": sum(len(e.specs) or 1
                                          for c in (check.components if ok else [])
                                          for s in c.subcategories for e in s.elements),
-            "bike_detail_photos": len(check.photos) if ok else 0,
+            # photos are not part of BikeDetailsResponse any more (TODO-035): count them via photos_repository
+            "bike_detail_photos": len(get_bike_photos(brand, model).photos) if ok else 0,
         },
         "error": None if ok else "read-back failed after save_bike_details",
     }

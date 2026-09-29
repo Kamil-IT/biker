@@ -274,7 +274,8 @@ def case_details(page, rep: Report, top_bike, args) -> None:
              f"UI categories {ui_cats} all present in DB (missing={missing})")
 
     n_photos = scalar(
-        "SELECT COUNT(*) FROM bike_detail_photos WHERE bike_detail_id=?", (bdid,)) or 0
+        "SELECT COUNT(*) FROM bike_detail_photos WHERE bike_id="
+        "(SELECT bike_id FROM bike_detail WHERE id=?)", (bdid,)) or 0
     rep.soft("E3.photos", True, f"bike_detail_photos rows = {n_photos}")
 
     # E4  round-trip fidelity: rendered spec rows == non-NULL spec rows in DB.
@@ -390,8 +391,7 @@ def case_cascade(rep: Report, top_bike, args) -> None:
         "bike_detail": "SELECT COUNT(*) FROM bike_detail WHERE bike_id=?",
         "bike_detail_component": "SELECT COUNT(*) FROM bike_detail_component WHERE bike_detail_id "
                                  "IN (SELECT id FROM bike_detail WHERE bike_id=?)",
-        "bike_detail_photos": "SELECT COUNT(*) FROM bike_detail_photos WHERE bike_detail_id "
-                              "IN (SELECT id FROM bike_detail WHERE bike_id=?)",
+        "bike_detail_photos": "SELECT COUNT(*) FROM bike_detail_photos WHERE bike_id=?",
         "bike_offer": "SELECT COUNT(*) FROM bike_offer WHERE bike_id=?",
         "search_bike_rating_cache": "SELECT COUNT(*) FROM search_bike_rating_cache WHERE bike_id=?",
     }

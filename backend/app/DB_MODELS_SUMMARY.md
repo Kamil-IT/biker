@@ -53,13 +53,13 @@ Defines 8 tables with relationships and constraints:
 - Stores description as JSON (BikeDescription model)
 - Components are normalised into `bike_details_component` →
   `bike_details_component_element` → `bike_details_component_spec`, not a JSON blob
-- One-to-many: photos (ordered)
-- TTL: 30 days (module constant `repository.TTL_DETAILS`, not stored per record)
+- No TTL: stored details are returned whatever their age (`repository.TTL_DETAILS` was removed in TODO-035)
+- Photos are no longer under details — see `BikeDetailPhoto` (keyed on `bike_id`)
 - Timestamps: created_at, updated_at
 
-**`BikeDetailPhoto`** — Photo URL for bike specs
-- Belongs to BikeDetails
-- Ordered by display_order field
+**`BikeDetailPhoto`** — Photo URL of a bike (table `bike_detail_photos`)
+- Belongs to Bike (`bike_id`, `ON DELETE CASCADE`), not to BikeDetails (TODO-035; migration `scripts/migrate_photos_bike_id.py`)
+- Ordered by display_order field; written only by the searcher's photo search, never replaced
 
 **`BikeOffer`** — Marketplace listing (new/used)
 - Belongs to Bike
@@ -127,12 +127,9 @@ Complete guide covering:
 - Nullable `city` field in BikeOffer
 - Used listings from OLX include city; new from Allegro don't
 
-### 5. **TTL as Module Constant**
-- `repository.TTL_DETAILS` applies uniformly to every bike_details row
-- Compared against `updated_at` at query time (not automatic cleanup)
-- Reason: Lazy deletion avoids frequent DB maintenance; no caller ever varied
-  the TTL per record, so storing it per row only risked stale rows outliving a
-  changed constant
+### 5. **No TTL for details (TODO-035)**
+- The former module constant `repository.TTL_DETAILS` (30 days) was removed: stored details are returned whatever their age
+- Search results still expire after 24 h (`store.SEARCH_TTL_SECONDS`)
 
 ### 6. **Foreign Key Cascades**
 - Delete a Bike → auto-deletes its results, details, offers

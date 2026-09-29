@@ -32,7 +32,10 @@ interface BikeDetailsViewProps {
   bike: Bike
   categories: BikeCategory[] | null
   description: BikeDescription | null
+  // Stored photos from POST /v1/bike/photos — a DB read of their own, independent of
+  // the details request.
   photos: string[]
+  photosState: 'loading' | 'loaded' | 'error'
   state: 'loading' | 'loaded' | 'error'
   error: string | null
   review: BikeReviewResponse | null
@@ -51,6 +54,8 @@ interface BikeDetailsViewProps {
   // On-demand Decathlon + Allegro searches (run in parallel) behind the New card's
   // "Request data" button (TODO-032 / TODO-033).
   onSearchNew: () => Promise<void>
+  // On-demand photo search behind the gallery's "Request data" button.
+  onSearchPhotos: () => Promise<void>
 }
 
 export default function BikeDetailsView({
@@ -58,6 +63,7 @@ export default function BikeDetailsView({
   categories,
   description,
   photos,
+  photosState,
   state,
   error,
   review,
@@ -73,6 +79,7 @@ export default function BikeDetailsView({
   onEquipmentSelect,
   onSearchUsed,
   onSearchNew,
+  onSearchPhotos,
 }: BikeDetailsViewProps) {
   const { brand, model, accessories, match_score } = bike
   const scoreDisplay = match_score === 10 ? '10' : match_score.toFixed(1)
@@ -84,6 +91,7 @@ export default function BikeDetailsView({
   // otherwise a "Request data" button (also after an empty or failed response).
   const detailsGrace = useLoadingGrace(state === 'loading')
   const reviewGrace = useLoadingGrace(reviewState === 'loading')
+  const photosGrace = useLoadingGrace(photosState === 'loading')
   const hasPhotos = photos.length > 0
   const hasDescription = !!description && (
     !!description.text?.trim() || description.segments.some(seg => seg.text.trim())
@@ -140,10 +148,18 @@ export default function BikeDetailsView({
         {/* Photo gallery */}
         {hasPhotos ? (
           <PhotoGallery photos={photos} />
-        ) : detailsGrace ? (
+        ) : photosGrace ? (
           <div className="mt-4 w-full aspect-[16/9] shimmer rounded-xl" aria-hidden="true" />
         ) : (
-          <RequestDataButton title="Zdjęcia" company={brand} model={model} missingType={MissingType.Photos} />
+          <RequestDataButton
+            title="Zdjęcia"
+            company={brand}
+            model={model}
+            missingType={MissingType.Photos}
+            onRequested={onSearchPhotos}
+            pendingLabel="Szukam zdjęć…"
+            emptyLabel="Nie znaleziono zdjęć"
+          />
         )}
 
         {/* Accessories */}

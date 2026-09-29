@@ -334,7 +334,7 @@ def test_to_details_response_is_the_backend_schema():
     resp = p.to_details_response("FOCUS", "Whistler 3.6")
     assert isinstance(resp, BikeDetailsResponse)
     assert (resp.company, resp.model) == ("FOCUS", "Whistler 3.6")
-    assert resp.photos == p.photos
+    assert "photos" not in resp.model_dump()  # photos travel separately (photos_repository)
     assert BikeDetailsResponse.model_validate_json(resp.model_dump_json()) == resp
 
 

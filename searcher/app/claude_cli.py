@@ -93,9 +93,11 @@ def cli_version() -> str | None:
     return proc.stdout.strip() or None
 
 
-def run_structured(system_prompt: str, user_message: str, schema: dict) -> dict:
+def run_structured(system_prompt: str, user_message: str, schema: dict, tools: str = TOOLS) -> dict:
     """Run one `claude -p` turn and return its schema-validated `structured_output`.
 
+    `tools` is the comma-separated tool list the CLI gets (default
+    WebSearch,WebFetch; the photo search passes WebSearch only).
     Blocking (call it via asyncio.to_thread). The user text is ONE argv
     element — never a shell string. Raises ClaudeCliError with a sanitised
     summary on a missing binary, non-zero exit, timeout, unparseable output
@@ -112,8 +114,8 @@ def run_structured(system_prompt: str, user_message: str, schema: dict) -> dict:
         "--system-prompt", system_prompt,
         "--output-format", "json",
         "--json-schema", json.dumps(schema, separators=(",", ":")),
-        "--tools", TOOLS,
-        "--allowedTools", TOOLS,
+        "--tools", tools,
+        "--allowedTools", tools,
         "--permission-prompts", "none",
         "--strict-mcp-config",
         "--setting-sources", "",
