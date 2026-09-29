@@ -15,6 +15,7 @@ from .schemas import (  # noqa: E402
     BikeReviewRequest, BikeReviewResponse,
     BikeOfferRequest, BikeOfferResponse,
     UsedBikeRequest, UsedBikeResponse,
+    BikePhotosRequest, BikePhotosResponse,
     EquipmentDetailsRequest, EquipmentDetailsResponse,
     EquipmentReviewRequest, EquipmentReviewResponse,
     ParseRequest, ParseResponse,
@@ -24,7 +25,6 @@ from .schemas import (  # noqa: E402
 from .bike_finder import find_bikes  # noqa: E402
 from .bike_details_finder import find_bike_details  # noqa: E402
 from .bike_description_finder import find_bike_description  # noqa: E402
-from .bike_photos_finder import find_bike_photos  # noqa: E402
 from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
 from .equipment_details_finder import find_equipment_details  # noqa: E402
@@ -45,11 +45,12 @@ from .offers_repository import (  # noqa: E402
     get_used_offers, get_decathlon_offers, get_allegro_offers, bike_exists,
 )
 from .popular_repository import get_popular_bikes  # noqa: E402
-# The OLX used-bike search (TODO-031), the Decathlon search (TODO-032) and the
-# Allegro search (TODO-033) live in the separate searcher service; the backend
-# reads bike_offer and proxies the on-demand searches to it.
+from .photos_repository import get_bike_photos  # noqa: E402
+# The OLX used-bike search (TODO-031), the Decathlon search (TODO-032), the
+# Allegro search (TODO-033) and the bike photo search live in the separate
+# searcher service; the backend reads the DB and proxies the on-demand searches to it.
 from .searcher_client import (  # noqa: E402
-    search_olx, search_decathlon, search_allegro,
+    search_olx, search_decathlon, search_allegro, search_photos,
     SearcherNotConfigured, SearcherUnavailable, SearcherBusy, SearcherFailed,
 )
 from .decathlon_brands import is_decathlon_brand, not_sold_info  # noqa: E402
@@ -165,16 +166,16 @@ async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
         return cached
 
     t_start = time.perf_counter()
-    components, description, photos = await asyncio.gather(
+    # Photos are not part of details any more: /v1/bike/photos reads them from
+    # the DB and /v1/bike/photos/search fetches them through the searcher.
+    components, description = await asyncio.gather(
         find_bike_details(req.company, req.model),
         find_bike_description(req.company, req.model),
-        find_bike_photos(req.company, req.model),
     )
     elapsed = time.perf_counter() - t_start
     logger.info(
-        "details complete | categories=%d photos=%d elapsed=%.2fs",
+        "details complete | categories=%d elapsed=%.2fs",
         len(components),
-        len(photos),
         elapsed,
     )
     response = BikeDetailsResponse(
@@ -182,7 +183,6 @@ async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
         model=req.model,
         description=description,
         components=components,
-        photos=photos,
     )
     set_cached("/v1/bike/details", _fields, response)
     save_bike_details(req.company, req.model, response)
@@ -205,6 +205,59 @@ async def bike_popular() -> PopularBikesResponse:
     """Curated home-page bikes from bike_popular (TODO-034) — a pure DB read: no AI call, no generic cache."""
     logger.info("popular bikes request")
     return get_popular_bikes()
+
+
+@app.post("/v1/bike/photos", response_model=BikePhotosResponse)
+async def bike_photos(req: BikePhotosRequest) -> BikePhotosResponse:
+    """Stored photos for the bike — a pure DB read.
+
+    No AI call, no generic cache, no TTL: bike_detail_photos is filled only by
+    the searcher service, triggered through /v1/bike/photos/search. Unknown
+    bike, nothing stored or a DB error → 200 with an empty list.
+    """
+    logger.info("photos request | company=%r model=%r", req.company, req.model)
+    t_start = time.perf_counter()
+    result = get_bike_photos(req.company, req.model)
+    elapsed = time.perf_counter() - t_start
+    logger.info("photos served from DB | photos=%d elapsed=%.3fs", len(result.photos), elapsed)
+    return result
+
+
+@app.post("/v1/bike/photos/search", response_model=BikePhotosResponse)
+async def bike_photos_search(req: BikePhotosRequest) -> BikePhotosResponse:
+    """Run the photo search on demand through the searcher service.
+
+    Proxies to {SEARCHER_URL}/v1/search/photos and waits for it
+    (SEARCHER_TIMEOUT, default 600 s). The searcher finds the manufacturer
+    page with `claude -p`, scrapes it with Playwright and stores the photos —
+    only for a bike that has none; otherwise it returns the stored ones without
+    a search. 503 when the searcher is not configured, unreachable or busy, 502
+    (its detail passed through) when it fails. Never cached.
+    """
+    logger.info("photos search request | company=%r model=%r", req.company, req.model)
+    # Same guard as the offer proxies: only bikes the app already knows, or
+    # anonymous traffic could mint `bike` rows and spend subscription runs.
+    if not bike_exists(req.company, req.model):
+        logger.warning("photos search refused: unknown bike | company=%r model=%r", req.company, req.model)
+        raise HTTPException(status_code=404, detail="Bike not found")
+    t_start = time.perf_counter()
+    try:
+        result = await search_photos(req.company, req.model)
+    except SearcherNotConfigured as exc:
+        logger.error("photos search: searcher not configured | %s", exc)
+        raise HTTPException(status_code=503, detail="Photos searcher is not configured") from exc
+    except SearcherUnavailable as exc:
+        logger.error("photos search: searcher unavailable | %s", exc)
+        raise HTTPException(status_code=503, detail="Photos searcher unavailable") from exc
+    except SearcherBusy as exc:
+        logger.warning("photos search: searcher busy | %s", exc)
+        raise HTTPException(status_code=503, detail="Photos searcher is busy — try again in a moment") from exc
+    except SearcherFailed as exc:
+        logger.error("photos search failed | status=%d detail=%r", exc.status, exc.detail)
+        raise HTTPException(status_code=502, detail=exc.detail) from exc
+    elapsed = time.perf_counter() - t_start
+    logger.info("photos search complete | photos=%d elapsed=%.2fs", len(result.photos), elapsed)
+    return result
 
 
 @app.post("/v1/bike/review", response_model=BikeReviewResponse)
@@ -257,11 +310,11 @@ async def bike_allegro_search(req: BikeOfferRequest) -> BikeOfferResponse:
     Proxies to {SEARCHER_URL}/v1/search/allegro and waits for it
     (SEARCHER_TIMEOUT, default 600 s). The searcher writes the offers to the
     DB (no photos — allegro.pl blocks scraping), so a later /v1/bike/allegro
-    returns them. The
-    "Nowe" card's button fires this together with /v1/bike/decathlon/search,
-    which is why SEARCHER_MAX_INFLIGHT defaults to 2. 503 when the searcher
-    is not configured, unreachable or busy, 502 (its detail passed through)
-    when it fails. Never cached.
+    returns them. The "Nowe" card's button fires this together with
+    /v1/bike/decathlon/search; both share SEARCHER_MAX_INFLIGHT (default 10)
+    with the other searches. 503 when the searcher is not configured,
+    unreachable or busy, 502 (its detail passed through) when it fails.
+    Never cached.
     """
     logger.info("allegro search request | company=%r model=%r", req.company, req.model)
     # Same guard as the other two proxies: only bikes the app already knows, or

@@ -63,10 +63,11 @@ created_at: datetime
 updated_at: datetime
 ```
 
-**`bike_detail_photos`** — Photos for bike details
+**`bike_detail_photos`** — Photos of a bike (keyed on the bike, not on its details row — see
+[Photos re-keyed to `bike_id`](#photos-re-keyed-to-bike_id))
 ```
 id (PK)
-bike_details_id (FK → bike_details.id)
+bike_id (FK → bike.id, ON DELETE CASCADE, NOT NULL, indexed)
 url: str
 display_order: int
 ```
@@ -130,8 +131,8 @@ missing_type: str (≤ 64 chars, free string from the frontend)
 counter: int (1 on first request, +1 on each later one)
 UNIQUE(bike_id, missing_type)
 ```
-New table only — `init_db()`'s `create_all()` creates it on an existing `cache.db` at startup, so
-`scripts/migrate_bike_details.py` needs no change.
+New table only — `init_db()`'s `create_all()` creates it on an existing database at startup, so it needs no
+migration step.
 
 ## Migration Steps
 
@@ -181,7 +182,9 @@ save_search(query, old_data)
 - Search cache — `app.store`: `save_search`, `get_search_by_query`,
   `find_bikes_by_brand` (backed by `search_cache` + `search_bike_rating_cache`).
 - Details cache — `app.repository`: `save_bike_details`, `get_bike_details`
-  (backed by `bike_detail` + `bike_detail_component` + `bike_detail_photos`).
+  (backed by `bike_detail` + `bike_detail_component`; no TTL — stored details are returned whatever their age).
+- Bike photos — `app.photos_repository`: `get_bike_photos` (`POST /v1/bike/photos`) and `save_bike_photos`
+  (offline pipeline only); the searcher's photo search is the live writer (backed by `bike_detail_photos`).
 - DB-first search (TODO-024) — `app.repository.find_bikes_by_details`: matches
   `/v1/bike/search` checkable fields against `bike` + `bike_detail_component`.
 - Missing-data requests (TODO-026) — `app.repository.record_missing_request`:
@@ -189,6 +192,52 @@ save_search(query, old_data)
 
 (The `bike_results` + `accessories` tables and `repository`'s own copies of the
 search helpers were removed once the store versions became authoritative.)
+
+## Photos re-keyed to `bike_id`
+
+`bike_detail_photos` used to hang off the details row (`bike_detail_id` → `bike_detail.id`), so re-saving details
+deleted and re-inserted a bike's photos, and photos could not exist without details. With the photos searcher, photos
+belong to the bike: column `bike_detail_id` is **replaced** by `bike_id INTEGER NOT NULL REFERENCES bike(id) ON DELETE
+CASCADE` (index `ix_bike_detail_photos_bike_id`); the table keeps its name. Columns: `id, bike_id, url, display_order`,
+read in `display_order, id` order.
+
+- `repository.save_bike_details` no longer writes photos and never deletes them: it updates the `bike_detail` row in
+  place (its id stays stable) and replaces only its component rows, so even on a not-yet-migrated database — where the
+  old `bike_detail_id … ON DELETE CASCADE` FK still exists — a re-save cannot cascade-delete photos; `get_bike_details` returns no photos (`BikeDetailsResponse` has no `photos` field). `TTL_DETAILS` is gone.
+- Writers never replace photos: the searcher (and `photos_repository.save_bike_photos`) insert only for a bike that
+  has none; a search that finds nothing writes nothing.
+
+**The migration is required on every pre-existing database, and it must run BEFORE the new backend and searcher are
+deployed on it** — `init_db()`'s `create_all()` never `ALTER`s a table. Until it runs,
+`photos_repository.get_bike_photos` logs an ERROR naming the script and returns `{photos: []}`, and the searcher
+refuses to start. Order: back up → `--dry-run` → migrate → deploy backend + searcher.
+
+```bash
+cd backend
+python scripts/migrate_photos_bike_id.py --dry-run          # $DATABASE_URL (backend/.env), else backend/cache.db
+python scripts/migrate_photos_bike_id.py
+python scripts/migrate_photos_bike_id.py --db path/to/copy.db
+python scripts/migrate_photos_bike_id.py --url postgresql+psycopg://biker:biker@localhost:5432/<db>
+```
+
+- **SQLite** cannot drop a FK column in place, so the table is rebuilt (`CREATE bike_detail_photos_new` → `INSERT …
+  SELECT` through `bike_detail` → `DROP` → `RENAME` → `CREATE INDEX`). **PostgreSQL** is altered in place (`ADD
+  COLUMN bike_id` → `UPDATE … FROM bike_detail` → `SET NOT NULL` + FK `bike_detail_photos_bike_id_fkey` + index →
+  `DROP COLUMN bike_detail_id`) under `LOCK TABLE bike_detail_photos, bike_detail IN SHARE ROW EXCLUSIVE MODE`, taken
+  right after `BEGIN` so concurrent writes cannot skew the verification; ids and the id sequence are kept on both.
+- One transaction on both dialects; before committing it verifies row by row that every photo kept its id, url and
+  `display_order` and points at the bike its old details row belonged to — any mismatch or error rolls back.
+- Rows whose details row (or that row's bike) is missing cannot be re-keyed: they are listed and copied, in the same
+  transaction, into **`bike_detail_photos_orphans`** (`id` PK, `bike_detail_id`, `bike_id`, `url`, `display_order`;
+  created only when there are orphans, `ON CONFLICT (id) DO NOTHING`), then left out of the migrated table. Nothing
+  reads that table — it is the record to inspect or restore from. Prints before/after row, bike and orphan counts.
+- Idempotent: a table already keyed on `bike_id` is checked for `NOT NULL`, the `ON DELETE CASCADE` FK to `bike` and
+  the `bike_id` index — all present → `already-migrated`, nothing written; any missing → `repaired` through the same
+  rebuild / `ALTER` path (rows pointing at no bike go to the orphans table). An absent table is reported as `absent`
+  and left to `init_db()`, which creates it with the new schema. Importable:
+  `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `rows_before`, `rows_after`, `orphans`,
+  `bikes_with_photos`, `gaps`, `verified`, `error`). Exit code 1 on failure.
+- On PostgreSQL the migrated table lists `bike_id` last (added column) — harmless, the ORM addresses columns by name.
 
 ## Benefits
 

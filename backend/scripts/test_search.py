@@ -13,6 +13,7 @@ it passes on a cold or aged database. Endpoints covered here:
            /v1/bike/decathlon · /v1/bike/decathlon/search (404 + foreign-brand skip always; the
            live house-brand search — the ONE paid searcher run in the suite — only when the searcher is up)
            /v1/bike/allegro · /v1/bike/allegro/search (404 only — no paid run)
+           /v1/bike/photos · /v1/bike/photos/search (404 only — no paid run)
   --ai     /v1/bike/search (free text) · /v1/bike/parse · /v1/bike/ceneo
 
 The other endpoints have their own single-happy-path script: test_details.py
@@ -58,6 +59,8 @@ DECATHLON_URL = f"{BASE}/v1/bike/decathlon"
 DECATHLON_SEARCH_URL = f"{BASE}/v1/bike/decathlon/search"
 ALLEGRO_URL = f"{BASE}/v1/bike/allegro"
 ALLEGRO_SEARCH_URL = f"{BASE}/v1/bike/allegro/search"
+PHOTOS_URL = f"{BASE}/v1/bike/photos"
+PHOTOS_SEARCH_URL = f"{BASE}/v1/bike/photos/search"
 SEARCHER_URL = os.getenv("SEARCHER_URL", "").strip().rstrip("/")
 
 
@@ -152,7 +155,7 @@ def _delete_bike(brand: str, model: str) -> None:
             f"DELETE FROM bike_missing_request WHERE bike_id IN {ids}",
             f"DELETE FROM bike_popular WHERE bike_id IN {ids}",
             f"DELETE FROM search_bike_rating_cache WHERE bike_id IN {ids}",
-            f"DELETE FROM bike_detail_photos WHERE bike_detail_id IN (SELECT id FROM bike_detail WHERE bike_id IN {ids})",
+            f"DELETE FROM bike_detail_photos WHERE bike_id IN {ids}",
             f"DELETE FROM bike_detail_component WHERE bike_detail_id IN (SELECT id FROM bike_detail WHERE bike_id IN {ids})",
             f"DELETE FROM bike_detail WHERE bike_id IN {ids}",
             "DELETE FROM bike WHERE brand = ? AND model = ?",
@@ -279,7 +282,6 @@ def case_details_cache():
         components=[BikeCategory(category="Frame", subcategories=[BikeSubcategory(
             subcategory="Frame", elements=[ComponentElement(name="Frame", specs=[SpecItem(key="Material", value="Alloy")])],
         )])],
-        photos=["https://example.com/smoke.jpg"],
     ))
     try:
         t0 = time.perf_counter()
@@ -289,7 +291,7 @@ def case_details_cache():
         data = resp.json()
         assert data["company"] == FIX_DETAILS_BRAND and data["model"] == FIX_DETAILS_MODEL, data
         assert data["components"][0]["category"] == "Frame", data["components"]
-        assert data["photos"] == ["https://example.com/smoke.jpg"], data["photos"]
+        assert "photos" not in data, "details no longer carry photos — see /v1/bike/photos"
         assert elapsed < 5.0, f"cache read took {elapsed:.2f}s"
     finally:
         _delete_bike(FIX_DETAILS_BRAND, FIX_DETAILS_MODEL)
@@ -328,7 +330,7 @@ def case_popular():
         save_bike_details(FIX_POP_BRAND, FIX_POP_MODEL_A, BikeDetailsResponse(
             company=FIX_POP_BRAND, model=FIX_POP_MODEL_A,
             description=BikeDescription(text=FIX_POP_TEXT, segments=[], citations=[]),
-            components=[], photos=[],
+            components=[],
         ))
         conn = _DB()
         try:
@@ -571,6 +573,56 @@ def case_allegro_search():
     assert resp.status_code == 404, f"Expected 404 for an unknown bike, got {resp.status_code}: {resp.text[:200]}"
 
 
+FIX_PHOTOS_BRAND, FIX_PHOTOS_MODEL = "Smoke Fixture", "Photos Bike"
+
+
+def case_photos():
+    """/v1/bike/photos serves the stored bike_detail_photos rows in display_order (no AI, no cache, no details row)."""
+    _delete_bike(FIX_PHOTOS_BRAND, FIX_PHOTOS_MODEL)
+    bike_id = _insert_bike(FIX_PHOTOS_BRAND, FIX_PHOTOS_MODEL)
+    photos = [f"https://example.com/smoke-photos-{i}.jpg" for i in range(3)]
+    conn = _DB()
+    try:
+        # Inserted out of order: the response must follow display_order, not insertion order.
+        for order in (2, 0, 1):
+            conn.execute(
+                "INSERT INTO bike_detail_photos (bike_id, url, display_order) VALUES (?, ?, ?)",
+                (bike_id, photos[order], order),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    body = {"company": FIX_PHOTOS_BRAND, "model": FIX_PHOTOS_MODEL}
+    key = _norm_key(body)
+    try:
+        _cache_row_delete("/v1/bike/photos", key)
+        t0 = time.perf_counter()
+        resp = _post(PHOTOS_URL, body, timeout=10)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        assert resp.json() == {"photos": photos}, resp.json()
+        assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
+        assert not _cache_row_exists("/v1/bike/photos", key), "/v1/bike/photos must not write a generic-cache row"
+        # An unknown bike is a fast, empty 200 — never an error.
+        t0 = time.perf_counter()
+        resp = _post(PHOTOS_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=10)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200 and resp.json() == {"photos": []}, resp.text[:200]
+        assert elapsed < 5.0, f"unknown-bike read took {elapsed:.2f}s"
+    finally:
+        _delete_bike(FIX_PHOTOS_BRAND, FIX_PHOTOS_MODEL)
+
+
+def case_photos_search():
+    """/v1/bike/photos/search refuses an unknown bike with 404 before touching the searcher.
+
+    Deliberately no live photo run here: every searcher run is a paid subscription
+    search, and the one live run this suite keeps is case_decathlon_search, which
+    exercises the same proxy code path (searcher_client._search)."""
+    resp = _post(PHOTOS_SEARCH_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=30)
+    assert resp.status_code == 404, f"Expected 404 for an unknown bike, got {resp.status_code}: {resp.text[:200]}"
+
+
 # ── Cases that call the Anthropic API (--ai) ────────────────────────────────
 
 def case_search_free_text():
@@ -614,6 +666,8 @@ CASES = [
     (case_decathlon_search, False),
     (case_allegro, False),
     (case_allegro_search, False),
+    (case_photos, False),
+    (case_photos_search, False),
     (case_search_free_text, True),
     (case_parse, True),
     (case_ceneo, True),

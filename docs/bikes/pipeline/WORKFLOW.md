@@ -12,7 +12,7 @@ the DB write) lives in the services, so it is testable and cheap.
 |---|---:|---|
 | `coordinator` | 9101 | Owns the queue (from `bikes.txt`). Hands out one bike at a time, aggregates both researchers, drives validator → db_saver. |
 | `researcher_details` | 9102 | bike_detail + bike_detail_component. Mirrors `app/bike_details_finder.py`: 8 categories, same per-category prompts, same `extract_json` + tolerant `_parse_*` coercion. |
-| `researcher_photos` | 9103 | bike_detail_photos. Mirrors `app/bike_photos_finder.py`: LLM finds the product URL, the service scrapes images itself with the same `_IMG_SRC`/`_SKIP` regexes. |
+| `researcher_photos` | 9103 | bike_detail_photos. Mirrors the former `app/bike_photos_finder.py` (moved to `searcher/app/photos_finder.py`, TODO-035): LLM finds the product URL, the service scrapes images itself with the same `_IMG_SRC`/`_SKIP` regexes. |
 | `validator` | 9104 | Checks everything needed to save is present, and says **which side to re-fetch**. |
 | `db_saver` | 9105 | The only writer. Goes through `repository.save_bike_details`, then reads the row back. |
 
@@ -175,8 +175,8 @@ review thumbs with no site-specific knowledge), a product-URL pre-check (round 1
 spent a browser launch on a 404), `networkidle` + scroll for lazy galleries, and
 `_SKIP` entries for Judge.me widgets, geometry charts, swatches and option chrome.
 
-⚠️ **`app/bike_photos_finder.py` has all four defects too** — it is the live
-`/v1/bike/details` photo path. Untouched here; needs its own change.
+⚠️ **`searcher/app/photos_finder.py` (formerly `backend/app/bike_photos_finder.py`) has all four defects too** — it is the live
+photo path, now behind `POST /v1/bike/photos/search` (TODO-035, ported 1:1 on purpose). Untouched here; needs its own change.
 
 **Categories did not fit real bikes.** Both researchers hit this independently:
 - E-bike motor/battery/charger/display had no home — one put motor under Drivetrain,

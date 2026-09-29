@@ -1,19 +1,22 @@
-"""HTTP client for the on-demand searcher service (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro).
+"""HTTP client for the on-demand searcher service (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro, bike photos).
 
 The searcher (top-level `searcher/`, port 8100 locally) runs the Claude Code CLI
-once per search — plus Playwright once per OLX listing — and writes
-what it finds into bike_offer / bike_offer_photos. The backend only proxies the
-request, waits, and hands back the searcher's {offers, info} — it never calls
-Claude for OLX, Decathlon or Allegro. One client, three sources: `search_olx`
-posts to /v1/search/olx, `search_decathlon` to /v1/search/decathlon and
-`search_allegro` to /v1/search/allegro (see SEARCH_PATHS); all three responses
-have the same shape and are validated into the route's model.
+once per search — plus Playwright once per OLX listing, or once on the
+manufacturer page for photos — and writes what it finds into bike_offer /
+bike_offer_photos (offers) or bike_detail_photos (photos). The backend only
+proxies the request, waits, and hands back the searcher's body — it never calls
+Claude for OLX, Decathlon, Allegro or bike photos. One client, four routes:
+`search_olx` posts to /v1/search/olx, `search_decathlon` to
+/v1/search/decathlon, `search_allegro` to /v1/search/allegro and
+`search_photos` to /v1/search/photos (see SEARCH_PATHS); the offer routes
+answer {offers, info}, the photo route {photos}, each validated into the
+route's model.
 
 Configuration (backend/.env):
   SEARCHER_URL           base URL, e.g. http://localhost:8100 — unset = not configured
   SEARCHER_API_KEY       shared secret sent as X-Searcher-Key — unset = not configured
   SEARCHER_TIMEOUT       seconds to wait for one search (default 600)
-  SEARCHER_MAX_INFLIGHT  concurrent searches this backend lets through (default 2)
+  SEARCHER_MAX_INFLIGHT  concurrent searches this backend lets through (default 10)
 
 Every search is billed to the Claude subscription and takes minutes, so two
 guards sit in front of the network call: identical (source, company, model)
@@ -21,11 +24,10 @@ requests share one in-flight search (single-flight), and at most
 SEARCHER_MAX_INFLIGHT distinct searches run at once across ALL sources — the
 semaphore is one process-wide object, not one per source, because it mirrors
 the searcher's own capacity rather than anything per marketplace. The default
-is 2 since TODO-033: the "Nowe" card's button fires the Decathlon and Allegro
-searches together, and the searcher now allows two runs (locally
-SEARCHER_MAX_CONCURRENT=2; on Cloud Run --max-instances 2 with --concurrency 1,
-i.e. one CLI per instance, plus a Chromium only for an OLX search). The rest
-are refused straight away,
+is 10 since the photo search moved to the searcher: it matches the searcher's
+capacity (locally SEARCHER_MAX_CONCURRENT=10; on Cloud Run --max-instances 10
+with --concurrency 1, i.e. one CLI per instance, plus a Chromium for an OLX or
+photo search) — it must never exceed it. The rest are refused straight away,
 as is a request the searcher itself answers 503 (busy) to — and so is a 429
 from the searcher's URL: Cloud Run answers 429 "Rate exceeded" when every
 instance is at --concurrency and max-instances is reached, which is the same
@@ -41,19 +43,35 @@ from typing import TypeVar
 import httpx
 from pydantic import BaseModel
 
-from .schemas import BikeOfferResponse, UsedBikeResponse
+from .schemas import BikeOfferResponse, BikePhotosResponse, UsedBikeResponse
 
 logger = logging.getLogger("biker.searcher")
 
-SEARCH_PATHS = {"olx": "/v1/search/olx", "decathlon": "/v1/search/decathlon", "allegro": "/v1/search/allegro"}
+SEARCH_PATHS = {
+    "olx": "/v1/search/olx",
+    "decathlon": "/v1/search/decathlon",
+    "allegro": "/v1/search/allegro",
+    "photos": "/v1/search/photos",
+}
 _SOURCE_BY_PATH = {path: source for source, path in SEARCH_PATHS.items()}  # for log lines
 DEFAULT_TIMEOUT = 600.0  # one CLI search + photo scraping can take minutes
 CONNECT_TIMEOUT = 10.0   # an unreachable searcher should fail fast, not after 600 s
-DEFAULT_MAX_INFLIGHT = 2  # Decathlon + Allegro fire together; must not exceed the searcher's capacity (also 2)
+DEFAULT_MAX_INFLIGHT = 10  # must not exceed the searcher's capacity (SEARCHER_MAX_CONCURRENT / --max-instances, also 10)
 DETAIL_MAX_LEN = 300     # the searcher's error text is relayed to the browser — keep it short
 BUSY_STATUSES = (503, 429)  # 503 = the searcher's own "slot taken"; 429 = Cloud Run "Rate exceeded" at max-instances
 
 ResponseT = TypeVar("ResponseT", bound=BaseModel)
+
+
+class _SearcherPhotosResponse(BikePhotosResponse):
+    """The searcher's photo body with `photos` REQUIRED.
+
+    The public BikePhotosResponse defaults `photos` to [], so validating against
+    it would turn `{}` or an offers-shaped body into "no photos found" — the UI
+    would show a final "Nie znaleziono zdjęć" instead of a retryable 502.
+    """
+
+    photos: list[str]
 
 # Searches in progress, keyed on (path, normalised company, normalised model) —
 # a second click for the same bike on the same source awaits the running
@@ -177,9 +195,13 @@ async def _post_search(path: str, company: str, model: str, response_model: type
         # kilobytes; the browser gets the fixed summary, the log has the full error.
         raise SearcherFailed(502, "searcher returned a malformed response") from exc
 
+    # Offer routes carry `offers`, the photo route `photos` — log whichever it is.
+    items = getattr(result, "offers", None)
+    if items is None:
+        items = getattr(result, "photos", [])
     logger.info(
-        "searcher %s done | company=%r model=%r offers=%d bike_id=%s saved=%s elapsed=%.2fs",
-        source, company, model, len(result.offers),
+        "searcher %s done | company=%r model=%r items=%d bike_id=%s saved=%s elapsed=%.2fs",
+        source, company, model, len(items),
         data.get("bike_id") if isinstance(data, dict) else None,
         data.get("saved") if isinstance(data, dict) else None,
         elapsed,
@@ -199,12 +221,12 @@ async def _guarded_search(
 
 
 async def _search(path: str, company: str, model: str, response_model: type[ResponseT]) -> ResponseT:
-    """Run (or join) the search for one bike on one source and return its offers.
+    """Run (or join) the search for one bike on one source and return its result.
 
     Raises SearcherNotConfigured / SearcherUnavailable / SearcherBusy /
     SearcherFailed; never returns a partial result. The searcher's extra
     `bike_id` / `saved` fields are dropped — the backend's contract is the
-    plain {offers, info} model. The underlying task is shielded, so a caller
+    plain {offers, info} (or {photos}) model. The underlying task is shielded, so a caller
     that disconnects mid-search does not cancel it for the others (or waste
     the CLI run already paid for).
     """
@@ -232,3 +254,8 @@ async def search_decathlon(company: str, model: str) -> BikeOfferResponse:
 async def search_allegro(company: str, model: str) -> BikeOfferResponse:
     """Run (or join) the Allegro search for one bike (TODO-033) — see _search."""
     return await _search(SEARCH_PATHS["allegro"], company, model, BikeOfferResponse)
+
+
+async def search_photos(company: str, model: str) -> BikePhotosResponse:
+    """Run (or join) the manufacturer-page photo search for one bike — see _search."""
+    return await _search(SEARCH_PATHS["photos"], company, model, _SearcherPhotosResponse)

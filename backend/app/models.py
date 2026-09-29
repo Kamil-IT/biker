@@ -122,6 +122,10 @@ class Bike(Base):
     # in search_bike_rating_cache (which FKs to bike). Details and offers below.
     details = relationship("BikeDetails", back_populates="bike", cascade="all, delete-orphan", uselist=False)
     offers = relationship("BikeOffer", back_populates="bike", cascade="all, delete-orphan")
+    photos = relationship(
+        "BikeDetailPhoto", back_populates="bike", cascade="all, delete-orphan",
+        order_by="BikeDetailPhoto.display_order, BikeDetailPhoto.id",
+    )
 
     __table_args__ = (UniqueConstraint("brand", "model", name="uq_bike_brand_model"),)
 
@@ -139,7 +143,6 @@ class BikeDetails(Base):
 
     # Relationships
     bike = relationship("Bike", back_populates="details")
-    photos = relationship("BikeDetailPhoto", back_populates="details", cascade="all, delete-orphan")
     components = relationship(
         "BikeDetailComponent",
         back_populates="details",
@@ -153,17 +156,23 @@ class BikeDetails(Base):
 
 
 class BikeDetailPhoto(Base):
-    """Photos for bike details."""
+    """Photos of a bike, keyed on the bike itself (not on its details row).
+
+    Photos are written by the searcher's photo search and are independent of
+    `bike_detail`: a details re-save or delete leaves them alone. The table
+    kept its old name; `bike_id` replaced `bike_detail_id`
+    (scripts/migrate_photos_bike_id.py migrates an existing database).
+    """
 
     __tablename__ = "bike_detail_photos"
 
     id = Column(Integer, primary_key=True)
-    bike_detail_id = Column(Integer, ForeignKey("bike_detail.id", ondelete="CASCADE"), nullable=False, index=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
     url = Column(String(2048), nullable=False)
     display_order = Column(Integer, default=0)
 
     # Relationships
-    details = relationship("BikeDetails", back_populates="photos")
+    bike = relationship("Bike", back_populates="photos")
 
 
 # --- Component spec tree -------------------------------------------------

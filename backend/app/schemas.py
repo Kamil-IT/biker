@@ -159,7 +159,6 @@ class BikeDetailsResponse(BaseModel):
     model: str
     description: BikeDescription
     components: list[BikeCategory]
-    photos: list[str] = []
 
 
 class BikeResult(BaseModel):
@@ -269,6 +268,24 @@ class UsedBikeRequest(BaseModel):
 class UsedBikeResponse(BaseModel):
     offers: list[BikeOffer]
     info: str = ""
+
+
+class BikePhotosRequest(BaseModel):
+    # Bounded to the bike.brand / bike.model column width: /v1/bike/photos/search
+    # forwards both into the searcher's CLI prompt and its bike row.
+    company: str = Field(max_length=255)
+    model: str = Field(max_length=255)
+
+    @field_validator("company", "model")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()
+
+
+class BikePhotosResponse(BaseModel):
+    photos: list[str] = []
 
 
 class EquipmentDetailsRequest(BaseModel):

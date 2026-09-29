@@ -1,6 +1,6 @@
 # Biker Searcher
 
-The on-demand marketplace search (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro). A small FastAPI service that
+The on-demand marketplace and photo search (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro, bike photos). A small FastAPI service that
 runs **only when asked**: `POST /v1/search/olx` searches olx.pl for a bike, scrapes each listing's photos with Playwright
 and writes the result into the shared bike database (`bike_offer` + `bike_offer_photos`, `source = 'olx.pl'`);
 `POST /v1/search/decathlon` searches decathlon.pl the same way (one CLI run, no Playwright) and writes `bike_offer` rows
@@ -9,9 +9,12 @@ are stored without photos by design, see "Why the Claude Code CLI") and writes r
 backend never searches any of the three shops itself —
 `POST /v1/bike/used/olx`, `POST /v1/bike/decathlon` and `POST /v1/bike/allegro` are pure DB reads, and
 `POST /v1/bike/used/search` / `POST /v1/bike/decathlon/search` / `POST /v1/bike/allegro/search` proxy here when the user
-clicks **Poproś o dane** in the "Używane" (OLX) / "Nowe" (Decathlon **and** Allegro at once) card. The three searches
-share `SEARCHER_MAX_CONCURRENT` busy slots (default **2**, so the two searches the "Nowe" button fires both run); a third
-concurrent search is refused with 503, never queued.
+clicks **Poproś o dane** in the "Używane" (OLX) / "Nowe" (Decathlon **and** Allegro at once) card.
+`POST /v1/search/photos` finds the bike's manufacturer product page (one CLI run) and scrapes up to 8 photos with
+Playwright into `bike_detail_photos` — only for a bike that has no photos yet (stored photos are returned without a
+search and are never replaced); the backend's `POST /v1/bike/photos` is the DB read and `POST /v1/bike/photos/search`
+proxies here from the photo gallery's **Poproś o dane** button. The four searches share `SEARCHER_MAX_CONCURRENT` busy
+slots (default **10**); one more concurrent search is refused with 503, never queued.
 
 ## Why the Claude Code CLI
 
@@ -47,16 +50,17 @@ launches no browser.
 
 | File | Responsibility |
 |------|----------------|
-| `app/main.py` | FastAPI app: `GET /health` (open) · `POST /v1/search/olx` · `POST /v1/search/decathlon` · `POST /v1/search/allegro` (all three `X-Searcher-Key`); one `asyncio.Semaphore(SEARCHER_MAX_CONCURRENT)` (default 2) shared by the three routes around the whole search (`_run_search` is the common body; `locked()` is true only when every slot is taken, so the busy check holds for any slot count) |
+| `app/main.py` | FastAPI app: `GET /health` (open) · `POST /v1/search/olx` · `POST /v1/search/decathlon` · `POST /v1/search/allegro` · `POST /v1/search/photos` (all four `X-Searcher-Key`); one `asyncio.Semaphore(SEARCHER_MAX_CONCURRENT)` (default 10) shared by the four routes around the whole search (`_run_search` is the offers' common body; `locked()` is true only when every slot is taken, so the busy check holds for any slot count); the photo route answers stored photos before the busy check and single-flights identical searches (`_photo_searches`); the default thread pool is sized `SEARCHER_MAX_CONCURRENT + 8` so every slot gets a worker thread |
+| `app/photos_finder.py` | The moved `find_bike_photos` (the backend's former `bike_photos_finder`): CLI (`WebSearch` only) → `{url}` of the official manufacturer product page → URL validated (http/https, public addresses only) → patchright opens it once (`domcontentloaded`, 60 s, + 4 s) with every browser request passing a route guard (`_RouteGuard`: http/https to public hosts only) → ≤ 8 `<img src/data-src>` URLs (`_IMG_SRC` / `_SKIP` regexes unchanged; local / non-global-IP image hosts dropped) |
 | `app/config.py` | Env vars (see below), loads `searcher/.env`; `DATABASE_URL` is required — no SQLite fallback |
-| `app/claude_cli.py` | `run_structured()` — the `claude -p` subprocess wrapper (argv list, `stdin=DEVNULL`, timeout, sanitised errors); `cli_version()` |
+| `app/claude_cli.py` | `run_structured(system_prompt, user_message, schema, tools=TOOLS)` — the `claude -p` subprocess wrapper (argv list, `stdin=DEVNULL`, timeout, sanitised errors; `tools` defaults to `WebSearch,WebFetch` for the offer routes, the photo search passes `WebSearch`); `cli_version()` |
 | `app/olx_finder.py` | The moved `find_used_bikes`: prompt → CLI → ≤ 5 offers (`is_new=false`, `source=olx.pl`) → photo scrape. Also home of `SearcherError`, the `{info, offers[]}` CLI schema and the `bike_offer` column widths the Decathlon and Allegro finders reuse |
 | `app/decathlon_finder.py` | The moved `find_decathlon_offers` (TODO-032): prompt → CLI → ≤ 3 offers (`url` on `https://www.decathlon.pl/`, `is_new` from the page — default true, `source=decathlon.pl`, `photos=[]`, `city=null`). No Playwright |
 | `app/allegro_finder.py` | The moved `find_allegro_offers` (TODO-033, the backend's former `bike_offer_finder`): prompt → CLI → ≤ 3 offers (`url` must be an `allegro.pl/oferta/…` or `allegro.pl/produkt/…` page — a search/category page is dropped, `is_new` from the result title/snippet, `price` may be `""` when no snippet showed one, `source=allegro.pl`, `photos=[]`, `city=null`). No Playwright — the photo scrape was dropped because allegro.pl answers 403 to Chromium too |
-| `app/olx_image_fetcher.py` · `app/browser_config.py` | Playwright scrape of ≤ 4 `apollo.olxcdn.com` images per listing (copied from the backend) |
-| `app/models.py` · `app/repository.py` | SQLAlchemy over `bike` / `bike_offer` / `bike_offer_photos` (DDL identical to `backend/app/models.py`; `init_db()` only checks they exist); `save_offers(company, model, offers, source)` upserts on `url` within this bike **and** source, takes `is_new` from each offer, never re-parents a listing, deletes the bike's stale rows of that source only when something new was stored |
-| `app/prompts/bike_offer_olx.md` · `app/prompts/bike_offer_decathlon.md` · `app/prompts/bike_offer_allegro.md` | The system prompts — OLX and Decathlon byte-for-byte the backend's former prompts; the Allegro one is a CLI-tuned rewrite (WebSearch only, allegro.pl answers 403 to every fetch — see "Why the Claude Code CLI") |
-| `scripts/test_searcher.py` | Smoke test, free: health, 401 ×2 + 422 on `/v1/search/olx` (TC-1–4), 401 + 422 on `/v1/search/decathlon` (TC-5–6), 401 + 422 on `/v1/search/allegro` (TC-7–8). No `claude -p` run — the one paid live search of the test set is `backend/scripts/test_search.py` `case_decathlon_search` |
+| `app/olx_image_fetcher.py` · `app/browser_config.py` | Playwright scrape of ≤ 4 `apollo.olxcdn.com` images per listing (copied from the backend); `BROWSER_SLOTS` caps browser launches per process (`BROWSER_MAX_CONCURRENCY`, default 2) for the OLX and photo scrapes alike |
+| `app/models.py` · `app/repository.py` | SQLAlchemy over `bike` / `bike_offer` / `bike_offer_photos` / `bike_detail_photos` (DDL identical to `backend/app/models.py`; `init_db()` only checks they exist and that `bike_detail_photos` has `bike_id`); `save_offers(company, model, offers, source)` upserts on `url` within this bike **and** source, takes `is_new` from each offer, never re-parents a listing, deletes the bike's stale rows of that source only when something new was stored; `get_stored_photos` / `save_photos` read and write the bike's photos — insert-only, only when it has none, under a `SELECT … FOR UPDATE` on the bike row |
+| `app/prompts/bike_offer_olx.md` · `app/prompts/bike_offer_decathlon.md` · `app/prompts/bike_offer_allegro.md` · `app/prompts/bike_photos.md` | The system prompts — OLX and Decathlon byte-for-byte the backend's former prompts; the Allegro one is a CLI-tuned rewrite (WebSearch only, allegro.pl answers 403 to every fetch — see "Why the Claude Code CLI"); the photos one is the backend's with two CLI edits (`WebSearch` for `web_search` — the only tool it gets — and a `{"url": …}` JSON object for the bare URL line) |
+| `scripts/test_searcher.py` | Smoke test, free: health, 401 ×2 + 422 on `/v1/search/olx` (TC-1–4), 401 + 422 on `/v1/search/decathlon` (TC-5–6), 401 + 422 on `/v1/search/allegro` (TC-7–8), 401 + 422 on `/v1/search/photos` (TC-9–10), a bike that already has photos → 200 from the DB, `saved: 0`, < 5 s (TC-11; `SEARCHER_PHOTOS_BIKE="Brand\|Model"` or the first such bike in `DATABASE_URL`, posted only after `DATABASE_URL` confirms ≥ 1 photo row, else SKIP — `DATABASE_URL` must be the running searcher's database, or TC-11 could start a paid search). No `claude -p` run — the one paid live search of the test set is `backend/scripts/test_search.py` `case_decathlon_search` |
 
 ## Run locally
 
@@ -93,8 +97,9 @@ The backend picks it up through `SEARCHER_URL=http://localhost:8100` + `SEARCHER
 | `CLAUDE_BIN` | no | Path to the CLI when it is not on `PATH` |
 | `SEARCHER_CLAUDE_MODEL` | no | Default `claude-haiku-4-5-20251001` |
 | `SEARCHER_CLI_TIMEOUT` | no | Seconds before a CLI run is killed (default 300) |
-| `SEARCHER_MAX_CONCURRENT` | no | CLI runs (the OLX one with its browser) allowed at once, counted across **all three** search routes; further requests get 503 "searcher busy" (default **2** — the "Nowe" button fires the Decathlon and Allegro searches together; locally that is two CLI runs in one process, on Cloud Run each instance still serves one request and the second search gets its own instance) |
-| `SEARCHER_CREATE_TABLES` | no | `true` = `create_all()` on startup for a database the backend never touches (scratch tests). Default: refuse to start until `bike` / `bike_offer` / `bike_offer_photos` exist — the backend creates them, and two `create_all()`s on one fresh database race |
+| `SEARCHER_MAX_CONCURRENT` | no | Searches (CLI runs; the OLX and photo ones also open a browser) allowed at once, counted across **all four** search routes; further requests get 503 "searcher busy" (default **10**; locally that is up to ten CLI runs in one process, on Cloud Run each instance still serves one request and every further search gets its own instance). A photos request for a bike that already has photos never takes a slot |
+| `BROWSER_MAX_CONCURRENCY` | no | Chromium launches allowed at once in this process (default **2**; each costs 0.5–0.9 GiB). With more search slots than browsers, an OLX or photo search that reaches its scrape waits for a free browser — it is not refused |
+| `SEARCHER_CREATE_TABLES` | no | `true` = `create_all()` on startup for a database the backend never touches (scratch tests). Default: refuse to start until `bike` / `bike_offer` / `bike_offer_photos` / `bike_detail_photos` exist — the backend creates them, and two `create_all()`s on one fresh database race. A `bike_detail_photos` without `bike_id` (a database not yet migrated by `backend/scripts/migrate_photos_bike_id.py`) also aborts startup |
 | `PLAYWRIGHT_HEADLESS` | no | `true` on servers / in Docker; unset = visible browser for debugging |
 
 Neither the API key, the OAuth token nor the DB password is ever logged.
@@ -173,9 +178,9 @@ curl -s -X POST http://localhost:8100/v1/search/decathlon \
   this bike for `source = 'decathlon.pl'` (`saved == len(offers)`); nothing found is a 200 with `offers: []` and the
   bike's previously stored Decathlon rows are **kept**
 - `401` / `422` / `502` / `500` exactly as for `/v1/search/olx`
-- `503` `{"detail": "searcher busy"}` — the `SEARCHER_MAX_CONCURRENT` slots (default 2) are **shared** with
-  `/v1/search/olx` and `/v1/search/allegro` whatever the source, so a Decathlon search is refused while two other
-  searches are running (nothing queues)
+- `503` `{"detail": "searcher busy"}` — the `SEARCHER_MAX_CONCURRENT` slots (default 10) are **shared** with
+  `/v1/search/olx`, `/v1/search/allegro` and `/v1/search/photos` whatever the source, so a Decathlon search is refused
+  while every slot is taken (nothing queues)
 
 The backend only calls this for Decathlon house brands (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus,
 Tilt, Decathlon) — for any other brand it answers its own `/v1/bike/decathlon/search` without a searcher run.
@@ -227,9 +232,9 @@ curl -s -X POST http://localhost:8100/v1/search/allegro \
   (`saved == len(offers)`); nothing found is a 200 with `offers: []` and the bike's previously stored Allegro rows
   are **kept**
 - `401` / `422` / `502` / `500` exactly as for `/v1/search/olx`
-- `503` `{"detail": "searcher busy"}` — the `SEARCHER_MAX_CONCURRENT` slots (default 2) are **shared** with
-  `/v1/search/olx` and `/v1/search/decathlon`: the "Nowe" button's Decathlon + Allegro pair fits, a third concurrent
-  search of any source is refused (nothing queues)
+- `503` `{"detail": "searcher busy"}` — the `SEARCHER_MAX_CONCURRENT` slots (default 10) are **shared** with
+  `/v1/search/olx`, `/v1/search/decathlon` and `/v1/search/photos`: a search of any source is refused while every
+  slot is taken (nothing queues)
 
 Probes 2026-09-26 with the CLI-tuned prompt: Kross Level 3.0 → 3 real offers in **67 s**, Trek Marlin 4 → 3 real offers
 in **75 s** (the SDK-era prompt needed 286 s or gave up empty — allegro.pl answers 403 to every fetch, see "Why the
@@ -245,6 +250,89 @@ under another bike or source stays there and is not reported as saved),
 then — only when at least one offer was stored — every `allegro.pl` row of that bike not in the new set deleted.
 `bike_offer_photos` is never written. OLX
 and Decathlon rows of the same bike are untouched, so the Decathlon search running in parallel never collides with it.
+
+### `POST /v1/search/photos`
+
+```http
+POST http://localhost:8100/v1/search/photos
+Content-Type: application/json
+X-Searcher-Key: dev-local-searcher-key
+
+{"company": "Trek", "model": "Marlin 4"}
+```
+
+```bash
+curl -s -X POST http://localhost:8100/v1/search/photos \
+  -H "Content-Type: application/json" -H "X-Searcher-Key: dev-local-searcher-key" \
+  -d '{"company":"Trek","model":"Marlin 4"}'
+```
+
+```json
+{
+  "photos": [
+    "https://res.cloudinary.com/trekbikes/image/upload/f_auto,c_fill,ar_4:3,w_1080,q_auto/Marlin4_21469_B_Portrait",
+    "https://res.cloudinary.com/trekbikes/image/upload/f_auto,c_fill,ar_4:3,w_1080,q_auto/1010600_2018_B_1_Marlin_4",
+    "https://res.cloudinary.com/trekbikes/image/upload/f_auto,c_fill,ar_4:3,w_1080,q_auto/Marlin4_21469_B_Alt1"
+  ],
+  "bike_id": 44,
+  "saved": 6
+}
+```
+
+(shortened — that run stored 6 photos.) Probe 2026-09-29, Trek Marlin 4: CLI 18 s (4 turns) →
+`https://www.trekbikes.com/us/en_US/bikes/mountain-bikes/cross-country-mountain-bikes/marlin/marlin-4/p/21469/` →
+scrape 17 s → 6 photos, **36 s** end to end; the repeat request answered from the DB in 0.5 s.
+
+- `200` → `{"photos": [str], "bike_id": int | null, "saved": int}` — `photos` are the bike's photo URLs in
+  `display_order`. **A bike that already has photo rows gets them back from the DB** (`saved: 0`) — no CLI run, no
+  browser, no busy check. Otherwise the search runs and `photos` are the ≤ 8 URLs now stored (`saved == len(photos)`);
+  should another search for the same bike (another process / Cloud Run instance) have stored photos first, those are
+  returned with `saved: 0` and nothing is written. A search that finds nothing is a 200 with `photos: []`, `saved: 0`
+  and writes **nothing** — not even a bike row, so `bike_id` is `null` for a bike the DB does not know. Photos are never
+  deleted or replaced
+- `401` / `422` exactly as for `/v1/search/olx`
+- `502` `{"detail": "claude CLI failed: exit 1" | …}` when the product-page CLI run fails (the backend's old finder
+  swallowed this into `photos: []`; here it is an error so the UI's button becomes clickable again). No product page
+  found, a rejected URL or a failed scrape is **not** an error — a 200 with `photos: []`
+- `503` `{"detail": "searcher busy"}` — the `SEARCHER_MAX_CONCURRENT` slots (default 10) are **shared** with the three
+  offer routes (nothing queues). An identical request (same normalised brand/model) arriving while that bike's search
+  runs **joins** it instead — one paid run, and both callers get its result **including the same `saved`** (a joined
+  caller therefore sees e.g. `saved: 6` although only the first request wrote those rows — `saved` counts the search's
+  writes, not the caller's), and it never counts as busy
+- `500` `{"detail": "database read failed" | "database write failed"}`
+
+**Flow**: (1) DB read: bike looked up by normalised brand/model, its `bike_detail_photos` rows ordered by
+`display_order, id` — any rows → returned, **stop** →
+(1b) once a slot is taken, the same read **again** — photos stored meanwhile by another process / instance → returned,
+**stop** (no paid run) →
+(2) `claude -p` once with `app/prompts/bike_photos.md` — `--tools WebSearch` **only** (no `WebFetch`, unlike the offer
+routes: the URL comes from search results, and text injected into a result cannot make the CLI fetch arbitrary URLs),
+JSON schema `{url}`; message `Find the official product page URL for the {company} {model} bicycle on the
+manufacturer's website.` → the official manufacturer product page URL, `""` when none or longer than 2048 characters →
+(3) the URL is checked before any browser sees it: `http`/`https` only, no credentials, no `localhost` / `*.local` /
+`*.internal` / `*.lan` / `*.home.arpa` name, no non-global IP literal in any form (dotted, IPv6, IPv4-mapped IPv6,
+decimal `2130706433`, hex / octal), and every address its host resolves to must be public (no private, loopback,
+link-local — e.g. the cloud metadata server `169.254.169.254` — reserved or multicast); a rejected URL ends the search
+with `photos: []` →
+(4) patchright Chromium (one `BROWSER_SLOTS` slot, `PLAYWRIGHT_HEADLESS`, launched with
+`--host-resolver-rules=MAP metadata.google.internal ~NOTFOUND`, service workers blocked) opens that page **once**
+(`domcontentloaded`, 60 s timeout, then 4 s wait, Chrome 124 desktop user agent, 1920×1080). **Every request the
+browser makes** — the page, each redirect hop, sub-resources, fetch/XHR, JS navigations — passes a route guard
+(`context.route("**/*")`) that aborts it unless it is `http`/`https` to a host passing the check in (3); host verdicts
+are cached per scrape, `data:` / `blob:` URLs (no network) pass. The page's HTML and the regexes below are unchanged,
+so a normal manufacturer page yields the same photos; the log line `photos scraped` reports `requests_allowed` /
+`requests_aborted` →
+(5) the first ≤ 8 distinct `src` / `data-src` image URLs (`.jpg/.jpeg/.png/.webp` or Cloudinary `/image/upload/`, minus
+logos / icons / badges / payment marks / GIFs, minus URLs longer than 2048 characters and — string check, no DNS —
+URLs on a local name or a non-global IP literal, since every viewer's browser loads them as `<img>`) →
+(6) one DB transaction, only when (5) found something: bike created with the caller's casing if missing,
+`SELECT … FOR UPDATE` on the bike row, photo rows re-checked — any there → kept and returned, nothing written —
+otherwise one `bike_detail_photos` row per URL with `display_order` 0..n-1.
+
+**Accepted limitation — DNS rebinding.** The guard resolves a host, then Chromium resolves it again when it connects; a
+hostile DNS server answering public first and private second would get past the guard. Not mitigated (it would need
+pinning the resolved address into the browser); the metadata name itself is additionally mapped to NOTFOUND inside
+Chromium. Image hosts in (5) are checked by string only — a public-looking name that resolves privately is stored.
 
 ### `GET /health`
 
@@ -275,11 +363,12 @@ Deployed by the root `scripts/deploy.ps1` (`-Only searcher`, or as part of `all`
 as the Cloud Run service `biker-searcher` in `europe-central2`, project `biker-engine-prod`:
 
 - image `europe-central2-docker.pkg.dev/biker-engine-prod/biker/searcher:<git sha>` built from `searcher/Dockerfile`;
-- **scale to zero** (`--min-instances 0`), `--max-instances 2`, `--concurrency 1` (one CLI run per 2 GiB instance, plus
-  one Chromium only for an OLX search; two instances so the Decathlon and Allegro searches the "Nowe" button fires together both run — on Cloud Run
-  the parallelism comes from the instance count, not from `SEARCHER_MAX_CONCURRENT`, whose default 2 only matters for a
-  single local / compose process; a third concurrent search hits Cloud Run's **429**, which the backend maps to
-  `SearcherBusy` like the searcher's own 503), `--timeout 900` (a search is minutes; the backend waits at most 600 s),
+- **scale to zero** (`--min-instances 0`), `--max-instances 10`, `--concurrency 1` (one CLI run per 2 GiB instance, plus
+  one Chromium for an OLX or photo search; up to ten searches of any kind at once — on Cloud Run the parallelism comes
+  from the instance count, not from `SEARCHER_MAX_CONCURRENT`, whose default 10 only matters for a single local /
+  compose process; an eleventh concurrent search hits Cloud Run's **429**, which the backend maps to `SearcherBusy`
+  like the searcher's own 503; with one request per instance the photo route's single-flight never meets a second
+  identical request there — the `FOR UPDATE` re-check is what keeps two instances from double-inserting), `--timeout 900` (a search is minutes; the backend waits at most 600 s),
   `--cpu 2 --memory 2Gi --cpu-boost`;
 - the same Cloud SQL socket as the backend: `DATABASE_URL=postgresql+psycopg://biker@/biker?host=/cloudsql/<instance>`
   with `PGPASSWORD` from the `db-password` secret;

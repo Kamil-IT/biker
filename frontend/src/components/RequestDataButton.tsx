@@ -15,9 +15,12 @@ interface RequestDataButtonProps {
   spacing?: string
   // Runs after the click is recorded (TODO-031). While it is pending the button shows
   // `pendingLabel`; when it resolves and this button is still mounted, nothing came
-  // back ("Nie znaleziono ofert"); when it throws, the button is clickable again.
+  // back (`emptyLabel`); when it throws, the button is clickable again.
   onRequested?: () => Promise<void>
   pendingLabel?: string
+  // Shown when `onRequested` resolved with nothing found — offers by default,
+  // "Nie znaleziono zdjęć" in the photo gallery.
+  emptyLabel?: string
 }
 
 // Stands in for a bike-details section that has no data yet (TODO-027). The click
@@ -35,6 +38,7 @@ export default function RequestDataButton({
   spacing = 'mt-5',
   onRequested,
   pendingLabel = 'Szukam…',
+  emptyLabel = 'Nie znaleziono ofert',
 }: RequestDataButtonProps) {
   const [status, setStatus] = useState<RequestStatus>('idle')
 
@@ -75,7 +79,7 @@ export default function RequestDataButton({
   const busy = status === 'sending' || status === 'searching'
   const label =
     status === 'requested'  ? 'Zgłoszono ✓' :
-    status === 'empty'      ? 'Nie znaleziono ofert' :
+    status === 'empty'      ? emptyLabel :
     status === 'searching'  ? pendingLabel :
                               'Poproś o dane'
 
