@@ -177,3 +177,11 @@ tables via `init_db()` and copies the reviews), or deploy `-Only backend` first 
 - [ ] Docs updated per the Documentation Update Policy (`backend/README.md` Endpoints with Flow lists,
       `searcher/README.md`, `frontend/README.md`, `README.md`, `CLAUDE.md`, `backend/app/DB_MIGRATION.md`) and
       `docs/REVIEW_SEARCHER_MIGRATION.md` written in Polish; deploy checklist recorded.
+
+## Rollout
+Merged as PR #118 (`d7f08d2`, merge `87c1105`) and deployed on 2026-09-30: Cloud SQL on-demand backup, then
+`copy_review_cache_to_table.py` on Cloud SQL (dry-run 26 rows → 17 eligible, 9 degenerate; the real run, done by the user,
+copied 17), then `scripts/deploy.ps1` → `biker-searcher-00005-94r`, `biker-backend-00010-56r`, `biker-frontend-00008-hrk`.
+Prod checks passed with no paid run. Known leftovers: migrated reviews keep the old English/`<cite>` text (a stored review
+blocks re-search), a CLI session limit surfaces as a generic 502, `/v1/equipment/review` is still on the SDK. Full write-up:
+`docs/REVIEW_SEARCHER_MIGRATION.md`.
