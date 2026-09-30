@@ -126,6 +126,7 @@ class Bike(Base):
         "BikeDetailPhoto", back_populates="bike", cascade="all, delete-orphan",
         order_by="BikeDetailPhoto.display_order, BikeDetailPhoto.id",
     )
+    review = relationship("BikeReview", back_populates="bike", uselist=False, cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("brand", "model", name="uq_bike_brand_model"),)
 
@@ -255,6 +256,53 @@ class BikeOfferPhoto(Base):
 
     # Relationships
     offer = relationship("BikeOffer", back_populates="photos")
+
+
+# --- Expert review (TODO-037) ----------------------------------------------
+# One stored expert review per bike, written only by the searcher service
+# (POST /v1/search/review) and read by POST /v1/bike/review. Its source URLs
+# live one per row in bike_review_source, in the tier-sorted `ref` order. No
+# TTL. Created by init_db() like every other table — no migration step; the
+# searcher carries a verbatim copy of both classes in searcher/app/models.py.
+
+
+class BikeReview(Base):
+    """The stored expert review of one bike — the BikeReviewResponse fields minus `ref`."""
+
+    __tablename__ = "bike_review"
+
+    id = Column(Integer, primary_key=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    score = Column(Integer, nullable=False, default=0)
+    explanation = Column(Text, nullable=False, default="")
+    rating = Column(Float, nullable=False, default=0.0)
+    sources_used = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime, nullable=False,
+        default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    # Relationships
+    bike = relationship("Bike", back_populates="review")
+    sources = relationship(
+        "BikeReviewSource", back_populates="review", cascade="all, delete-orphan",
+        order_by="BikeReviewSource.display_order, BikeReviewSource.id",
+    )
+
+
+class BikeReviewSource(Base):
+    """One source URL of a stored review; `display_order` keeps the Tier 1 → 3 `ref` order."""
+
+    __tablename__ = "bike_review_source"
+
+    id = Column(Integer, primary_key=True)
+    review_id = Column(Integer, ForeignKey("bike_review.id", ondelete="CASCADE"), nullable=False, index=True)
+    url = Column(String(2048), nullable=False)
+    display_order = Column(Integer, nullable=False, default=0)
+
+    # Relationships
+    review = relationship("BikeReview", back_populates="sources")
 
 
 # --- Search cache --------------------------------------------------------

@@ -10,7 +10,7 @@ compose / Cloud Run settings win over the file):
   SEARCHER_CLAUDE_MODEL    model passed to `claude --model` (default claude-haiku-4-5-20251001)
   SEARCHER_CLI_TIMEOUT     seconds one CLI run may take before it is killed (default 300)
   SEARCHER_MAX_CONCURRENT  searches (CLI runs; OLX and photo ones also open a browser) allowed at once,
-                           counted across the four search routes (default 10)
+                           counted across the five search routes (default 10)
   PLAYWRIGHT_HEADLESS      true = no browser window (Docker / server); unset = visible browser
   CLAUDE_CODE_OAUTH_TOKEN  read by the CLI itself on a server (`claude setup-token`); never logged
 """

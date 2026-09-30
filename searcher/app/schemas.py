@@ -50,6 +50,40 @@ class PhotosResponse(BaseModel):
     saved: int = 0              # bike_detail_photos rows written by this call (0 when returned from the DB)
 
 
+class BikeReview(BaseModel):
+    """A bike's expert review — the backend's BikeReviewResponse shape, same clamps.
+
+    The empty review (all defaults) means "nothing found / nothing stored".
+    """
+
+    score: int = 0
+    explanation: str = ""
+    ref: list[str] = []
+    rating: float = 0.0
+    sources_used: int = 0
+
+    @field_validator("score")
+    @classmethod
+    def clamp_score(cls, v: int) -> int:
+        return max(0, min(10, v))
+
+    @field_validator("rating")
+    @classmethod
+    def clamp_rating(cls, v: float) -> float:
+        return round(max(0.0, min(10.0, float(v))), 1)
+
+    @field_validator("sources_used")
+    @classmethod
+    def clamp_sources(cls, v: int) -> int:
+        return max(0, int(v))
+
+
+class ReviewResponse(BaseModel):
+    review: BikeReview          # the review now stored for the bike (see /v1/search/review)
+    bike_id: int | None = None  # the bike row the review belongs to (null: unknown bike, nothing stored)
+    saved: int = 0              # 1 when this call wrote the review, else 0
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
     claude_cli: str | None = None  # `claude --version` output, null when the CLI is missing

@@ -1,6 +1,6 @@
-"""Biker Searcher — FastAPI entry point (TODO-031, TODO-032, TODO-033, photos).
+"""Biker Searcher — FastAPI entry point (TODO-031, TODO-032, TODO-033, photos, TODO-037).
 
-Five routes: POST /v1/search/olx (X-Searcher-Key required) runs the OLX
+Six routes: POST /v1/search/olx (X-Searcher-Key required) runs the OLX
 search through the Claude Code CLI, scrapes listing photos with Playwright and
 writes the result into bike_offer / bike_offer_photos; POST /v1/search/decathlon
 (same key) runs the Decathlon search through the CLI — no Playwright — and
@@ -9,8 +9,10 @@ writes bike_offer rows with source 'decathlon.pl'; POST /v1/search/allegro
 allegro.pl answers 403 to browsers — and writes rows with source 'allegro.pl';
 POST /v1/search/photos (same key) finds the manufacturer product page through
 the CLI, scrapes up to 8 photos with Playwright and stores them in
-bike_detail_photos — only for a bike that has none; GET /health is open.
-The FOUR searches share one semaphore of SEARCHER_MAX_CONCURRENT slots
+bike_detail_photos — only for a bike that has none; POST /v1/search/review
+(same key) runs the expert-review search through the CLI — no Playwright — and
+stores it in bike_review / bike_review_source when it found sources; GET
+/health is open. The FIVE searches share one semaphore of SEARCHER_MAX_CONCURRENT slots
 (default 10); a slot is one CLI run plus, for OLX and photos, one browser
 (browser launches are capped separately by BROWSER_MAX_CONCURRENCY, default 2).
 The next request is refused with 503, never queued. On Cloud Run each
@@ -35,8 +37,23 @@ from .decathlon_finder import DECATHLON_SOURCE, find_decathlon_offers
 from .models import dispose_engine, get_engine, init_db
 from .olx_finder import OLX_SOURCE, SearcherError, find_used_bikes
 from .photos_finder import find_bike_photos
-from .repository import get_stored_photos, save_offers, save_photos
-from .schemas import BikeOffer, HealthResponse, PhotosResponse, SearchRequest, SearchResponse
+from .repository import (
+    get_stored_photos,
+    get_stored_review,
+    is_usable_review,
+    save_offers,
+    save_photos,
+    save_review,
+)
+from .review_finder import find_bike_review
+from .schemas import (
+    BikeOffer,
+    HealthResponse,
+    PhotosResponse,
+    ReviewResponse,
+    SearchRequest,
+    SearchResponse,
+)
 
 Finder = Callable[[str, str], Awaitable[tuple[list[BikeOffer], str]]]
 
@@ -47,7 +64,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("searcher.main")
 
-# SEARCHER_MAX_CONCURRENT slots (default 10) shared by the four search routes:
+# SEARCHER_MAX_CONCURRENT slots (default 10) shared by the five search routes:
 # one CLI process (+ one browser for OLX / photos) per slot. Locally / in compose
 # that is up to ten CLI runs in this one process; on Cloud Run each instance
 # serves one request (--concurrency 1) and every further search gets its own
@@ -129,7 +146,7 @@ async def _run_search(label: str, source: str, finder: Finder, req: SearchReques
     sanitised detail when the CLI fails (exit code, timeout, no structured
     output); a run that finds nothing is a 200 with offers: []. 500 when the
     DB write fails. 503 "searcher busy" straight away when
-    SEARCHER_MAX_CONCURRENT searches (default 10, counted across the four
+    SEARCHER_MAX_CONCURRENT searches (default 10, counted across the five
     routes) are already running — queueing behind a multi-minute search would
     outlive the caller's timeout and end in a second paid run for the same
     bike. The offers returned are exactly the rows now stored under this bike
@@ -176,7 +193,7 @@ async def search_decathlon(req: SearchRequest) -> SearchResponse:
     """Search decathlon.pl for the bike (CLI only, no Playwright), store the offers, return them.
 
     Same status mapping as /v1/search/olx and the SAME semaphore: the
-    SEARCHER_MAX_CONCURRENT slots (default 10) are counted across the four
+    SEARCHER_MAX_CONCURRENT slots (default 10) are counted across the five
     routes whatever the source, so with every slot taken a Decathlon search
     answers 503 "searcher busy". Rows are
     stored with source 'decathlon.pl', is_new as the shop page says, no photos.
@@ -276,3 +293,65 @@ async def search_photos(req: SearchRequest) -> PhotosResponse:
         task.add_done_callback(_done)
     # shield: a caller that disconnects must not cancel the search others (and the DB write) wait on.
     return await asyncio.shield(task)
+
+
+async def _usable_stored_review(company: str, model: str) -> ReviewResponse | None:
+    """The bike's stored review as a saved-0 response when it is usable, else None. 500 on a read failure."""
+    try:
+        bike_id, stored = await asyncio.to_thread(get_stored_review, company, model)
+    except Exception as exc:  # noqa: BLE001 — a read failure must not start a paid run
+        logger.error("review read failed | company=%r model=%r | %s", company, model, exc)
+        raise HTTPException(status_code=500, detail="database read failed") from exc
+    if stored is None or not is_usable_review(stored):
+        return None
+    return ReviewResponse(review=stored, bike_id=bike_id, saved=0)
+
+
+@app.post("/v1/search/review", response_model=ReviewResponse, dependencies=[Depends(require_api_key)])
+async def search_review(req: SearchRequest) -> ReviewResponse:
+    """The bike's expert review: the stored one, or — only when it has none — a new search.
+
+    A bike with a usable stored review (non-empty `ref`, sources_used >= 1)
+    gets it back from bike_review / bike_review_source with saved 0 — no CLI
+    run and no busy check (like /v1/search/photos), so repeated calls cannot
+    burn subscription runs. Otherwise one CLI search (no Playwright); a usable
+    result replaces the bike's stored review and its sources (bike row
+    created if missing) and comes back with saved 1. Anything less writes and
+    deletes nothing (saved 0) and the response carries what this run found
+    (score 0 / no sources, which the UI reads as "no review"). Same 401 / 422
+    / 502 / 503 / 500 mapping as the offer routes and the SAME
+    SEARCHER_MAX_CONCURRENT slots.
+    """
+    logger.info("review search request | company=%r model=%r", req.company, req.model)
+    stored = await _usable_stored_review(req.company, req.model)
+    if stored is not None:
+        logger.info("review already stored — no search | bike_id=%s", stored.bike_id)
+        return stored
+    assert _semaphore is not None  # set in lifespan
+    if _semaphore.locked():
+        logger.warning("review search refused: busy | company=%r model=%r", req.company, req.model)
+        raise HTTPException(status_code=503, detail="searcher busy")
+    t_start = time.perf_counter()
+    async with _semaphore:
+        # Re-check inside the slot: a search for this bike that finished meanwhile
+        # (another request / instance) already paid for its review.
+        stored = await _usable_stored_review(req.company, req.model)
+        if stored is not None:
+            logger.info("review stored meanwhile — no search | bike_id=%s", stored.bike_id)
+            return stored
+        try:
+            found = await find_bike_review(req.company, req.model)
+        except SearcherError as exc:
+            logger.error("review search failed | company=%r model=%r | %s", req.company, req.model, exc)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        try:
+            bike_id, saved = await asyncio.to_thread(save_review, req.company, req.model, found)
+        except Exception as exc:  # noqa: BLE001 — logged in the repository; callers get a summary only
+            raise HTTPException(status_code=500, detail="database write failed") from exc
+    logger.info(
+        "review search complete | company=%r model=%r rating=%.1f sources_used=%d ref=%d saved=%d "
+        "bike_id=%s elapsed=%.2fs",
+        req.company, req.model, found.rating, found.sources_used, len(found.ref), int(saved),
+        bike_id, time.perf_counter() - t_start,
+    )
+    return ReviewResponse(review=found, bike_id=bike_id, saved=int(saved))

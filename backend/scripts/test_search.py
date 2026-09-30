@@ -14,10 +14,11 @@ it passes on a cold or aged database. Endpoints covered here:
            live house-brand search — the ONE paid searcher run in the suite — only when the searcher is up)
            /v1/bike/allegro · /v1/bike/allegro/search (404 only — no paid run)
            /v1/bike/photos · /v1/bike/photos/search (404 only — no paid run)
+           /v1/bike/review · /v1/bike/review/search (404 only — no paid run)
   --ai     /v1/bike/search (free text) · /v1/bike/parse · /v1/bike/ceneo
 
 The other endpoints have their own single-happy-path script: test_details.py
-(/details), test_review.py (/review), test_equipment.py (/equipment/details),
+(/details), test_equipment.py (/equipment/details),
 test_equipment_review.py (/equipment/review).
 Exit code 0 = every selected case passed (skips do not fail); 1 = a failure.
 """
@@ -61,6 +62,8 @@ ALLEGRO_URL = f"{BASE}/v1/bike/allegro"
 ALLEGRO_SEARCH_URL = f"{BASE}/v1/bike/allegro/search"
 PHOTOS_URL = f"{BASE}/v1/bike/photos"
 PHOTOS_SEARCH_URL = f"{BASE}/v1/bike/photos/search"
+REVIEW_URL = f"{BASE}/v1/bike/review"
+REVIEW_SEARCH_URL = f"{BASE}/v1/bike/review/search"
 SEARCHER_URL = os.getenv("SEARCHER_URL", "").strip().rstrip("/")
 
 
@@ -88,7 +91,7 @@ class _DB:
         names = iter(range(len(params)))
         bound = re.sub(r"\?", lambda _: f":p{next(names)}", sql)
         values = {f"p{i}": v for i, v in enumerate(params)}
-        insert_with_id = re.match(r"\s*INSERT INTO (bike|search_cache|bike_offer)\b", sql, re.I)
+        insert_with_id = re.match(r"\s*INSERT INTO (bike|search_cache|bike_offer|bike_review)\b", sql, re.I)
         if insert_with_id:
             bound += " RETURNING id"
         result = self._conn.execute(text(bound), values)
@@ -156,6 +159,8 @@ def _delete_bike(brand: str, model: str) -> None:
             f"DELETE FROM bike_popular WHERE bike_id IN {ids}",
             f"DELETE FROM search_bike_rating_cache WHERE bike_id IN {ids}",
             f"DELETE FROM bike_detail_photos WHERE bike_id IN {ids}",
+            f"DELETE FROM bike_review_source WHERE review_id IN (SELECT id FROM bike_review WHERE bike_id IN {ids})",
+            f"DELETE FROM bike_review WHERE bike_id IN {ids}",
             f"DELETE FROM bike_detail_component WHERE bike_detail_id IN (SELECT id FROM bike_detail WHERE bike_id IN {ids})",
             f"DELETE FROM bike_detail WHERE bike_id IN {ids}",
             "DELETE FROM bike WHERE brand = ? AND model = ?",
@@ -623,6 +628,101 @@ def case_photos_search():
     assert resp.status_code == 404, f"Expected 404 for an unknown bike, got {resp.status_code}: {resp.text[:200]}"
 
 
+FIX_REVIEW_BRAND, FIX_REVIEW_MODEL = "Smoke Fixture", "Review Bike"
+FIX_REVIEW_BARE_MODEL = "Review Bike Without Review"
+EMPTY_REVIEW = {"score": 0, "explanation": "", "ref": [], "rating": 0.0, "sources_used": 0}
+
+
+def case_review():
+    """/v1/bike/review serves the stored bike_review + bike_review_source rows (no AI, no cache; TODO-037)."""
+    for model in (FIX_REVIEW_MODEL, FIX_REVIEW_BARE_MODEL):
+        _delete_bike(FIX_REVIEW_BRAND, model)
+    bike_id = _insert_bike(FIX_REVIEW_BRAND, FIX_REVIEW_MODEL)
+    _insert_bike(FIX_REVIEW_BRAND, FIX_REVIEW_BARE_MODEL)
+    refs = ["https://www.bikeradar.com/smoke-review", "https://www.reddit.com/r/bicycling/smoke-review"]
+    explanation = "Recenzja testowa: rower solidny i wygodny."
+    conn = _DB()
+    try:
+        review_id = conn.execute(
+            "INSERT INTO bike_review (bike_id, score, explanation, rating, sources_used, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (bike_id, 8, explanation, 7.6, 2, _now(), _now()),
+        ).lastrowid
+        # Inserted out of order: `ref` must follow display_order (the tier order), not insertion order.
+        for order in (1, 0):
+            conn.execute(
+                "INSERT INTO bike_review_source (review_id, url, display_order) VALUES (?, ?, ?)",
+                (review_id, refs[order], order),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    body = {"company": FIX_REVIEW_BRAND, "model": FIX_REVIEW_MODEL}
+    key = _norm_key(body)
+    try:
+        _cache_row_delete("/v1/bike/review", key)
+        t0 = time.perf_counter()
+        resp = _post(REVIEW_URL, body, timeout=10)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        assert resp.json() == {
+            "score": 8, "explanation": explanation, "ref": refs, "rating": 7.6, "sources_used": 2,
+        }, resp.json()
+        assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
+        assert not _cache_row_exists("/v1/bike/review", key), "/v1/bike/review must not write a generic-cache row"
+        # A known bike without a review and an unknown bike are both a fast 200 with the empty review.
+        for bare in ({"company": FIX_REVIEW_BRAND, "model": FIX_REVIEW_BARE_MODEL},
+                     {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}):
+            t0 = time.perf_counter()
+            resp = _post(REVIEW_URL, bare, timeout=10)
+            elapsed = time.perf_counter() - t0
+            assert resp.status_code == 200 and resp.json() == EMPTY_REVIEW, resp.text[:200]
+            assert elapsed < 5.0, f"empty-review read took {elapsed:.2f}s — expected < 5s (AI ran?)"
+    finally:
+        for model in (FIX_REVIEW_MODEL, FIX_REVIEW_BARE_MODEL):
+            _delete_bike(FIX_REVIEW_BRAND, model)
+
+
+def case_review_search():
+    """/v1/bike/review/search: 404 for an unknown bike, and a stored review comes back without a searcher run.
+
+    Deliberately no live review run here: every searcher run is a paid subscription
+    search, and the one live run this suite keeps is case_decathlon_search, which
+    exercises the same proxy code path (searcher_client._search). The stored-review
+    short-circuit returns before the searcher is touched, so it is safe (and free)
+    even with a searcher configured."""
+    resp = _post(REVIEW_SEARCH_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=30)
+    assert resp.status_code == 404, f"Expected 404 for an unknown bike, got {resp.status_code}: {resp.text[:200]}"
+
+    _delete_bike(FIX_REVIEW_BRAND, FIX_REVIEW_MODEL)
+    bike_id = _insert_bike(FIX_REVIEW_BRAND, FIX_REVIEW_MODEL)
+    ref = "https://www.bikeradar.com/smoke-review-search"
+    conn = _DB()
+    try:
+        review_id = conn.execute(
+            "INSERT INTO bike_review (bike_id, score, explanation, rating, sources_used, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (bike_id, 7, "Recenzja zapisana.", 6.9, 1, _now(), _now()),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO bike_review_source (review_id, url, display_order) VALUES (?, ?, ?)", (review_id, ref, 0),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        t0 = time.perf_counter()
+        resp = _post(REVIEW_SEARCH_URL, {"company": FIX_REVIEW_BRAND, "model": FIX_REVIEW_MODEL}, timeout=10)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200, f"Expected 200 (stored review), got {resp.status_code}: {resp.text[:200]}"
+        assert resp.json() == {
+            "score": 7, "explanation": "Recenzja zapisana.", "ref": [ref], "rating": 6.9, "sources_used": 1,
+        }, resp.json()
+        assert elapsed < 5.0, f"stored review took {elapsed:.2f}s — the searcher must not run"
+    finally:
+        _delete_bike(FIX_REVIEW_BRAND, FIX_REVIEW_MODEL)
+
+
 # ── Cases that call the Anthropic API (--ai) ────────────────────────────────
 
 def case_search_free_text():
@@ -668,6 +768,8 @@ CASES = [
     (case_allegro_search, False),
     (case_photos, False),
     (case_photos_search, False),
+    (case_review, False),
+    (case_review_search, False),
     (case_search_free_text, True),
     (case_parse, True),
     (case_ceneo, True),

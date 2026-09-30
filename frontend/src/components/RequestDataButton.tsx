@@ -19,7 +19,7 @@ interface RequestDataButtonProps {
   onRequested?: () => Promise<void>
   pendingLabel?: string
   // Shown when `onRequested` resolved with nothing found — offers by default,
-  // "Nie znaleziono zdjęć" in the photo gallery.
+  // "Nie znaleziono zdjęć" in the photo gallery, "Nie znaleziono recenzji" in the review.
   emptyLabel?: string
 }
 

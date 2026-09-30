@@ -1,15 +1,18 @@
-"""HTTP client for the on-demand searcher service (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro, bike photos).
+"""HTTP client for the on-demand searcher service (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro, bike photos,
+TODO-037 bike review).
 
 The searcher (top-level `searcher/`, port 8100 locally) runs the Claude Code CLI
 once per search — plus Playwright once per OLX listing, or once on the
 manufacturer page for photos — and writes what it finds into bike_offer /
-bike_offer_photos (offers) or bike_detail_photos (photos). The backend only
-proxies the request, waits, and hands back the searcher's body — it never calls
-Claude for OLX, Decathlon, Allegro or bike photos. One client, four routes:
+bike_offer_photos (offers), bike_detail_photos (photos) or bike_review /
+bike_review_source (review). The backend only proxies the request, waits, and
+hands back the searcher's body — it never calls Claude for OLX, Decathlon,
+Allegro, bike photos or the bike review. One client, five routes:
 `search_olx` posts to /v1/search/olx, `search_decathlon` to
-/v1/search/decathlon, `search_allegro` to /v1/search/allegro and
-`search_photos` to /v1/search/photos (see SEARCH_PATHS); the offer routes
-answer {offers, info}, the photo route {photos}, each validated into the
+/v1/search/decathlon, `search_allegro` to /v1/search/allegro,
+`search_photos` to /v1/search/photos and `search_review` to
+/v1/search/review (see SEARCH_PATHS); the offer routes answer {offers, info},
+the photo route {photos}, the review route {review}, each validated into the
 route's model.
 
 Configuration (backend/.env):
@@ -43,7 +46,7 @@ from typing import TypeVar
 import httpx
 from pydantic import BaseModel
 
-from .schemas import BikeOfferResponse, BikePhotosResponse, UsedBikeResponse
+from .schemas import BikeOfferResponse, BikePhotosResponse, BikeReviewResponse, UsedBikeResponse
 
 logger = logging.getLogger("biker.searcher")
 
@@ -52,6 +55,7 @@ SEARCH_PATHS = {
     "decathlon": "/v1/search/decathlon",
     "allegro": "/v1/search/allegro",
     "photos": "/v1/search/photos",
+    "review": "/v1/search/review",
 }
 _SOURCE_BY_PATH = {path: source for source, path in SEARCH_PATHS.items()}  # for log lines
 DEFAULT_TIMEOUT = 600.0  # one CLI search + photo scraping can take minutes
@@ -72,6 +76,17 @@ class _SearcherPhotosResponse(BikePhotosResponse):
     """
 
     photos: list[str]
+
+
+class _SearcherReviewResponse(BaseModel):
+    """The searcher's review body: {review: {...}, bike_id, saved}.
+
+    `review` is required and nested — unlike the other routes the payload is not
+    the top level — so search_review unwraps it; an offers- or photos-shaped
+    body fails validation (502) instead of reading as "no review".
+    """
+
+    review: BikeReviewResponse
 
 # Searches in progress, keyed on (path, normalised company, normalised model) —
 # a second click for the same bike on the same source awaits the running
@@ -195,10 +210,13 @@ async def _post_search(path: str, company: str, model: str, response_model: type
         # kilobytes; the browser gets the fixed summary, the log has the full error.
         raise SearcherFailed(502, "searcher returned a malformed response") from exc
 
-    # Offer routes carry `offers`, the photo route `photos` — log whichever it is.
+    # Offer routes carry `offers`, the photo route `photos`, the review route `review.ref` — log whichever it is.
     items = getattr(result, "offers", None)
     if items is None:
-        items = getattr(result, "photos", [])
+        items = getattr(result, "photos", None)
+    if items is None:
+        review = getattr(result, "review", None)
+        items = review.ref if review is not None else []
     logger.info(
         "searcher %s done | company=%r model=%r items=%d bike_id=%s saved=%s elapsed=%.2fs",
         source, company, model, len(items),
@@ -226,7 +244,7 @@ async def _search(path: str, company: str, model: str, response_model: type[Resp
     Raises SearcherNotConfigured / SearcherUnavailable / SearcherBusy /
     SearcherFailed; never returns a partial result. The searcher's extra
     `bike_id` / `saved` fields are dropped — the backend's contract is the
-    plain {offers, info} (or {photos}) model. The underlying task is shielded, so a caller
+    plain {offers, info} (or {photos}, or {review}) model. The underlying task is shielded, so a caller
     that disconnects mid-search does not cancel it for the others (or waste
     the CLI run already paid for).
     """
@@ -259,3 +277,13 @@ async def search_allegro(company: str, model: str) -> BikeOfferResponse:
 async def search_photos(company: str, model: str) -> BikePhotosResponse:
     """Run (or join) the manufacturer-page photo search for one bike — see _search."""
     return await _search(SEARCH_PATHS["photos"], company, model, _SearcherPhotosResponse)
+
+
+async def search_review(company: str, model: str) -> BikeReviewResponse:
+    """Run (or join) the expert-review search for one bike (TODO-037) — see _search.
+
+    Returns the review the searcher now has stored for the bike (the empty
+    review when it found nothing usable); the wrapper's bike_id / saved are dropped.
+    """
+    result = await _search(SEARCH_PATHS["review"], company, model, _SearcherReviewResponse)
+    return result.review

@@ -56,6 +56,8 @@ interface BikeDetailsViewProps {
   onSearchNew: () => Promise<void>
   // On-demand photo search behind the gallery's "Request data" button.
   onSearchPhotos: () => Promise<void>
+  // On-demand review search behind the Review section's "Request data" button (TODO-037).
+  onSearchReview: () => Promise<void>
 }
 
 export default function BikeDetailsView({
@@ -80,6 +82,7 @@ export default function BikeDetailsView({
   onSearchUsed,
   onSearchNew,
   onSearchPhotos,
+  onSearchReview,
 }: BikeDetailsViewProps) {
   const { brand, model, accessories, match_score } = bike
   const scoreDisplay = match_score === 10 ? '10' : match_score.toFixed(1)
@@ -204,7 +207,15 @@ export default function BikeDetailsView({
         ) : reviewGrace ? (
           <ReviewSection review={null} state="loading" />
         ) : (
-          <RequestDataButton title="Recenzja ekspertów" company={brand} model={model} missingType={MissingType.Review} />
+          <RequestDataButton
+            title="Recenzja ekspertów"
+            company={brand}
+            model={model}
+            missingType={MissingType.Review}
+            onRequested={onSearchReview}
+            pendingLabel="Szukam recenzji…"
+            emptyLabel="Nie znaleziono recenzji"
+          />
         )}
       </div>
 

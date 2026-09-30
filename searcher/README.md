@@ -1,6 +1,6 @@
 # Biker Searcher
 
-The on-demand marketplace and photo search (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro, bike photos). A small FastAPI service that
+The on-demand marketplace, photo and review search (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro, bike photos, TODO-037 expert reviews). A small FastAPI service that
 runs **only when asked**: `POST /v1/search/olx` searches olx.pl for a bike, scrapes each listing's photos with Playwright
 and writes the result into the shared bike database (`bike_offer` + `bike_offer_photos`, `source = 'olx.pl'`);
 `POST /v1/search/decathlon` searches decathlon.pl the same way (one CLI run, no Playwright) and writes `bike_offer` rows
@@ -13,7 +13,10 @@ clicks **Poproś o dane** in the "Używane" (OLX) / "Nowe" (Decathlon **and** Al
 `POST /v1/search/photos` finds the bike's manufacturer product page (one CLI run) and scrapes up to 8 photos with
 Playwright into `bike_detail_photos` — only for a bike that has no photos yet (stored photos are returned without a
 search and are never replaced); the backend's `POST /v1/bike/photos` is the DB read and `POST /v1/bike/photos/search`
-proxies here from the photo gallery's **Poproś o dane** button. The four searches share `SEARCHER_MAX_CONCURRENT` busy
+proxies here from the photo gallery's **Poproś o dane** button. `POST /v1/search/review` (TODO-037) searches expert
+reviews of the bike (one CLI run, no Playwright) and stores a usable one in `bike_review` + `bike_review_source`; the
+backend's `POST /v1/bike/review` is the DB read and `POST /v1/bike/review/search` proxies here from the "Recenzja
+eksperta" section's **Poproś o dane** button. The five searches share `SEARCHER_MAX_CONCURRENT` busy
 slots (default **10**); one more concurrent search is refused with 503, never queued.
 
 ## Why the Claude Code CLI
@@ -50,17 +53,18 @@ launches no browser.
 
 | File | Responsibility |
 |------|----------------|
-| `app/main.py` | FastAPI app: `GET /health` (open) · `POST /v1/search/olx` · `POST /v1/search/decathlon` · `POST /v1/search/allegro` · `POST /v1/search/photos` (all four `X-Searcher-Key`); one `asyncio.Semaphore(SEARCHER_MAX_CONCURRENT)` (default 10) shared by the four routes around the whole search (`_run_search` is the offers' common body; `locked()` is true only when every slot is taken, so the busy check holds for any slot count); the photo route answers stored photos before the busy check and single-flights identical searches (`_photo_searches`); the default thread pool is sized `SEARCHER_MAX_CONCURRENT + 8` so every slot gets a worker thread |
+| `app/main.py` | FastAPI app: `GET /health` (open) · `POST /v1/search/olx` · `POST /v1/search/decathlon` · `POST /v1/search/allegro` · `POST /v1/search/photos` · `POST /v1/search/review` (all five `X-Searcher-Key`); one `asyncio.Semaphore(SEARCHER_MAX_CONCURRENT)` (default 10) shared by the five routes around the whole search (`_run_search` is the offers' common body; `locked()` is true only when every slot is taken, so the busy check holds for any slot count); the photo route answers stored photos and the review route a usable stored review before the busy check; the photo route single-flights identical searches (`_photo_searches`); the default thread pool is sized `SEARCHER_MAX_CONCURRENT + 8` so every slot gets a worker thread |
 | `app/photos_finder.py` | The moved `find_bike_photos` (the backend's former `bike_photos_finder`): CLI (`WebSearch` only) → `{url}` of the official manufacturer product page → URL validated (http/https, public addresses only) → patchright opens it once (`domcontentloaded`, 60 s, + 4 s) with every browser request passing a route guard (`_RouteGuard`: http/https to public hosts only) → ≤ 8 `<img src/data-src>` URLs (`_IMG_SRC` / `_SKIP` regexes unchanged; local / non-global-IP image hosts dropped) |
+| `app/review_finder.py` | The moved `find_bike_review` (TODO-037, the backend's former `bike_review_finder`): prompt → CLI (`WebSearch,WebFetch`, JSON schema `{score, explanation, per_source[], ref[]}`) → `build_review()`: URLs failing `is_safe_review_url()` (http/https + host, ≤ 2048 chars, not on `BANNED_REVIEW_DOMAINS`) dropped before aggregation, `explanation` capped at 4000 chars, then the old post-processing unchanged: weights `pro_numeric` 3 / `pro_qualitative` 2 / `community` 1, non-zero `rating` only with ≥ 1 pro source, `DISAGREEMENT_THRESHOLD` 3.0 anchoring to the pro/numeric (else pro/qualitative) mean + the Polish disagreement sentence, `ref` sorted Tier 1 → 2 → 3, `<cite>` stripped, score clamped 0–10. The SDK finder's balanced-brace scan and no-tool repair pass are gone — `--json-schema` returns a validated object or the run fails (502). No Playwright |
 | `app/config.py` | Env vars (see below), loads `searcher/.env`; `DATABASE_URL` is required — no SQLite fallback |
 | `app/claude_cli.py` | `run_structured(system_prompt, user_message, schema, tools=TOOLS)` — the `claude -p` subprocess wrapper (argv list, `stdin=DEVNULL`, timeout, sanitised errors; `tools` defaults to `WebSearch,WebFetch` for the offer routes, the photo search passes `WebSearch`); `cli_version()` |
 | `app/olx_finder.py` | The moved `find_used_bikes`: prompt → CLI → ≤ 5 offers (`is_new=false`, `source=olx.pl`) → photo scrape. Also home of `SearcherError`, the `{info, offers[]}` CLI schema and the `bike_offer` column widths the Decathlon and Allegro finders reuse |
 | `app/decathlon_finder.py` | The moved `find_decathlon_offers` (TODO-032): prompt → CLI → ≤ 3 offers (`url` on `https://www.decathlon.pl/`, `is_new` from the page — default true, `source=decathlon.pl`, `photos=[]`, `city=null`). No Playwright |
 | `app/allegro_finder.py` | The moved `find_allegro_offers` (TODO-033, the backend's former `bike_offer_finder`): prompt → CLI → ≤ 3 offers (`url` must be an `allegro.pl/oferta/…` or `allegro.pl/produkt/…` page — a search/category page is dropped, `is_new` from the result title/snippet, `price` may be `""` when no snippet showed one, `source=allegro.pl`, `photos=[]`, `city=null`). No Playwright — the photo scrape was dropped because allegro.pl answers 403 to Chromium too |
 | `app/olx_image_fetcher.py` · `app/browser_config.py` | Playwright scrape of ≤ 4 `apollo.olxcdn.com` images per listing (copied from the backend); `BROWSER_SLOTS` caps browser launches per process (`BROWSER_MAX_CONCURRENCY`, default 2) for the OLX and photo scrapes alike |
-| `app/models.py` · `app/repository.py` | SQLAlchemy over `bike` / `bike_offer` / `bike_offer_photos` / `bike_detail_photos` (DDL identical to `backend/app/models.py`; `init_db()` only checks they exist and that `bike_detail_photos` has `bike_id`); `save_offers(company, model, offers, source)` upserts on `url` within this bike **and** source, takes `is_new` from each offer, never re-parents a listing, deletes the bike's stale rows of that source only when something new was stored; `get_stored_photos` / `save_photos` read and write the bike's photos — insert-only, only when it has none, under a `SELECT … FOR UPDATE` on the bike row |
-| `app/prompts/bike_offer_olx.md` · `app/prompts/bike_offer_decathlon.md` · `app/prompts/bike_offer_allegro.md` · `app/prompts/bike_photos.md` | The system prompts — OLX and Decathlon byte-for-byte the backend's former prompts; the Allegro one is a CLI-tuned rewrite (WebSearch only, allegro.pl answers 403 to every fetch — see "Why the Claude Code CLI"); the photos one is the backend's with two CLI edits (`WebSearch` for `web_search` — the only tool it gets — and a `{"url": …}` JSON object for the bare URL line) |
-| `scripts/test_searcher.py` | Smoke test, free: health, 401 ×2 + 422 on `/v1/search/olx` (TC-1–4), 401 + 422 on `/v1/search/decathlon` (TC-5–6), 401 + 422 on `/v1/search/allegro` (TC-7–8), 401 + 422 on `/v1/search/photos` (TC-9–10), a bike that already has photos → 200 from the DB, `saved: 0`, < 5 s (TC-11; `SEARCHER_PHOTOS_BIKE="Brand\|Model"` or the first such bike in `DATABASE_URL`, posted only after `DATABASE_URL` confirms ≥ 1 photo row, else SKIP — `DATABASE_URL` must be the running searcher's database, or TC-11 could start a paid search). No `claude -p` run — the one paid live search of the test set is `backend/scripts/test_search.py` `case_decathlon_search` |
+| `app/models.py` · `app/repository.py` | SQLAlchemy over `bike` / `bike_offer` / `bike_offer_photos` / `bike_detail_photos` / `bike_review` / `bike_review_source` (DDL identical to `backend/app/models.py`; `init_db()` only checks they exist and that `bike_detail_photos` has `bike_id`); `save_offers(company, model, offers, source)` upserts on `url` within this bike **and** source, takes `is_new` from each offer, never re-parents a listing, deletes the bike's stale rows of that source only when something new was stored; `get_stored_photos` / `save_photos` read and write the bike's photos — insert-only, only when it has none, under a `SELECT … FOR UPDATE` on the bike row; `get_stored_review` / `save_review` read and upsert the bike's review — written only when `ref` is non-empty and `sources_used >= 1`, replacing the previous review and its sources (`created_at` kept) |
+| `app/prompts/bike_offer_olx.md` · `app/prompts/bike_offer_decathlon.md` · `app/prompts/bike_offer_allegro.md` · `app/prompts/bike_photos.md` · `app/prompts/bike_review.md` | The system prompts — OLX and Decathlon byte-for-byte the backend's former prompts; the Allegro one is a CLI-tuned rewrite (WebSearch only, allegro.pl answers 403 to every fetch — see "Why the Claude Code CLI"); the photos one is the backend's with two CLI edits (`WebSearch` for `web_search` — the only tool it gets — and a `{"url": …}` JSON object for the bare URL line); the review one is the backend's former `bike_review.md` |
+| `scripts/test_searcher.py` | Smoke test, free: health, 401 ×2 + 422 on `/v1/search/olx` (TC-1–4), 401 + 422 on `/v1/search/decathlon` (TC-5–6), 401 + 422 on `/v1/search/allegro` (TC-7–8), 401 + 422 on `/v1/search/photos` (TC-9–10), 401 + 422 on `/v1/search/review` (TC-12–13), a bike that already has photos → 200 from the DB, `saved: 0`, < 5 s (TC-11; `SEARCHER_PHOTOS_BIKE="Brand\|Model"` or the first such bike in `DATABASE_URL`, posted only after `DATABASE_URL` confirms ≥ 1 photo row, else SKIP — `DATABASE_URL` must be the running searcher's database, or TC-11 could start a paid search). No `claude -p` run — the one paid live search of the test set is `backend/scripts/test_search.py` `case_decathlon_search` |
 
 ## Run locally
 
@@ -97,7 +101,7 @@ The backend picks it up through `SEARCHER_URL=http://localhost:8100` + `SEARCHER
 | `CLAUDE_BIN` | no | Path to the CLI when it is not on `PATH` |
 | `SEARCHER_CLAUDE_MODEL` | no | Default `claude-haiku-4-5-20251001` |
 | `SEARCHER_CLI_TIMEOUT` | no | Seconds before a CLI run is killed (default 300) |
-| `SEARCHER_MAX_CONCURRENT` | no | Searches (CLI runs; the OLX and photo ones also open a browser) allowed at once, counted across **all four** search routes; further requests get 503 "searcher busy" (default **10**; locally that is up to ten CLI runs in one process, on Cloud Run each instance still serves one request and every further search gets its own instance). A photos request for a bike that already has photos never takes a slot |
+| `SEARCHER_MAX_CONCURRENT` | no | Searches (CLI runs; the OLX and photo ones also open a browser) allowed at once, counted across **all five** search routes; further requests get 503 "searcher busy" (default **10**; locally that is up to ten CLI runs in one process, on Cloud Run each instance still serves one request and every further search gets its own instance). A photos request for a bike that already has photos never takes a slot |
 | `BROWSER_MAX_CONCURRENCY` | no | Chromium launches allowed at once in this process (default **2**; each costs 0.5–0.9 GiB). With more search slots than browsers, an OLX or photo search that reaches its scrape waits for a free browser — it is not refused |
 | `SEARCHER_CREATE_TABLES` | no | `true` = `create_all()` on startup for a database the backend never touches (scratch tests). Default: refuse to start until `bike` / `bike_offer` / `bike_offer_photos` / `bike_detail_photos` exist — the backend creates them, and two `create_all()`s on one fresh database race. A `bike_detail_photos` without `bike_id` (a database not yet migrated by `backend/scripts/migrate_photos_bike_id.py`) also aborts startup |
 | `PLAYWRIGHT_HEADLESS` | no | `true` on servers / in Docker; unset = visible browser for debugging |
@@ -333,6 +337,73 @@ otherwise one `bike_detail_photos` row per URL with `display_order` 0..n-1.
 hostile DNS server answering public first and private second would get past the guard. Not mitigated (it would need
 pinning the resolved address into the browser); the metadata name itself is additionally mapped to NOTFOUND inside
 Chromium. Image hosts in (5) are checked by string only — a public-looking name that resolves privately is stored.
+
+### `POST /v1/search/review`
+
+```http
+POST http://localhost:8100/v1/search/review
+Content-Type: application/json
+X-Searcher-Key: dev-local-searcher-key
+
+{"company": "Canyon", "model": "Grizl CF 7 ESC"}
+```
+
+```bash
+curl -s -X POST http://localhost:8100/v1/search/review   -H "Content-Type: application/json" -H "X-Searcher-Key: dev-local-searcher-key"   -d '{"company":"Canyon","model":"Grizl CF 7 ESC"}'
+```
+
+```json
+{
+  "review": {
+    "score": 8,
+    "explanation": "Canyon Grizl CF 7 ESC jest powszechnie chwalony za wszechstronną geometrię gravelową…",
+    "ref": [
+      "https://www.bikeradar.com/reviews/bikes/gravel-bikes/canyon-grizl-cf-7-esc-review",
+      "https://www.reddit.com/r/gravelcycling/comments/xxxx"
+    ],
+    "rating": 7.8,
+    "sources_used": 3
+  },
+  "bike_id": 12,
+  "saved": 1
+}
+```
+
+- `200` → `{"review": {score, explanation, ref, rating, sources_used}, "bike_id": int | null, "saved": 0 | 1}` —
+  `review` has the backend's `BikeReviewResponse` shape (`score` 0–10 int, `explanation` Polish, `ref` tier-sorted URLs,
+  `rating` 0–10 one decimal, `sources_used`). **A bike with a usable stored review** (`ref` non-empty **and**
+  `sources_used >= 1`) **gets it back from the DB** (`saved: 0`) — no CLI run, no busy check, like
+  `/v1/search/photos`, so repeated calls cannot burn subscription runs. Otherwise the search runs; a usable result
+  replaces the bike's stored review and its sources → `saved: 1`, `review` = what was stored. Anything less writes and
+  deletes **nothing** (not even a bike row) → `saved: 0`, `review` = what this run found (score 0 / `ref: []` /
+  `sources_used: 0` — "no review"; `bike_id` then `null` for a bike the DB does not know)
+- `401` / `422` exactly as for `/v1/search/olx`
+- `502` `{"detail": "claude CLI failed: exit 1" | …}` when the CLI run fails (the backend's old finder swallowed a
+  missing JSON into the fallback review; here the CLI either returns the schema-validated object or fails)
+- `503` `{"detail": "searcher busy"}` — the `SEARCHER_MAX_CONCURRENT` slots (default 10) are **shared** with the
+  other four routes (nothing queues); never for a bike whose review is already stored
+- `500` `{"detail": "database read failed" | "database write failed"}`
+
+**Flow**: (1) DB read: bike looked up by normalised brand/model, its `bike_review` + `bike_review_source` rows
+(`display_order, id`) — a usable review → returned, **stop** → (1b) once a slot is taken, the same read **again** — a
+review stored meanwhile by another request / instance → returned, **stop** (no paid run) →
+(2) `claude -p` once with `app/prompts/bike_review.md` (`--tools WebSearch,WebFetch`, JSON schema
+`{score, explanation, per_source[{source, type, score, url}], ref[]}`, message `Find reviews for: {company} {model}`) —
+**no Playwright** → (3) `build_review()`: every `per_source` entry and `ref` URL failing `is_safe_review_url()` is
+dropped first — `per_source` entries **before** aggregation, so they never count in `rating` / `sources_used`. A safe URL
+is `http`/`https` with a non-empty host (no `javascript:` / `data:` / relative / scheme-less value — every viewer's
+browser gets it as a link), ≤ 2048 characters, and not on a `BANNED_REVIEW_DOMAINS` host (`escapecollective.com`,
+`velominati.com`, `www.` stripped, subdomains included — the prompt forbids them, the probe still cited one;
+`backend/scripts/copy_review_cache_to_table.py` applies the same rule). Then per-source scores of a known tier
+(`pro_numeric` / `pro_qualitative` / `community`) clamped to 0–10, weighted mean 3 / 2 / 1 (0.0 and `sources_used: 0`
+without a pro source); spread > 3.0 → the rating anchors to the pro/numeric mean (else pro/qualitative) and a Polish
+disagreement sentence is appended to `explanation`; `<cite>` markup stripped; `explanation` capped at 4000 characters
+(`EXPLANATION_MAX_LEN`, the disagreement sentence included and kept whole); `ref` sorted Tier 1 → 2 → 3; no
+`explanation` → the fallback review `{0, "Recenzja niedostępna.", [], 0.0, 0}` → (4) only for a usable review, one DB
+transaction: bike looked up by normalised brand/model (created with the caller's casing if missing),
+`INSERT … ON CONFLICT (bike_id) DO UPDATE` on `bike_review` (score, explanation, rating, sources_used, updated_at;
+`created_at` kept), the review's `bike_review_source` rows deleted and re-inserted with `display_order` = index in
+`ref`.
 
 ### `GET /health`
 

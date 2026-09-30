@@ -10,6 +10,10 @@ for the same bike (the UI fires Decathlon + Allegro together).
 
 Bike photos (/v1/search/photos) go into bike_detail_photos keyed on bike_id,
 written once and never replaced: get_stored_photos / save_photos below.
+
+Bike reviews (/v1/search/review, TODO-037) go into bike_review (one row per
+bike) + bike_review_source (its `ref` URLs in order): get_stored_review /
+save_review below. A review is replaced only by a usable one.
 """
 import logging
 from datetime import datetime, timezone
@@ -22,10 +26,12 @@ from .models import (
     BikeOffer as BikeOfferRow,  # aliased: schemas.BikeOffer is the response shape
     BikeOfferPhoto as BikeOfferPhotoRow,
     BikeDetailPhoto,
+    BikeReview as BikeReviewRow,  # aliased: schemas.BikeReview is the response shape
+    BikeReviewSource,
     dialect_insert,
     get_session,
 )
-from .schemas import BikeOffer
+from .schemas import BikeOffer, BikeReview
 
 logger = logging.getLogger("searcher.repository")
 
@@ -221,6 +227,88 @@ def save_photos(company: str, model: str, photos: list[str]) -> tuple[Optional[i
     except Exception as exc:
         session.rollback()
         logger.error("photos store failed | company=%r model=%r | %s", company, model, exc)
+        raise
+    finally:
+        session.close()
+
+
+def _stored_review(session, bike_id: int) -> Optional[BikeReview]:
+    row = session.query(BikeReviewRow).filter(BikeReviewRow.bike_id == bike_id).one_or_none()
+    if row is None:
+        return None
+    refs = [
+        r.url for r in session.query(BikeReviewSource.url)
+        .filter(BikeReviewSource.review_id == row.id)
+        .order_by(BikeReviewSource.display_order, BikeReviewSource.id)
+    ]
+    return BikeReview(
+        score=row.score, explanation=row.explanation, ref=refs,
+        rating=row.rating, sources_used=row.sources_used,
+    )
+
+
+def get_stored_review(company: str, model: str) -> tuple[Optional[int], Optional[BikeReview]]:
+    """(bike_id, stored review or None); (None, None) for an unknown bike. Never creates anything."""
+    session = get_session()
+    try:
+        bike_id = _find_bike_id(session, company, model)
+        if bike_id is None:
+            return None, None
+        return bike_id, _stored_review(session, bike_id)
+    finally:
+        session.close()
+
+
+def is_usable_review(review: BikeReview) -> bool:
+    """Only a review with sources is worth storing — a degenerate rating-0 answer never is."""
+    return bool(review.ref) and review.sources_used >= 1
+
+
+def save_review(company: str, model: str, review: BikeReview) -> tuple[Optional[int], bool]:
+    """Store `review` as the bike's review when it is usable; returns (bike_id, saved).
+
+    Usable = non-empty `ref` and sources_used >= 1. Then, in one transaction:
+    the bike row is created if missing (caller's casing), its bike_review row
+    is upserted on bike_id (INSERT … ON CONFLICT (bike_id) DO UPDATE — score,
+    explanation, rating, sources_used, updated_at replaced, created_at kept)
+    and its bike_review_source rows are rewritten with display_order = the
+    index in `ref`. An unusable review writes and deletes nothing — not even a
+    bike row — so a bad run never wipes a stored review; (bike_id or None,
+    False) comes back. Raises on a DB error after rolling back.
+    """
+    session = get_session()
+    try:
+        if not is_usable_review(review):
+            bike_id = _find_bike_id(session, company, model)
+            logger.warning(
+                "no usable review to store — nothing written | company=%r model=%r ref=%d sources_used=%d",
+                company, model, len(review.ref), review.sources_used,
+            )
+            return bike_id, False
+        bike_id = _get_or_create_bike(session, company, model)
+        now = datetime.now(timezone.utc)
+        values = {
+            "bike_id": bike_id, "score": review.score, "explanation": review.explanation,
+            "rating": review.rating, "sources_used": review.sources_used,
+            "created_at": now, "updated_at": now,
+        }
+        stmt = dialect_insert(BikeReviewRow).values(**values).on_conflict_do_update(
+            index_elements=["bike_id"],
+            set_={k: v for k, v in values.items() if k not in ("bike_id", "created_at")},
+        )
+        review_id = session.execute(stmt.returning(BikeReviewRow.id)).scalar_one()
+        session.query(BikeReviewSource).filter_by(review_id=review_id).delete(synchronize_session=False)
+        for idx, url in enumerate(review.ref):
+            session.add(BikeReviewSource(review_id=review_id, url=url, display_order=idx))
+        session.commit()
+        logger.info(
+            "review stored | company=%r model=%r bike_id=%d review_id=%d rating=%.1f sources=%d",
+            company, model, bike_id, review_id, review.rating, len(review.ref),
+        )
+        return bike_id, True
+    except Exception as exc:
+        session.rollback()
+        logger.error("review store failed | company=%r model=%r | %s", company, model, exc)
         raise
     finally:
         session.close()

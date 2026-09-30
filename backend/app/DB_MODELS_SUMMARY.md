@@ -38,7 +38,7 @@ Defines 8 tables with relationships and constraints:
 - Shared across search ratings, details, and offers
 - Timestamp tracking (created_at, updated_at)
 - One-to-many: bike_offer, search_bike_rating_cache
-- One-to-one: bike_detail
+- One-to-one: bike_detail, bike_review
 
 **`SearchCache`** / **`SearchBikeRating`** — the search cache
 - `search_cache`: one row per query (`query`, `time_stored`)
@@ -72,6 +72,13 @@ Defines 8 tables with relationships and constraints:
 **`BikeOfferPhoto`** — Photo URL for offers
 - Belongs to BikeOffer
 - Ordered by display_order field
+
+**`BikeReview`** / **`BikeReviewSource`** — stored expert review (tables `bike_review` / `bike_review_source`, TODO-037)
+- `bike_review`: one row per bike (`bike_id` UNIQUE, `ON DELETE CASCADE`) — `score`, `explanation`, `rating`,
+  `sources_used`, `created_at`, `updated_at`
+- `bike_review_source`: the review's `ref` URLs, FK `review_id` (`ON DELETE CASCADE`), ordered by `display_order, id`
+- Written only by the searcher (`POST /v1/search/review`); read by `app/reviews_repository.py` `get_review`; no TTL
+- Existing generic-cache reviews are copied in once by `scripts/copy_review_cache_to_table.py`
 
 ### 2. `app/repository.py` — Data Access Layer
 

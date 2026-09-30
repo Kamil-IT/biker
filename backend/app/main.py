@@ -25,7 +25,6 @@ from .schemas import (  # noqa: E402
 from .bike_finder import find_bikes  # noqa: E402
 from .bike_details_finder import find_bike_details  # noqa: E402
 from .bike_description_finder import find_bike_description  # noqa: E402
-from .bike_review_finder import find_bike_review  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
 from .equipment_details_finder import find_equipment_details  # noqa: E402
 from .equipment_description_finder import find_equipment_description  # noqa: E402
@@ -46,11 +45,13 @@ from .offers_repository import (  # noqa: E402
 )
 from .popular_repository import get_popular_bikes  # noqa: E402
 from .photos_repository import get_bike_photos  # noqa: E402
+from .reviews_repository import get_review  # noqa: E402
 # The OLX used-bike search (TODO-031), the Decathlon search (TODO-032), the
-# Allegro search (TODO-033) and the bike photo search live in the separate
-# searcher service; the backend reads the DB and proxies the on-demand searches to it.
+# Allegro search (TODO-033), the bike photo search and the bike review search
+# (TODO-037) live in the separate searcher service; the backend reads the DB and
+# proxies the on-demand searches to it.
 from .searcher_client import (  # noqa: E402
-    search_olx, search_decathlon, search_allegro, search_photos,
+    search_olx, search_decathlon, search_allegro, search_photos, search_review,
     SearcherNotConfigured, SearcherUnavailable, SearcherBusy, SearcherFailed,
 )
 from .decathlon_brands import is_decathlon_brand, not_sold_info  # noqa: E402
@@ -262,26 +263,71 @@ async def bike_photos_search(req: BikePhotosRequest) -> BikePhotosResponse:
 
 @app.post("/v1/bike/review", response_model=BikeReviewResponse)
 async def bike_review(req: BikeReviewRequest) -> BikeReviewResponse:
-    logger.info("review request | company=%r model=%r", req.company, req.model)
-    _fields = {"company": req.company, "model": req.model}
-    cached = get_cached("/v1/bike/review", _fields, BikeReviewResponse)
-    if cached is not None:
-        return cached
+    """The stored expert review of the bike — a pure DB read (TODO-037).
 
+    No AI call, no generic cache, no TTL: bike_review / bike_review_source are
+    filled only by the searcher service, triggered through
+    /v1/bike/review/search. Unknown bike, nothing stored or a DB error → 200
+    with the empty review (score 0, explanation "", ref [], rating 0.0,
+    sources_used 0). (The generic-cache rows the old web_search finder wrote
+    under /v1/bike/review are not read any more.)
+    """
+    logger.info("review request | company=%r model=%r", req.company, req.model)
     t_start = time.perf_counter()
-    result = await find_bike_review(req.company, req.model)
+    result = get_review(req.company, req.model)
     elapsed = time.perf_counter() - t_start
     logger.info(
-        "review complete | score=%d rating=%.1f sources_used=%d elapsed=%.2fs",
-        result.score,
-        result.rating,
-        result.sources_used,
-        elapsed,
+        "review served from DB | rating=%.1f sources_used=%d refs=%d elapsed=%.3fs",
+        result.rating, result.sources_used, len(result.ref), elapsed,
     )
-    # Require a usable aggregate too, not just links: caching a rating=0 /
-    # sources_used=0 row would pin that degenerate result for this bike forever.
-    if result.ref and result.sources_used >= 1:
-        set_cached("/v1/bike/review", _fields, result)
+    return result
+
+
+@app.post("/v1/bike/review/search", response_model=BikeReviewResponse)
+async def bike_review_search(req: BikeReviewRequest) -> BikeReviewResponse:
+    """Run the expert-review search on demand through the searcher service (TODO-037).
+
+    Proxies to {SEARCHER_URL}/v1/search/review and waits for it
+    (SEARCHER_TIMEOUT, default 600 s) — unless the bike already has a stored
+    review with sources, which is returned without a searcher call. The searcher runs `claude -p` once,
+    stores the review only when it has sources, and returns what is now stored
+    for the bike (the empty review when nothing usable was found). Shares
+    SEARCHER_MAX_INFLIGHT with the other searches. 503 when the searcher is not
+    configured, unreachable or busy, 502 (its detail passed through) when it
+    fails. Never cached.
+    """
+    logger.info("review search request | company=%r model=%r", req.company, req.model)
+    # Same guard as the other proxies: only bikes the app already knows, or
+    # anonymous traffic could mint `bike` rows and spend subscription runs.
+    if not bike_exists(req.company, req.model):
+        logger.warning("review search refused: unknown bike | company=%r model=%r", req.company, req.model)
+        raise HTTPException(status_code=404, detail="Bike not found")
+    # A usable review already stored is returned as is: a repeat click (or a
+    # scripted caller) must not spend another subscription run on it.
+    stored = get_review(req.company, req.model)
+    if stored.ref and stored.sources_used >= 1:
+        logger.info("review search skipped: review already stored | company=%r model=%r", req.company, req.model)
+        return stored
+    t_start = time.perf_counter()
+    try:
+        result = await search_review(req.company, req.model)
+    except SearcherNotConfigured as exc:
+        logger.error("review search: searcher not configured | %s", exc)
+        raise HTTPException(status_code=503, detail="Review searcher is not configured") from exc
+    except SearcherUnavailable as exc:
+        logger.error("review search: searcher unavailable | %s", exc)
+        raise HTTPException(status_code=503, detail="Review searcher unavailable") from exc
+    except SearcherBusy as exc:
+        logger.warning("review search: searcher busy | %s", exc)
+        raise HTTPException(status_code=503, detail="Review searcher is busy — try again in a moment") from exc
+    except SearcherFailed as exc:
+        logger.error("review search failed | status=%d detail=%r", exc.status, exc.detail)
+        raise HTTPException(status_code=502, detail=exc.detail) from exc
+    elapsed = time.perf_counter() - t_start
+    logger.info(
+        "review search complete | rating=%.1f sources_used=%d refs=%d elapsed=%.2fs",
+        result.rating, result.sources_used, len(result.ref), elapsed,
+    )
     return result
 
 

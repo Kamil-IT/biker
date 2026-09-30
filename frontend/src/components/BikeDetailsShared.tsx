@@ -138,7 +138,8 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
   if (state === 'error' || !review) return null
 
   const clean = review.explanation.replace(/<\/?cite[^>]*>/g, '')
-  const refs = review.ref.filter(Boolean)
+  // Only http(s) sources become links — a `javascript:` or `data:` ref is skipped.
+  const refs = review.ref.filter(isWebUrl)
 
   const hasRating = typeof review.rating === 'number' && (review.sources_used ?? 0) > 0
 
@@ -181,6 +182,15 @@ export function ReviewSection({ review, state }: { review: ReviewLike | null; st
       )}
     </div>
   )
+}
+
+function isWebUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url)
+    return protocol === 'http:' || protocol === 'https:'
+  } catch {
+    return false
+  }
 }
 
 // One source per row: stars | domain | "Read review →".
