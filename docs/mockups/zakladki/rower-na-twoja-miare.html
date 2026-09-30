@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rower na Twoją miarę — Biker</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .soon {
+      position: relative; overflow: hidden;
+      background: var(--charcoal); color: var(--parchment);
+      border-radius: 1.25rem;
+    }
+    .soon svg { display: block; width: 100%; height: auto; }
+    .soon .line { stroke: var(--parchment); }
+    .soon .dim { stroke: var(--muted); }
+    .soon .dim-text { fill: var(--muted); font-family: var(--font-mono); font-size: 15px; }
+    .soon .node { fill: var(--terra); }
+    .soon .ring { fill: none; stroke: var(--terra); opacity: 0.45; }
+    .scan { animation: scan 7s ease-in-out infinite; }
+    @keyframes scan {
+      0%   { transform: translateX(-120px); opacity: 0; }
+      12%  { opacity: 1; }
+      88%  { opacity: 1; }
+      100% { transform: translateX(640px); opacity: 0; }
+    }
+    @media (prefers-reduced-motion: reduce) { .scan { display: none; } }
+
+    .badge {
+      position: absolute; top: 1.25rem; left: 1.25rem;
+      display: inline-flex; align-items: center; gap: 0.5rem;
+      padding: 0.3rem 0.8rem; border: 1px solid color-mix(in srgb, var(--terra) 70%, transparent);
+      border-radius: 99px; background: color-mix(in srgb, var(--charcoal) 80%, transparent);
+      font-family: var(--font-display); font-weight: 600; font-size: 1rem; letter-spacing: 0.04em;
+    }
+    .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--terra); }
+    .soon-caption { padding: 0 1.5rem 1.5rem; }
+    .soon-caption h2 {
+      margin: 0; font-family: var(--font-display); font-weight: 700;
+      font-size: clamp(1.75rem, 5vw, 2.4rem); line-height: 1.05;
+    }
+    .soon-caption p { margin: 0.5rem 0 0; color: color-mix(in srgb, var(--parchment) 72%, var(--charcoal)); max-width: 34rem; }
+
+    .steps { list-style: none; margin: 3rem 0 0; padding: 0; display: grid; gap: 1.5rem; counter-reset: step; }
+    @media (min-width: 640px) { .steps { grid-template-columns: repeat(3, 1fr); } }
+    .steps li { counter-increment: step; border-top: 2px solid var(--charcoal); padding-top: 0.9rem; }
+    .steps li::before {
+      content: counter(step); display: block; margin-bottom: 0.35rem;
+      font-family: var(--font-display); font-weight: 800; font-size: 1.9rem; line-height: 1; color: var(--terra);
+    }
+    .steps h3 { margin: 0 0 0.3rem; font-family: var(--font-display); font-weight: 700; font-size: 1.3rem; line-height: 1.1; }
+    .steps p { margin: 0; font-size: 0.9375rem; color: var(--ink); }
+
+    .meanwhile { margin-top: 3rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+      border-top: 1px solid var(--border); padding-top: 1.75rem; }
+    .meanwhile p { margin: 0; color: var(--ink); }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <div class="brand-row">
+        <a class="wordmark" href="szukanie-rowerow.html" aria-label="Biker — strona główna">BIKER</a>
+        <span class="tagline">Wyszukiwarka rowerów AI</span>
+      </div>
+      <nav aria-label="Główna nawigacja">
+        <ul class="tabs">
+          <li><a href="szukanie-rowerow.html">Szukanie rowerów</a></li>
+          <li><a href="rower-na-twoja-miare.html" aria-current="page">Rower na Twoją miarę</a></li>
+          <li><a href="kontakt.html">Kontakt</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="wrap hero" aria-labelledby="hero-heading">
+      <h1 id="hero-heading">Rower na<br>Twoją miarę.</h1>
+      <p>Pracujemy nad doborem roweru z pomocą AI. Ta część serwisu jeszcze nie działa.</p>
+    </section>
+
+    <section class="wrap" aria-labelledby="soon-heading">
+      <div class="soon">
+        <span class="badge">Wkrótce</span>
+        <svg viewBox="0 -50 600 380" role="img" aria-label="Szkic roweru z liniami pomiarów: wysokość siodła, zasięg i rozmiar ramy, jeszcze bez wartości">
+          <defs>
+            <pattern id="dots" width="20" height="20" patternUnits="userSpaceOnUse">
+              <circle cx="1" cy="1" r="1" fill="#4A3F35"/>
+            </pattern>
+            <linearGradient id="scan-grad" x1="0" x2="1">
+              <stop offset="0" stop-color="#C45C38" stop-opacity="0"/>
+              <stop offset="0.85" stop-color="#C45C38" stop-opacity="0.22"/>
+              <stop offset="1" stop-color="#C45C38" stop-opacity="0.9"/>
+            </linearGradient>
+          </defs>
+          <rect y="-50" width="600" height="380" fill="url(#dots)"/>
+
+          <!-- rower -->
+          <g class="line" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="150" cy="235" r="68" stroke-width="2" opacity="0.7"/>
+            <circle cx="440" cy="235" r="68" stroke-width="2" opacity="0.7"/>
+            <path d="M150 235 L280 235 L250 118 Z"/>
+            <path d="M250 124 L392 130 L280 235"/>
+            <path d="M392 130 L402 160 L440 235"/>
+            <path d="M392 130 L386 104 L412 100"/>
+            <path d="M250 118 L244 100"/>
+            <path d="M226 98 H264" stroke-width="5"/>
+            <circle cx="280" cy="235" r="11" stroke-width="2"/>
+          </g>
+
+          <!-- linie pomiarów -->
+          <g class="dim" fill="none" stroke-width="1.2" stroke-dasharray="4 5">
+            <path d="M540 98 V303"/><path d="M532 98 H548 M532 303 H548" stroke-dasharray="none"/>
+            <path d="M245 62 H400"/><path d="M245 54 V70 M400 54 V70" stroke-dasharray="none"/>
+            <path d="M292 232 L262 120"/>
+          </g>
+          <text class="dim-text" transform="translate(562 200) rotate(-90)" text-anchor="middle">wysokość siodła ?</text>
+          <text class="dim-text" x="298" y="48">zasięg ?</text>
+          <text class="dim-text" x="300" y="182">rama ?</text>
+
+          <!-- punkty podparcia -->
+          <circle class="ring" cx="245" cy="98" r="12"/><circle class="node" cx="245" cy="98" r="5"/>
+          <circle class="ring" cx="405" cy="101" r="12"/><circle class="node" cx="405" cy="101" r="5"/>
+          <circle class="ring" cx="280" cy="235" r="18"/><circle class="node" cx="280" cy="235" r="5"/>
+
+          <!-- linia skanu -->
+          <rect class="scan" x="0" y="-50" width="90" height="380" fill="url(#scan-grad)"/>
+        </svg>
+        <div class="soon-caption">
+          <h2 id="soon-heading">AI dopasuje rower do Ciebie</h2>
+          <p>Powiesz nam, jak jeździsz i jaką masz sylwetkę, a AI dobierze rozmiar ramy i znajdzie rowery, które będą na Ciebie pasować.</p>
+        </div>
+      </div>
+
+      <ol class="steps" aria-label="Jak to będzie działać">
+        <li><h3>Opowiesz o sobie</h3><p>Wzrost, przekrok, gdzie i jak jeździsz oraz ile chcesz wydać.</p></li>
+        <li><h3>AI zmierzy dopasowanie</h3><p>Policzy rozmiar ramy i sprawdzi, które geometrie pasują do Twojej sylwetki.</p></li>
+        <li><h3>Dostaniesz swoje rowery</h3><p>Modele z naszej bazy z oceną ekspertów i aktualnymi ofertami.</p></li>
+      </ol>
+
+      <div class="meanwhile">
+        <p>Do tego czasu możesz opisać swój rower w wyszukiwarce.</p>
+        <a class="btn" href="szukanie-rowerow.html">Szukaj rowerów</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="wrap"><span>Biker © 2026</span><span>Napędzane przez Claude</span></div></footer>
+</body>
+</html>

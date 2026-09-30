@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kontakt — Biker</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .contact { display: grid; gap: 2rem; }
+    @media (min-width: 640px) { .contact { grid-template-columns: 1fr 13rem; gap: 2.5rem; } }
+    form.card { padding: 1.5rem; display: grid; gap: 1.1rem; }
+    .row { display: grid; gap: 1.1rem; }
+    @media (min-width: 480px) { .row { grid-template-columns: 1fr 1fr; } }
+    textarea.field { min-height: 9rem; resize: vertical; line-height: 1.5; }
+    .field[aria-invalid="true"] { border-color: var(--terra); }
+    .error { margin: 0.35rem 0 0; font-size: 0.8125rem; color: var(--terra-dark); }
+    .error:empty { display: none; }
+    .form-foot { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+    .form-foot small { color: var(--muted); font-size: 0.8125rem; max-width: 18rem; }
+
+    .sent { padding: 2rem 1.5rem; text-align: left; }
+    .sent h2 { font-family: var(--font-display); font-weight: 700; font-size: 2rem; margin: 0 0 0.5rem; }
+    .sent p { margin: 0 0 1.25rem; color: var(--ink); }
+    .sent[hidden] { display: none; }
+
+    aside h2 { font-family: var(--font-display); font-weight: 700; font-size: 1.25rem; margin: 0 0 0.25rem; }
+    aside p { margin: 0 0 1.5rem; font-size: 0.9375rem; color: var(--ink); }
+    aside a { color: var(--terra); text-underline-offset: 3px; }
+    aside a:hover { color: var(--terra-dark); }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <div class="brand-row">
+        <a class="wordmark" href="szukanie-rowerow.html" aria-label="Biker — strona główna">BIKER</a>
+        <span class="tagline">Wyszukiwarka rowerów AI</span>
+      </div>
+      <nav aria-label="Główna nawigacja">
+        <ul class="tabs">
+          <li><a href="szukanie-rowerow.html">Szukanie rowerów</a></li>
+          <li><a href="rower-na-twoja-miare.html">Rower na Twoją miarę</a></li>
+          <li><a href="kontakt.html" aria-current="page">Kontakt</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="wrap hero" aria-labelledby="hero-heading">
+      <h1 id="hero-heading">Napisz<br>do nas.</h1>
+      <p>Brakuje roweru w bazie, dane się nie zgadzają albo masz pomysł? Odpisujemy zwykle w ciągu dwóch dni roboczych.</p>
+    </section>
+
+    <section class="wrap contact">
+      <div>
+        <form class="card" id="form" novalidate>
+          <div class="row">
+            <div>
+              <label class="field-label" for="name">Imię</label>
+              <input class="field" id="name" autocomplete="given-name">
+            </div>
+            <div>
+              <label class="field-label" for="email">E-mail</label>
+              <input class="field" id="email" type="email" autocomplete="email" required aria-describedby="email-err">
+              <p class="error" id="email-err"></p>
+            </div>
+          </div>
+          <div>
+            <label class="field-label" for="topic">W jakiej sprawie?</label>
+            <select class="field" id="topic">
+              <option>Brakuje roweru w bazie</option>
+              <option>Błędne dane roweru</option>
+              <option>Pomysł na nową funkcję</option>
+              <option>Współpraca</option>
+              <option>Inna sprawa</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label" for="msg">Wiadomość</label>
+            <textarea class="field" id="msg" required aria-describedby="msg-err" placeholder="np. Nie mogę znaleźć modelu Kross Esker 4.0 z 2025 roku."></textarea>
+            <p class="error" id="msg-err"></p>
+          </div>
+          <div class="form-foot">
+            <small>Adres e-mail wykorzystamy tylko do odpowiedzi na tę wiadomość.</small>
+            <button class="btn" type="submit">Wyślij wiadomość</button>
+          </div>
+        </form>
+
+        <div class="card sent" id="sent" hidden tabindex="-1">
+          <h2>Wiadomość wysłana</h2>
+          <p>Odpowiemy na adres <b id="sent-email"></b>, zwykle w ciągu dwóch dni roboczych.</p>
+          <a class="btn btn-ghost" href="szukanie-rowerow.html">Wróć do szukania rowerów</a>
+        </div>
+      </div>
+
+      <aside aria-label="Wskazówka">
+        <h2>Brakuje danych o rowerze?</h2>
+        <p>W widoku szczegółów roweru kliknij „Poproś o dane” przy brakującej sekcji: zdjęciach, recenzji albo ofertach. To najszybsza droga, bo od razu uruchamia wyszukiwanie.</p>
+      </aside>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="wrap"><span>Biker © 2026</span><span>Napędzane przez Claude</span></div></footer>
+
+  <script>
+    const form = document.getElementById('form');
+    form.addEventListener('submit', e => {
+      e.preventDefault();
+      const email = document.getElementById('email'), msg = document.getElementById('msg');
+      const checks = [
+        [email, 'email-err', !email.value.trim() ? 'Podaj adres e-mail, żebyśmy mogli odpowiedzieć.'
+                           : !email.checkValidity() ? 'Ten adres wygląda na niepełny, np. jan@poczta.pl.' : ''],
+        [msg, 'msg-err', msg.value.trim().length < 10 ? 'Napisz kilka słów więcej (co najmniej 10 znaków).' : ''],
+      ];
+      let firstBad = null;
+      for (const [el, errId, text] of checks) {
+        document.getElementById(errId).textContent = text;
+        el.setAttribute('aria-invalid', text ? 'true' : 'false');
+        if (text && !firstBad) firstBad = el;
+      }
+      if (firstBad) { firstBad.focus(); return; }
+      document.getElementById('sent-email').textContent = email.value.trim();
+      form.hidden = true;
+      const sent = document.getElementById('sent'); sent.hidden = false; sent.focus();
+    });
+  </script>
+</body>
+</html>

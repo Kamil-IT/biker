@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Szukanie rowerów — Biker</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .search-box { position: relative; }
+    .search-box svg { position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: var(--muted); }
+    .search-box .field { padding: 1rem 1rem 1rem 3rem; font-size: 1.0625rem; border-radius: 1rem; }
+    .search-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 0.75rem; gap: 1rem; }
+    .filters-toggle {
+      background: none; border: 0; padding: 0.4rem 0; cursor: pointer;
+      font-family: var(--font-body); font-size: 0.9375rem; color: var(--ink);
+      display: inline-flex; align-items: center; gap: 0.4rem;
+    }
+    .filters-toggle:hover { color: var(--terra); }
+    .filters-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+    .filters-toggle svg { transition: transform 200ms; }
+    .filters { display: grid; grid-template-columns: 1fr; gap: 0.75rem; margin-top: 1rem; }
+    .filters[hidden] { display: none; }
+    @media (min-width: 640px) { .filters { grid-template-columns: 1fr 1fr; } }
+
+    .popular { border-top: 1px solid var(--border); padding-top: 2rem; }
+    .popular-list { display: grid; gap: 1rem; margin: 0; padding: 0; list-style: none; }
+    .bike {
+      display: grid; grid-template-columns: 5.5rem 1fr; gap: 1.5rem; align-items: start;
+      padding: 1.5rem; text-decoration: none; color: inherit;
+      transition: border-color 150ms;
+    }
+    .bike:hover { border-color: var(--terra); }
+    .score { text-align: right; }
+    .score b { display: block; font-family: var(--font-display); font-size: 3.25rem; line-height: 0.9; font-weight: 800; }
+    .score span { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+    .bike h3 { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 1.6rem; line-height: 1.05; }
+    .bike .brand { color: var(--muted); font-size: 0.9375rem; }
+    .bike p { margin: 0.6rem 0 0; color: var(--ink); font-size: 0.9375rem; }
+    .bar { grid-column: 1 / -1; height: 6px; border-radius: 99px; background: var(--border); overflow: hidden; }
+    .bar i { display: block; height: 100%; background: var(--ink); border-radius: inherit; }
+    @media (max-width: 479px) {
+      .bike { grid-template-columns: 1fr; gap: 0.75rem; }
+      .score { text-align: left; display: flex; align-items: baseline; gap: 0.4rem; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <div class="brand-row">
+        <a class="wordmark" href="szukanie-rowerow.html" aria-label="Biker — strona główna">BIKER</a>
+        <span class="tagline">Wyszukiwarka rowerów AI</span>
+      </div>
+      <nav aria-label="Główna nawigacja">
+        <ul class="tabs">
+          <li><a href="szukanie-rowerow.html" aria-current="page">Szukanie rowerów</a></li>
+          <li><a href="rower-na-twoja-miare.html">Rower na Twoją miarę</a></li>
+          <li><a href="kontakt.html">Kontakt</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="wrap hero" aria-labelledby="hero-heading">
+      <h1 id="hero-heading">Znajdź swój<br><span style="color:var(--terra)">idealny rower.</span></h1>
+      <p style="margin-bottom:2.25rem">Opisz, czego szukasz, a znajdziemy dla Ciebie najlepsze rowery.</p>
+
+      <form onsubmit="event.preventDefault()">
+        <div class="search-box">
+          <label for="q" class="sr-only">Czego szukasz?</label>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="q" class="field" type="search" placeholder="np. lekki gravel na dojazdy do pracy, do 6000 zł">
+        </div>
+        <div class="search-actions">
+          <button type="button" class="filters-toggle" aria-expanded="false" aria-controls="filters" id="ft">
+            Filtry
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <button class="btn" type="submit">Szukaj rowerów</button>
+        </div>
+        <div class="filters" id="filters" hidden>
+          <div><label class="field-label" for="f-brand">Marka</label><input class="field" id="f-brand" placeholder="np. Trek"></div>
+          <div><label class="field-label" for="f-model">Model</label><input class="field" id="f-model" placeholder="np. Marlin 5"></div>
+          <div><label class="field-label" for="f-type">Typ roweru</label>
+            <select class="field" id="f-type"><option>Dowolny</option><option>Górski (MTB)</option><option>Gravel</option><option>Szosowy</option><option>Trekkingowy</option><option>Miejski</option></select></div>
+          <div><label class="field-label" for="f-wheel">Rozmiar kół</label>
+            <select class="field" id="f-wheel"><option>Dowolny</option><option>26"</option><option>27.5"</option><option>28"</option><option>29"</option></select></div>
+        </div>
+      </form>
+    </section>
+
+    <section class="wrap" aria-labelledby="popular-heading">
+      <div class="popular">
+        <h2 class="section-title" id="popular-heading">Najpopularniejsze rowery</h2>
+        <ul class="popular-list">
+          <li><a class="card bike" href="#">
+            <div class="score"><b>8.4</b><span>/ 10</span></div>
+            <div><span class="brand">Trek</span><h3>Marlin 5</h3>
+              <p>Górski hardtail na pierwsze szlaki i codzienne dojazdy. Aluminiowa rama, amortyzator 100 mm i napęd Shimano 2×8.</p></div>
+            <div class="bar" aria-label="Ocena eksperta 8,4 na 10"><i style="width:84%"></i></div>
+          </a></li>
+          <li><a class="card bike" href="#">
+            <div class="score"><b>7.9</b><span>/ 10</span></div>
+            <div><span class="brand">Kross</span><h3>Level 3.0</h3>
+              <p>Polski MTB do rekreacyjnej jazdy w terenie. Hamulce hydrauliczne i koła 29 cali, które łatwo pokonują korzenie.</p></div>
+            <div class="bar" aria-label="Ocena eksperta 7,9 na 10"><i style="width:79%"></i></div>
+          </a></li>
+          <li><a class="card bike" href="#">
+            <div class="score"><b>7.2</b><span>/ 10</span></div>
+            <div><span class="brand">Rockrider</span><h3>ST 100</h3>
+              <p>Najtańszy sposób na rower górski z Decathlonu. Dobry na leśne drogi, cięższy niż konkurencja.</p></div>
+            <div class="bar" aria-label="Ocena eksperta 7,2 na 10"><i style="width:72%"></i></div>
+          </a></li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="wrap"><span>Biker © 2026</span><span>Napędzane przez Claude</span></div></footer>
+
+  <script>
+    const t = document.getElementById('ft'), f = document.getElementById('filters');
+    t.addEventListener('click', () => {
+      const open = t.getAttribute('aria-expanded') === 'true';
+      t.setAttribute('aria-expanded', String(!open));
+      f.hidden = open;
+    });
+  </script>
+</body>
+</html>
