@@ -48,7 +48,6 @@ time_stored: str (ISO-8601)
 id (PK)
 search_cache_id (FK → search_cache.id, CASCADE)
 bike_id (FK → bike.id, CASCADE)
-rating: float
 explanation: text
 accessories: text (JSON array of strings)
 display_order: int
@@ -283,6 +282,35 @@ python scripts/migrate_photos_bike_id.py --url postgresql+psycopg://biker:biker@
   `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `rows_before`, `rows_after`, `orphans`,
   `bikes_with_photos`, `gaps`, `verified`, `error`). Exit code 1 on failure.
 - On PostgreSQL the migrated table lists `bike_id` last (added column) — harmless, the ORM addresses columns by name.
+
+## Search match score dropped (`search_bike_rating_cache.rating`)
+
+TODO-040 removed `match_score` from `POST /v1/bike/search`, `GET /v1/bike/search-cache` and `BikeResult`; the search
+cards show the expert rating from the stored reviews in `bike_review` instead (`POST /v1/bike/review/cached`). The column that stored the
+score, `search_bike_rating_cache.rating` (`FLOAT NOT NULL`), is dropped from the model and from every existing
+database by `scripts/migrate_drop_search_rating.py`. `display_order` stays (the AI answer's order).
+
+**Run it on every pre-existing database BEFORE the new backend is deployed on it** — `create_all()` never `ALTER`s a
+table, and the new `save_search` does not write `rating`, so on an unmigrated database the `NOT NULL` column makes
+it fail (rollback + WARNING; the search answer is still returned, the bikes are just not stored). Once migrated, the
+**old** backend's `save_search` fails the same way until the new one is deployed. Production order: migrate Cloud
+SQL → deploy the backend → deploy the frontend.
+
+```bash
+cd backend
+python scripts/migrate_drop_search_rating.py --dry-run          # $DATABASE_URL (backend/.env), else backend/cache.db
+python scripts/migrate_drop_search_rating.py
+python scripts/migrate_drop_search_rating.py --db path/to/copy.db
+python scripts/migrate_drop_search_rating.py --url postgresql+psycopg://biker:biker@localhost:5432/<db>
+```
+
+- `ALTER TABLE search_bike_rating_cache DROP COLUMN rating` on both dialects (SQLite ≥ 3.35 — the column has no index,
+  key or constraint); PostgreSQL first takes `LOCK TABLE search_bike_rating_cache IN SHARE ROW EXCLUSIVE MODE`.
+- One transaction: every row's `id, search_cache_id, bike_id, explanation, accessories, display_order` is snapshotted
+  before and compared after; any difference or error rolls back (exit code 1). Row counts are printed.
+- Idempotent: no `rating` column → `already-migrated`; no table → `absent` (left to `init_db()`). Importable:
+  `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `rows_before`, `rows_after`, `verified`, `error`).
+- Verified 2026-09-30: a copy of `cache.db` (206 rows) and the local PostgreSQL (199 rows) — rows kept, second run a no-op.
 
 ## Benefits
 

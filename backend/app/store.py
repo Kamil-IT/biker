@@ -11,8 +11,9 @@ Two tables, both defined as ORM models in `app/models.py` and created by
 
 - `search_cache`               — one row per query: `query`, `time_stored`.
 - `search_bike_rating_cache`   — one row per bike a search returned: FK to
-  `search_cache`, FK to `bike`, `rating`, `explanation`, `accessories` (inline
-  JSON array), `display_order`.
+  `search_cache`, FK to `bike`, `explanation`, `accessories` (inline
+  JSON array), `display_order` (the AI answer's order). The `rating` column
+  (the old match score) was dropped in TODO-040 — `scripts/migrate_drop_search_rating.py`.
 
 Freshness is `time_stored + SEARCH_TTL_SECONDS`; there is no per-row ttl column.
 """
@@ -56,7 +57,7 @@ def _norm(text: str) -> str:
 #
 # One search fans out to many rated bikes. `search_cache` holds the query and
 # when it was stored; each returned bike is one `search_bike_rating_cache` row
-# carrying the per-*search* fields (rating, explanation, accessories) plus a FK
+# carrying the per-*search* fields (explanation, accessories) plus a FK
 # to the canonical `bike`. brand/model are never duplicated — they come via the
 # FK. accessories is stored inline as a JSON array of strings.
 
@@ -83,8 +84,8 @@ def _get_or_create_bike(session, brand: str, model: str) -> int:
     return bike.id
 
 
-def _row_to_bike(brand, model, rating, explanation, accessories_json) -> BikeResult:
-    """Turn one joined rating row back into a BikeResult schema."""
+def _row_to_bike(brand, model, explanation, accessories_json) -> BikeResult:
+    """Turn one joined search_bike_rating_cache row back into a BikeResult schema."""
     try:
         accessories = json.loads(accessories_json) if accessories_json else []
     except (TypeError, ValueError):
@@ -93,7 +94,6 @@ def _row_to_bike(brand, model, rating, explanation, accessories_json) -> BikeRes
         brand=brand,
         model=model,
         accessories=accessories,
-        match_score=rating,
         explanation=explanation,
     )
 
@@ -118,7 +118,6 @@ def save_search(query: str, bikes: list[BikeResult], ttl: int = SEARCH_TTL_SECON
             session.add(SearchBikeRating(
                 search_cache_id=search.id,
                 bike_id=_get_or_create_bike(session, b.brand, b.model),
-                rating=b.match_score,
                 explanation=b.explanation,
                 accessories=json.dumps(b.accessories),
                 display_order=i,
@@ -132,9 +131,9 @@ def save_search(query: str, bikes: list[BikeResult], ttl: int = SEARCH_TTL_SECON
         session.close()
 
 
-# brand, model, rating, explanation, accessories — the columns _row_to_bike takes.
+# brand, model, explanation, accessories — the columns _row_to_bike takes.
 _RATED_COLUMNS = (
-    Bike.brand, Bike.model, SearchBikeRating.rating,
+    Bike.brand, Bike.model,
     SearchBikeRating.explanation, SearchBikeRating.accessories,
 )
 
@@ -189,14 +188,14 @@ def _find_rated_bikes(brand: Optional[str], model: Optional[str]) -> list[BikeRe
 
     matches: list[BikeResult] = []
     seen: set[tuple[str, str]] = set()
-    for time_stored, br, mo, rating, expl, acc in rows:
+    for time_stored, br, mo, expl, acc in rows:
         if not _is_fresh(time_stored, SEARCH_TTL_SECONDS):
             continue
         key = (_norm(br), _norm(mo))
         if key in seen:
             continue
         seen.add(key)
-        matches.append(_row_to_bike(br, mo, rating, expl, acc))
+        matches.append(_row_to_bike(br, mo, expl, acc))
     return matches
 
 

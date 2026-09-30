@@ -9,7 +9,7 @@ Every case seeds its own namespaced fixture rows and deletes them afterwards, so
 it passes on a cold or aged database. Endpoints covered here:
 
   no API   /v1/bike/search (DB hit) · /v1/bike/search-cache · /v1/bike/details-cache
-           /v1/bike/missing · /v1/bike/popular · /v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
+           /v1/bike/missing · /v1/bike/popular · /v1/bike/review/cached · /v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
            /v1/bike/decathlon · /v1/bike/decathlon/search (404 + foreign-brand skip always; the
            live house-brand search — the ONE paid searcher run in the suite — only when the searcher is up)
            /v1/bike/allegro · /v1/bike/allegro/search (404 only — no paid run)
@@ -52,6 +52,7 @@ SEARCH_CACHE_URL = f"{BASE}/v1/bike/search-cache"
 DETAILS_CACHE_URL = f"{BASE}/v1/bike/details-cache"
 MISSING_URL = f"{BASE}/v1/bike/missing"
 POPULAR_URL = f"{BASE}/v1/bike/popular"
+REVIEW_CACHED_URL = f"{BASE}/v1/bike/review/cached"
 USED_URL = f"{BASE}/v1/bike/used/olx"
 USED_SEARCH_URL = f"{BASE}/v1/bike/used/search"
 PARSE_URL = f"{BASE}/v1/bike/parse"
@@ -199,8 +200,8 @@ def _seed_search_row(query: str, brand: str, model: str) -> None:
         ).lastrowid
         conn.execute(
             "INSERT INTO search_bike_rating_cache "
-            "(search_cache_id, bike_id, rating, explanation, accessories, display_order) VALUES (?, ?, ?, ?, ?, ?)",
-            (search_id, bike_id, 8.5, "Smoke fixture.", json.dumps(["fixture"]), 0),
+            "(search_cache_id, bike_id, explanation, accessories, display_order) VALUES (?, ?, ?, ?, ?)",
+            (search_id, bike_id, "Smoke fixture.", json.dumps(["fixture"]), 0),
         )
         conn.commit()
     finally:
@@ -248,7 +249,7 @@ def case_search_db_hit_and_search_cache():
     # before TODO-025. The endpoint must not read it (the cache has no TTL).
     stale = {"search": FIX_STALE_QUERY, "bikes": [{
         "brand": FIX_SEARCH_BRAND, "model": FIX_STALE_MODEL, "accessories": [],
-        "match_score": 1.0, "explanation": "stale",
+        "explanation": "stale",
     }]}
     try:
         _cache_row_delete("/v1/bike/search", key)
@@ -260,13 +261,15 @@ def case_search_db_hit_and_search_cache():
         bikes = resp.json()["bikes"]
         assert all(b["model"] != FIX_STALE_MODEL for b in bikes), f"served the generic-cache row: {bikes}"
         assert bikes and all(b["brand"] == FIX_SEARCH_BRAND and b["model"] == FIX_SEARCH_MODEL for b in bikes), bikes
-        assert isinstance(bikes[0]["accessories"], list) and 0 <= bikes[0]["match_score"] <= 10, bikes[0]
+        assert isinstance(bikes[0]["accessories"], list), bikes[0]
+        assert "match_score" not in bikes[0], f"match_score was removed (TODO-040): {bikes[0]}"
         assert bikes[0]["explanation"], "explanation must be non-empty"
         assert elapsed < 5.0, f"DB hit took {elapsed:.2f}s — expected < 5s (AI ran?)"
 
         cached = httpx.get(SEARCH_CACHE_URL, params={"query": FIX_SEARCH_QUERY}, timeout=10)
         assert cached.status_code == 200, f"search-cache: expected 200, got {cached.status_code}: {cached.text[:200]}"
         assert cached.json()["cached"] is True and cached.json()["bikes"], cached.json()
+        assert all("match_score" not in b for b in cached.json()["bikes"]), cached.json()
     finally:
         _cache_row_delete("/v1/bike/search", key)
         _drop_search_row(FIX_SEARCH_QUERY)
@@ -723,6 +726,69 @@ def case_review_search():
         _delete_bike(FIX_REVIEW_BRAND, FIX_REVIEW_MODEL)
 
 
+FIX_REVIEW_RATED, FIX_REVIEW_ZERO = "Review Cached Rated", "Review Cached Zero"
+
+
+def _insert_review(bike_id: int, rating: float, sources_used: int) -> None:
+    conn = _DB()
+    try:
+        conn.execute(
+            "INSERT INTO bike_review (bike_id, score, explanation, rating, sources_used, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (bike_id, round(rating), "Smoke fixture.", rating, sources_used, _now(), _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _cache_row_count() -> int:
+    conn = _DB()
+    try:
+        return conn.execute("SELECT COUNT(*) FROM endpoint_req_to_body_cache").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def case_review_cached():
+    """/v1/bike/review/cached (TODO-040): expert ratings read from bike_review
+    only — a stored review → found, unknown bike / rating 0 → not found; no AI,
+    no write, order and strings echoed; 422 for an empty, >100 or blank batch."""
+    rated = {"company": FIX_REVIEW_BRAND, "model": FIX_REVIEW_RATED}
+    zero = {"company": FIX_REVIEW_BRAND, "model": FIX_REVIEW_ZERO}
+    unknown = {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}
+    for model in (FIX_REVIEW_RATED, FIX_REVIEW_ZERO):
+        _delete_bike(FIX_REVIEW_BRAND, model)
+    _insert_review(_insert_bike(FIX_REVIEW_BRAND, FIX_REVIEW_RATED), 8.4, 3)
+    _insert_review(_insert_bike(FIX_REVIEW_BRAND, FIX_REVIEW_ZERO), 0.0, 0)
+    try:
+        rows_before = _cache_row_count()
+        # Different casing / spacing than the stored bike: the lookup is normalised.
+        rated_sent = {"company": " smoke FIXTURE", "model": FIX_REVIEW_RATED.upper()}
+        t0 = time.perf_counter()
+        resp = _post(REVIEW_CACHED_URL, {"bikes": [unknown, rated_sent, zero]}, timeout=10)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        got = resp.json()["ratings"]
+        assert got == [
+            {**unknown, "rating": None, "found": False},
+            {**rated_sent, "rating": 8.4, "found": True},
+            {**zero, "rating": None, "found": False},
+        ], got
+        assert elapsed < 5.0, f"took {elapsed:.2f}s — expected < 5s (AI ran?)"
+        assert _cache_row_count() == rows_before, "the cached-ratings read must not write the generic cache"
+        for body in (unknown, rated):
+            assert not _cache_row_exists("/v1/bike/review", _norm_key(body)), f"wrote a generic-cache row for {body}"
+
+        for bad in ({"bikes": []}, {"bikes": [unknown] * 101}, {"bikes": [{"company": " ", "model": "x"}]}):
+            r = httpx.post(REVIEW_CACHED_URL, json=bad, timeout=10)  # not _post: it would print 101 items
+            assert r.status_code == 422, f"Expected 422 for {str(bad)[:60]}, got {r.status_code}"
+    finally:
+        for model in (FIX_REVIEW_RATED, FIX_REVIEW_ZERO):
+            _delete_bike(FIX_REVIEW_BRAND, model)
+
+
+
 # ── Cases that call the Anthropic API (--ai) ────────────────────────────────
 
 def case_search_free_text():
@@ -736,7 +802,7 @@ def case_search_free_text():
     assert len(bikes) >= 1, "expected at least 1 bike"
     first = bikes[0]
     assert first["brand"] and first["model"] and first["explanation"], first
-    assert isinstance(first["accessories"], list) and 0 <= first["match_score"] <= 10, first
+    assert isinstance(first["accessories"], list) and "match_score" not in first, first
     assert not _cache_row_exists("/v1/bike/search", _norm_key(body)), "search must not write a generic-cache row"
 
 
@@ -761,6 +827,7 @@ CASES = [
     (case_details_cache, False),
     (case_missing, False),
     (case_popular, False),
+    (case_review_cached, False),
     (case_used, False),
     (case_used_search, False),
     (case_decathlon, False),

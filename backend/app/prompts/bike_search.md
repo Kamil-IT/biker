@@ -16,8 +16,7 @@ Recommend every real bike that matches the search — there is no fixed number.
   include that exact model first if it exists, then close variants from the same family.
 - Treat "Electric: no" as excluding e-bikes, and "Electric: yes" as e-bikes only.
 - Return at least one bike. If no real bike meets every filter, return the closest real match instead.
-  A bike that misses ANY filter must get `match_score` 4 or lower, and its explanation must start by
-  naming the missed filter (e.g. "Trek nie oferuje roweru elektrycznego z hamulcami obręczowymi; Allant+ 7
+  The explanation of a bike that misses ANY filter must start by naming the missed filter (e.g. "Trek nie oferuje roweru elektrycznego z hamulcami obręczowymi; Allant+ 7
   ma hydrauliczne hamulce tarczowe."). Never claim a bike has a spec it does not have, and never invent models.
 - Order from best to worst match.
 
@@ -30,7 +29,6 @@ Each element must have these exact fields:
 - "brand": string — manufacturer name (e.g. "Trek", "Specialized", "Canyon")
 - "model": string — specific model name without the brand (e.g. "Checkpoint SL 5", "Grizl CF 7")
 - "accessories": array of strings — 2–4 notable components or features (e.g. "Shimano GRX", "obręcze tubeless ready")
-- "match_score": number 0–10 — how well this bike matches the search
 - "explanation": string — one or two sentences in Polish on why this bike fits the search
 
-Example: [{"brand":"Trek","model":"Checkpoint ALR 5","accessories":["Shimano GRX","obręcze tubeless ready"],"match_score":9.0,"explanation":"Aluminiowy rower gravelowy z hydraulicznymi hamulcami tarczowymi i relaksacyjną geometrią na długie trasy po mieszanym terenie."}]
+Example: [{"brand":"Trek","model":"Checkpoint ALR 5","accessories":["Shimano GRX","obręcze tubeless ready"],"explanation":"Aluminiowy rower gravelowy z hydraulicznymi hamulcami tarczowymi i relaksacyjną geometrią na długie trasy po mieszanym terenie."}]

@@ -1,5 +1,5 @@
 import ResultCard from './ResultCard'
-import { PENDING_RATING, popularBikeKey } from '../hooks/usePopularBikes'
+import { PENDING_RATING, bikeKey } from '../ratings'
 import type { Bike, ExpertRating, PopularBike } from '../types'
 
 interface PopularBikesSectionProps {
@@ -31,7 +31,7 @@ export default function PopularBikesSection({ bikes, ratings, onSelect }: Popula
         {/* Card list */}
         <div className="space-y-4">
           {bikes.map((bike, i) => {
-            const key    = popularBikeKey(bike)
+            const key    = bikeKey(bike)
             const rating = ratings[key] ?? PENDING_RATING
             return (
               <ResultCard
@@ -40,9 +40,6 @@ export default function PopularBikesSection({ bikes, ratings, onSelect }: Popula
                   brand:       bike.brand,
                   model:       bike.model,
                   accessories: [],
-                  // No search to match against: 0 keeps the details header's
-                  // "Dopasowanie" block hidden (the card itself shows expertRating).
-                  match_score: 0,
                   explanation: bike.description,
                 }}
                 rank={i + 1}

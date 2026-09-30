@@ -337,7 +337,7 @@ class SearchCache(Base):
 class SearchBikeRating(Base):
     """One bike returned by one cached search — one row = one bike.
 
-    Carries the per-*search* fields (rating, explanation, accessories) while
+    Carries the per-*search* fields (explanation, accessories, display_order) while
     the bike identity is a FK to `bike`. accessories is an inline JSON array of
     strings; brand/model are NOT duplicated here, they come via the `bike` FK.
     """
@@ -349,7 +349,6 @@ class SearchBikeRating(Base):
         Integer, ForeignKey("search_cache.id", ondelete="CASCADE"), nullable=False, index=True
     )
     bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
-    rating = Column(Float, nullable=False)
     explanation = Column(Text, nullable=False, default="")
     accessories = Column(Text, nullable=False, default="[]")  # JSON array of strings
     display_order = Column(Integer, nullable=False, default=0)

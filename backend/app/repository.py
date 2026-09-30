@@ -285,27 +285,27 @@ def _describe_match(fields: dict) -> str:
     return "Pasuje: " + ", ".join(_MATCH_LABELS[f](v) for f, v in fields.items()) + "."
 
 
-def _latest_ratings(session, bike_ids: list[int]) -> dict[int, tuple[float, str, list[str]]]:
-    """Most recent search_bike_rating_cache row per bike, if any."""
+def _latest_ratings(session, bike_ids: list[int]) -> dict[int, tuple[str, list[str]]]:
+    """Explanation + accessories of the most recent search_bike_rating_cache row per bike, if any."""
     if not bike_ids:
         return {}
     rows = session.execute(
         text(
-            "SELECT r.bike_id, r.rating, r.explanation, r.accessories "
+            "SELECT r.bike_id, r.explanation, r.accessories "
             "FROM search_bike_rating_cache r JOIN search_cache s ON s.id = r.search_cache_id "
             f"WHERE r.bike_id IN ({','.join(str(int(i)) for i in bike_ids)}) "
             "ORDER BY s.time_stored DESC, r.id DESC"
         )
     ).fetchall()
-    out: dict[int, tuple[float, str, list[str]]] = {}
-    for bike_id, rating, explanation, accessories in rows:
+    out: dict[int, tuple[str, list[str]]] = {}
+    for bike_id, explanation, accessories in rows:
         if bike_id in out:
             continue
         try:
             acc = json.loads(accessories) if accessories else []
         except (TypeError, ValueError):
             acc = []
-        out[bike_id] = (float(rating), explanation or "", [str(a) for a in acc])
+        out[bike_id] = (explanation or "", [str(a) for a in acc])
     return out
 
 
@@ -313,7 +313,8 @@ def find_bikes_by_details(req) -> list[BikeResult]:
     """DB-first search over bike + bike_detail_component — no AI call.
 
     [] (→ AI fallback) when no checkable field is set, nothing matches, or the
-    DB errors. Every match is returned (no cap), best rating first.
+    DB errors. Every match is returned (no cap), sorted by brand then model
+    (TODO-040: there is no match score any more — the frontend orders by expert rating).
     """
     fields = checkable_fields(req)
     if not fields:
@@ -354,15 +355,14 @@ def find_bikes_by_details(req) -> list[BikeResult]:
             ]
 
         ratings = _latest_ratings(session, [b.id for b in candidates])
-        default = (10.0, _describe_match(fields), [])
+        default = (_describe_match(fields), [])
         results = []
         for b in candidates:
-            score, explanation, accessories = ratings.get(b.id, default)
+            explanation, accessories = ratings.get(b.id, default)
             results.append(BikeResult(
-                brand=b.brand, model=b.model, accessories=accessories,
-                match_score=score, explanation=explanation,
+                brand=b.brand, model=b.model, accessories=accessories, explanation=explanation,
             ))
-        results.sort(key=lambda r: (-r.match_score, _lc(r.brand), _lc(r.model)))
+        results.sort(key=lambda r: (_lc(r.brand), _lc(r.model)))
         logger.info(
             "find_bikes_by_details | fields=%s matches=%d", sorted(fields), len(results),
         )
