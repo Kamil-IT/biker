@@ -150,16 +150,18 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
             </ul>
           )}
 
-          {/* Explanation */}
-          <p
-            className={[
-              'font-body text-ink leading-relaxed',
-              accessories.length === 0 ? 'mt-2' : '',
-              isTop ? 'text-[15px] md:text-base' : 'text-sm md:text-[15px]',
-            ].join(' ')}
-          >
-            {explanation}
-          </p>
+          {/* Explanation — the bike's stored short description; absent until details exist */}
+          {explanation.trim() && (
+            <p
+              className={[
+                'font-body text-ink leading-relaxed',
+                accessories.filter(Boolean).length === 0 ? 'mt-2' : '',
+                isTop ? 'text-[15px] md:text-base' : 'text-sm md:text-[15px]',
+              ].join(' ')}
+            >
+              {explanation}
+            </p>
+          )}
         </div>
       </div>
 

@@ -4,7 +4,7 @@
 
 Reads SEARCHER_URL (default http://localhost:8100) and SEARCHER_API_KEY from the
 environment or searcher/.env. Every case here is free: health, auth (401) and
-validation (422) on all five search routes (olx, decathlon, allegro, photos, review),
+validation (422) on all six search routes (olx, decathlon, allegro, photos, review, details),
 plus a photos request for a bike that already HAS photo rows, which must come
 back from the DB without a search (TC-11; the bike is SEARCHER_PHOTOS_BIKE
 "Brand|Model", else the first one with photos found through DATABASE_URL; it is
@@ -37,6 +37,7 @@ DECATHLON_URL = f"{BASE_URL}/v1/search/decathlon"
 ALLEGRO_URL = f"{BASE_URL}/v1/search/allegro"
 PHOTOS_URL = f"{BASE_URL}/v1/search/photos"
 REVIEW_URL = f"{BASE_URL}/v1/search/review"
+DETAILS_URL = f"{BASE_URL}/v1/search/details"
 
 assert API_KEY, "SEARCHER_API_KEY must be set (env or searcher/.env)"
 
@@ -190,6 +191,20 @@ resp = httpx.post(REVIEW_URL, json=bad_body, headers={"X-Searcher-Key": API_KEY}
 _show("[TC-13] review: blank model", bad_body, resp)
 assert resp.status_code == 422, f"Expected 422 for a blank model, got {resp.status_code}"
 print("OK -- 422 for a blank model on /v1/search/review")
+
+# ── [TC-14] POST /v1/search/details without X-Searcher-Key → 401 ──
+dt_body = {"company": "Canyon", "model": "Grizl CF 7 ESC"}
+resp = httpx.post(DETAILS_URL, json=dt_body, timeout=30)
+_show("[TC-14] details: no key", dt_body, resp)
+assert resp.status_code == 401, f"Expected 401 without a key, got {resp.status_code}"
+print("OK -- 401 without X-Searcher-Key on /v1/search/details")
+
+# ── [TC-15] POST /v1/search/details with the key but a blank model → 422 (no CLI run) ──
+bad_body = {"company": "Canyon", "model": "   "}
+resp = httpx.post(DETAILS_URL, json=bad_body, headers={"X-Searcher-Key": API_KEY}, timeout=30)
+_show("[TC-15] details: blank model", bad_body, resp)
+assert resp.status_code == 422, f"Expected 422 for a blank model, got {resp.status_code}"
+print("OK -- 422 for a blank model on /v1/search/details")
 
 print("\nALL OK")
 sys.exit(0)

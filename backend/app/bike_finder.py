@@ -25,8 +25,10 @@ def _to_bike(item) -> BikeResult | None:
         return BikeResult(
             brand=str(item["brand"]).strip(),
             model=str(item["model"]).strip(),
-            accessories=[str(a) for a in item.get("accessories") or []],
-            explanation=str(item.get("explanation", "")),
+            # No query-dependent text any more (TODO-041): the caller fills
+            # explanation / accessories from the bike's stored details.
+            accessories=[],
+            explanation="",
         )
     except (KeyError, TypeError, ValueError):
         return None

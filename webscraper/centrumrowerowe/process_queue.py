@@ -8,7 +8,6 @@ first — page fetched, parsed by the parser registered for the listing's shop
     python process_queue.py --limit 20 --delay 1.0
     python process_queue.py --dry-run          # fetch + parse + print, write nothing
     python process_queue.py --retry-failed     # re-queue failed rows, even exhausted ones
-    python process_queue.py --sync-cache       # copy done rows' details into the /v1/bike/details cache
 """
 import argparse
 import logging
@@ -27,8 +26,7 @@ from db import (  # noqa: E402
     session, utcnow,
 )
 from bike_store import (  # noqa: E402,F401  (re-exported for callers and tests)
-    CACHE_FAILED, CACHE_MISSING, CACHE_PRESENT, CACHE_WRITTEN, DETAILS_ENDPOINT, KEPT,
-    cache_details, store_details, store_photos,
+    KEPT, store_details, store_photos,
 )
 from bike_store import aware as _aware, tx as _tx  # noqa: E402
 from discovery_repo import identity_fields, listed_by, listings_newest_first  # noqa: E402
@@ -304,9 +302,7 @@ def process_row(row_id: int, fetch: Fetch = http_fetch, parse=None, claimed_at: 
                         name, bike_id, company, model, photos)
             return finish(SKIPPED, bike_id=bike_id, company=company, model=model,
                           last_error=None, next_attempt_at=None)
-        cache_outcome = cache_details(company, model, response)
-        logger.info("done | %s | bike %s %r %r | cache %s | photos %s",
-                    name, bike_id, company, model, cache_outcome, photos)
+        logger.info("done | %s | bike %s %r %r | photos %s", name, bike_id, company, model, photos)
         return finish(DONE, bike_id=bike_id, company=company, model=model,
                       last_error=None, next_attempt_at=None)
     except KeyboardInterrupt:
@@ -314,27 +310,6 @@ def process_row(row_id: int, fetch: Fetch = http_fetch, parse=None, claimed_at: 
         raise
     except Exception as exc:  # e.g. the save did not land; one bad bike never stops the batch
         return fail(f"{type(exc).__name__}: {exc}")
-
-
-def sync_cache(source: Optional[str], dry_run: bool = False) -> dict[str, int]:
-    """--sync-cache: put the stored details of every done row's bike into the generic details cache.
-
-    No fetching, no claiming. Missing = the bike has no details row (any more).
-    A dry run counts what would be written and writes nothing.
-    """
-    counts = {CACHE_WRITTEN: 0, CACHE_PRESENT: 0, CACHE_MISSING: 0, CACHE_FAILED: 0}
-    with session() as s:
-        q = (s.query(models.Bike.brand, models.Bike.model)
-             .join(BikeDiscovery, BikeDiscovery.bike_id == models.Bike.id)
-             .filter(BikeDiscovery.status == DONE).distinct())
-        if source:
-            q = q.filter(listed_by(source))
-        bikes = sorted(q.all())
-    for brand, model in bikes:
-        details = repository.get_bike_details(brand, model)
-        outcome = CACHE_MISSING if details is None else cache_details(brand, model, details, write=not dry_run)
-        counts[outcome] += 1
-    return counts
 
 
 def _table_exists() -> bool:
@@ -411,8 +386,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--retry-failed", action="store_true", help="re-queue failed rows, even after 3 attempts")
     ap.add_argument("--dry-run", action="store_true", help="fetch + parse + print; claim and write nothing")
     ap.add_argument("--allow-remote", action="store_true", help="allow writing to a non-local database")
-    ap.add_argument("--sync-cache", action="store_true",
-                    help="no fetching: copy stored details of done rows into the /v1/bike/details cache")
     args = ap.parse_args(argv)
     if args.limit < 1 or args.delay < 0:
         ap.error("--limit must be >= 1 and --delay >= 0")
@@ -422,15 +395,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     # A dry run writes nothing, so it only prints the target instead of refusing a remote one.
     target = db.check_target(allow_remote=args.allow_remote or args.dry_run)
     logger.info("database: %s", target)
-    if args.sync_cache:
-        if not _table_exists():
-            print("bike_discovery does not exist yet — nothing to sync")
-            return 0
-        c = sync_cache(args.source, dry_run=args.dry_run)
-        verb = "would write" if args.dry_run else "written"
-        print(f"cache sync: {verb}={c[CACHE_WRITTEN]} already present={c[CACHE_PRESENT]} "
-              f"missing details={c[CACHE_MISSING]} failed={c[CACHE_FAILED]}")
-        return 0
     if args.dry_run:
         dry_run(args.limit, args.source, args.retry_failed, args.delay, fetch=http_fetch)
         return 0

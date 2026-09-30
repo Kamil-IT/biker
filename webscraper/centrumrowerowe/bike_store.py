@@ -1,7 +1,7 @@
 """Storing bike data the way the backend reads it (TODO-036), shared by process_queue and copy_to_db.
 
-Three places, three readers:
-- `bike` + `bike_detail` (+ components) — DB-first search and GET /v1/bike/details-cache;
+Two places, two readers:
+- `bike` + `bike_detail` (+ components) — DB-first search, POST /v1/bike/details and GET /v1/bike/details-cache;
 - the generic cache under POST /v1/bike/details — the only thing the details view's details call reads;
 - `bike_detail_photos` keyed on `bike_id` — POST /v1/bike/photos (the details view's photo gallery).
 
@@ -16,17 +16,13 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from db import models, repository, session, utcnow
-from app import cache, photos_repository
+from app import photos_repository
 from app.schemas import BikeDetailsResponse
 
 logger = logging.getLogger("bike_store")
 
 KEPT, WRITTEN = "kept", "written"
 
-# POST /v1/bike/details reads only the generic cache, never the ORM tables — so a parsed bike
-# must be cached there too or the details view would run the AI pipeline for it.
-DETAILS_ENDPOINT = "/v1/bike/details"
-CACHE_WRITTEN, CACHE_PRESENT, CACHE_MISSING, CACHE_FAILED = "written", "present", "missing", "failed"
 PHOTOS_WRITTEN, PHOTOS_PRESENT, PHOTOS_NONE, PHOTOS_FAILED = "written", "present", "none", "failed"
 
 # find_id(brand, model) -> bike id for the Python-normalised identity, or None
@@ -130,25 +126,3 @@ def store_photos(bike_id: int, brand: str, model: str, photos: list[str], write:
     except Exception as exc:
         logger.warning("photos for %r %r failed | %s: %s", brand, model, type(exc).__name__, exc)
     return PHOTOS_FAILED
-
-
-def cache_details(company: str, model: str, response, write: bool = True) -> str:
-    """Put `response` into the generic cache under POST /v1/bike/details — the only place that endpoint reads.
-
-    `company`/`model` must be the bike row's stored casing (what search returns and the
-    frontend sends). First write wins: an existing (e.g. AI-made) entry is kept.
-    Returns CACHE_WRITTEN / CACHE_PRESENT / CACHE_FAILED; never raises.
-    """
-    fields = {"company": company, "model": model}
-    try:
-        if cache.get_cached(DETAILS_ENDPOINT, fields, BikeDetailsResponse) is not None:
-            return CACHE_PRESENT
-        if not write:
-            return CACHE_WRITTEN
-        cache.set_cached(DETAILS_ENDPOINT, fields, response)  # swallows DB errors itself
-        if cache.get_cached(DETAILS_ENDPOINT, fields, BikeDetailsResponse) is not None:
-            return CACHE_WRITTEN
-        logger.warning("cache write for %r %r did not land (see the cache warning)", company, model)
-    except Exception as exc:
-        logger.warning("cache write for %r %r failed | %s: %s", company, model, type(exc).__name__, exc)
-    return CACHE_FAILED

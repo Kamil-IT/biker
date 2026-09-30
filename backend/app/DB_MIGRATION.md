@@ -58,6 +58,7 @@ display_order: int
 id (PK)
 bike_id (FK → bike.id, UNIQUE)
 description: text (JSON serialized BikeDescription)
+short_description: text NOT NULL DEFAULT '' (TODO-041 — two-sentence Polish summary; scripts/migrate_short_description.py)
 created_at: datetime
 updated_at: datetime
 ```
@@ -225,8 +226,8 @@ save_search(query, old_data)
 
 - Search cache — `app.store`: `save_search`, `get_search_by_query`,
   `find_bikes_by_brand` (backed by `search_cache` + `search_bike_rating_cache`).
-- Details cache — `app.repository`: `save_bike_details`, `get_bike_details`
-  (backed by `bike_detail` + `bike_detail_component`; no TTL — stored details are returned whatever their age).
+- Details — `app.repository`: `save_bike_details`, `get_bike_details`
+  (backed by `bike_detail` + `bike_detail_component`; no TTL — stored details are returned whatever their age). Since TODO-041 `POST /v1/bike/details` is a pure read of them (normalised brand/model lookup, `short_description` included) and the live writer is the searcher (`POST /v1/bike/details/search`, `searcher/app/repository.py` `save_details`); helpers `empty_details`, `has_complete_details`, `accessory_chips`, `fill_bike_results`, `search_fill_for`.
 - Bike photos — `app.photos_repository`: `get_bike_photos` (`POST /v1/bike/photos`) and `save_bike_photos`
   (offline pipeline only); the searcher's photo search is the live writer (backed by `bike_detail_photos`).
 - DB-first search (TODO-024) — `app.repository.find_bikes_by_details`: matches
@@ -311,6 +312,33 @@ python scripts/migrate_drop_search_rating.py --url postgresql+psycopg://biker:bi
 - Idempotent: no `rating` column → `already-migrated`; no table → `absent` (left to `init_db()`). Importable:
   `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `rows_before`, `rows_after`, `verified`, `error`).
 - Verified 2026-09-30: a copy of `cache.db` (206 rows) and the local PostgreSQL (199 rows) — rows kept, second run a no-op.
+
+## Short description added (`bike_detail.short_description`)
+
+TODO-041 adds `bike_detail.short_description` (`TEXT NOT NULL DEFAULT ''`, model default `""` + `server_default=""`): the
+two-sentence Polish summary the searcher writes; `POST /v1/bike/search` shows it as a result card's `explanation`.
+`create_all()` never `ALTER`s a table, so every pre-existing database needs `scripts/migrate_short_description.py` once.
+
+**Run it BEFORE the new backend or searcher runs on that database** — the new ORM reads and writes the column, and the
+searcher refuses to start without it. The OLD backend keeps working on a migrated database (the column has a server
+default). Production order: Cloud SQL on-demand backup → migrate Cloud SQL → deploy backend + searcher together → deploy the frontend.
+
+```bash
+cd backend
+python scripts/migrate_short_description.py --dry-run          # $DATABASE_URL (backend/.env), else backend/cache.db
+python scripts/migrate_short_description.py
+python scripts/migrate_short_description.py --db path/to/copy.db
+python scripts/migrate_short_description.py --url postgresql+psycopg://biker:biker@localhost:5432/<db>
+```
+
+- `ALTER TABLE bike_detail ADD COLUMN short_description TEXT NOT NULL DEFAULT ''` on both dialects, only when the column
+  is missing; existing rows get `''` (no backfill). Row counts compared before and after; a mismatch rolls back (exit code 1).
+- Idempotent: column present → `already-migrated`; no table → `absent` (left to `init_db()`). Importable:
+  `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict`.
+- `search_bike_rating_cache.explanation` / `accessories` are kept (no migration) but `store.save_search` writes `""` / `"[]"`;
+  a search result's text and chips are read from `bike_detail` at request time.
+- `scripts/purge_details_cache.py` (`--dry-run`, `--db`, `--url`) deletes the dead `endpoint_req_to_body_cache` rows of
+  `'/v1/bike/details'` — local only; Cloud SQL on an explicit go.
 
 ## Benefits
 

@@ -73,12 +73,10 @@ export function DescriptionCard({ description, state }: { description: BikeDescr
   // below the overview (Google AI Overview style).
   const seen = new Set<string>()
   const allCitations: DescriptionCitation[] = []
-  for (const seg of description.segments) {
-    for (const c of seg.citations) {
-      if (c.url && !seen.has(c.url)) {
-        seen.add(c.url)
-        allCitations.push(c)
-      }
+  for (const c of [...description.segments.flatMap(seg => seg.citations), ...(description.citations ?? [])]) {
+    if (c.url && !seen.has(c.url)) {
+      seen.add(c.url)
+      allCitations.push(c)
     }
   }
 
@@ -89,9 +87,9 @@ export function DescriptionCard({ description, state }: { description: BikeDescr
       </span>
 
       <p className="font-body text-ink text-[13px] leading-relaxed">
-        {description.segments.map((seg, i) => (
-          <span key={i}>{seg.text}</span>
-        ))}
+        {description.segments.some(seg => seg.text.trim())
+          ? description.segments.map((seg, i) => <span key={i}>{seg.text}</span>)
+          : description.text}
       </p>
 
       {allCitations.length > 0 && (

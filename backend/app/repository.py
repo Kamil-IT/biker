@@ -1,11 +1,8 @@
 """Data access layer using SQLAlchemy ORM models."""
-import json
 import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional
-
-from sqlalchemy import text
 
 from .models import (
     Bike,
@@ -104,6 +101,7 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> No
         details = session.query(BikeDetails).filter_by(bike_id=bike.id).first()
         if details:
             details.description = data.description.model_dump_json()
+            details.short_description = data.short_description or ""
             details.updated_at = datetime.now(timezone.utc)
             session.query(BikeDetailComponent).filter_by(
                 bike_detail_id=details.id,
@@ -113,6 +111,7 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> No
             details = BikeDetails(
                 bike_id=bike.id,
                 description=data.description.model_dump_json(),
+                short_description=data.short_description or "",
             )
             session.add(details)
         session.flush()
@@ -173,10 +172,11 @@ def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
     """
     session = get_session()
     try:
-        bike = session.query(Bike).filter_by(
-            brand=company,
-            model=model,
-        ).first()
+        # Identity matched on the Python-normalised brand/model (TODO-041), so a
+        # discovered bike is found whatever casing the caller uses; the response
+        # carries the stored casing (POST /v1/bike/details echoes the caller's).
+        bike_id = _find_bike_id(session, company, model)
+        bike = session.get(Bike, bike_id) if bike_id is not None else None
 
         if not bike:
             logger.info("bike_details miss | company=%r model=%r", company, model)
@@ -197,10 +197,143 @@ def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
             model=bike.model,
             description=description,
             components=components,
+            short_description=details.short_description or "",
         )
 
         logger.info("bike_details hit | company=%r model=%r", company, model)
         return response
+    finally:
+        session.close()
+
+
+def empty_details(company: str, model: str) -> BikeDetailsResponse:
+    """The "nothing stored" answer of POST /v1/bike/details (TODO-041)."""
+    return BikeDetailsResponse(
+        company=company,
+        model=model,
+        description=BikeDescription(text="", segments=[], citations=[]),
+        components=[],
+        short_description="",
+    )
+
+
+def has_complete_details(details: Optional[BikeDetailsResponse]) -> bool:
+    """Complete = non-empty components AND non-empty description text (TODO-041).
+
+    Defined once: POST /v1/bike/details/search returns complete stored details
+    without a searcher call. A missing short_description does not matter.
+    """
+    return bool(details and details.components and details.description.text.strip())
+
+
+# ── Search-result fill (TODO-041) ───────────────────────────────────────────
+# explanation = the bike's stored bike_detail.short_description; accessories =
+# chips derived from its stored components, no AI. One builder for every place
+# that returns a BikeResult (DB hit, AI fallback, search-cache readers).
+
+# (category, subcategory, spec key or None) — the first candidate of a group that
+# has a stored value wins, so the chip order is drivetrain, brakes, frame.
+# The "Brake Lever" fallback is what the discovery scraper (spec_mapping.py) stores.
+_CHIP_SOURCES: tuple[tuple[tuple[str, str, Optional[str]], ...], ...] = (
+    (("Drivetrain", "Rear Derailleur", None), ("Drivetrain", "Crank", None)),
+    (("Brakes", "Brake Lever Front", None), ("Brakes", "Brake Lever", None), ("Brakes", "Brake Rotor", None)),
+    (("Frame", "Frame", "Material"),),
+)
+
+
+def _chips_from_rows(rows) -> list[str]:
+    """`rows`: (category, subcategory, element_name, spec_key, spec_value) of one bike."""
+    chips: list[str] = []
+    for candidates in _CHIP_SOURCES:
+        for cat, sub, key in candidates:
+            value = next(
+                (
+                    ((spec_value if key else element_name) or "").strip()
+                    for c, s, element_name, spec_key, spec_value in rows
+                    if c == cat and s == sub and (key is None or spec_key == key)
+                    and ((spec_value if key else element_name) or "").strip()
+                ),
+                None,
+            )
+            if value:
+                chips.append(value)
+                break
+    return chips
+
+
+def _search_fill(session, bike_ids: list[int]) -> dict[int, tuple[str, list[str]]]:
+    """bike_id -> (short_description, chips) for the bikes that have stored details."""
+    if not bike_ids:
+        return {}
+    details = session.query(
+        BikeDetails.id, BikeDetails.bike_id, BikeDetails.short_description,
+    ).filter(BikeDetails.bike_id.in_(list(bike_ids))).all()
+    by_detail = {d.id: d for d in details}
+    rows_by_detail: dict[int, list] = {d_id: [] for d_id in by_detail}
+    if by_detail:
+        for detail_id, cat, sub, el, key, value in session.query(
+            BikeDetailComponent.bike_detail_id, BikeDetailComponent.category,
+            BikeDetailComponent.subcategory, BikeDetailComponent.element_name,
+            BikeDetailComponent.spec_key, BikeDetailComponent.spec_value,
+        ).filter(BikeDetailComponent.bike_detail_id.in_(list(by_detail))).order_by(
+            BikeDetailComponent.component_order, BikeDetailComponent.element_order,
+            BikeDetailComponent.spec_order,
+        ):
+            rows_by_detail[detail_id].append((cat, sub, el, key, value))
+    return {
+        d.bike_id: ((d.short_description or ""), _chips_from_rows(rows_by_detail[d.id]))
+        for d in details
+    }
+
+
+def fill_bike_results(bikes: list[BikeResult]) -> list[BikeResult]:
+    """Fill `explanation` / `accessories` of result bikes from stored details (AI path).
+
+    Bikes are matched by Python-normalised brand + model; a bike without stored
+    details keeps `""` / `[]`. Never raises — a DB error returns the bikes unfilled.
+    """
+    if not bikes:
+        return bikes
+    session = get_session()
+    try:
+        ids = {}
+        for b in session.query(Bike.id, Bike.brand, Bike.model).order_by(Bike.id.desc()):
+            ids[(_lc(b.brand), _lc(b.model))] = b.id  # oldest row wins (iterated last)
+        fill = _search_fill(session, [i for i in (ids.get((_lc(r.brand), _lc(r.model))) for r in bikes) if i])
+        out = []
+        for r in bikes:
+            explanation, chips = fill.get(ids.get((_lc(r.brand), _lc(r.model))), ("", []))
+            out.append(BikeResult(brand=r.brand, model=r.model, accessories=chips, explanation=explanation))
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("fill_bike_results failed (non-fatal) | %s", exc)
+        return bikes
+    finally:
+        session.close()
+
+
+def accessory_chips(bike_id: int) -> list[str]:
+    """Chips of one bike from its stored components: drivetrain, brakes, frame material.
+
+    Drivetrain → the Rear Derailleur (else Crank) element name; Brakes → the
+    Brake Lever Front (else Brake Lever, else Brake Rotor) element name; Frame →
+    the Frame element's `Material` spec value. A missing part is skipped.
+    """
+    session = get_session()
+    try:
+        return _search_fill(session, [bike_id]).get(bike_id, ("", []))[1]
+    finally:
+        session.close()
+
+
+def search_fill_for(bike_ids: list[int]) -> dict[int, tuple[str, list[str]]]:
+    """Public batch form of the fill; {} on a DB error (a search read must not break)."""
+    session = get_session()
+    try:
+        return _search_fill(session, bike_ids)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("search fill failed (non-fatal) | %s", exc)
+        return {}
     finally:
         session.close()
 
@@ -271,44 +404,6 @@ _MATCHERS = {
     "is_electric": lambda specs, want: (_ELECTRIC in specs.categories) == want,
 }
 
-_MATCH_LABELS = {
-    "brand": lambda v: f"marka {v}",
-    "model": lambda v: f"model {v}",
-    "wheel_size": lambda v: f"koła {v}",
-    "frame_size": lambda v: f"rozmiar {v}",
-    "is_electric": lambda v: "elektryczny" if v else "bez napędu elektrycznego",
-}
-
-
-def _describe_match(fields: dict) -> str:
-    """'Pasuje: marka Trek, koła 29", elektryczny.' for a DB hit."""
-    return "Pasuje: " + ", ".join(_MATCH_LABELS[f](v) for f, v in fields.items()) + "."
-
-
-def _latest_ratings(session, bike_ids: list[int]) -> dict[int, tuple[str, list[str]]]:
-    """Explanation + accessories of the most recent search_bike_rating_cache row per bike, if any."""
-    if not bike_ids:
-        return {}
-    rows = session.execute(
-        text(
-            "SELECT r.bike_id, r.explanation, r.accessories "
-            "FROM search_bike_rating_cache r JOIN search_cache s ON s.id = r.search_cache_id "
-            f"WHERE r.bike_id IN ({','.join(str(int(i)) for i in bike_ids)}) "
-            "ORDER BY s.time_stored DESC, r.id DESC"
-        )
-    ).fetchall()
-    out: dict[int, tuple[str, list[str]]] = {}
-    for bike_id, explanation, accessories in rows:
-        if bike_id in out:
-            continue
-        try:
-            acc = json.loads(accessories) if accessories else []
-        except (TypeError, ValueError):
-            acc = []
-        out[bike_id] = (explanation or "", [str(a) for a in acc])
-    return out
-
-
 def find_bikes_by_details(req) -> list[BikeResult]:
     """DB-first search over bike + bike_detail_component — no AI call.
 
@@ -354,11 +449,10 @@ def find_bikes_by_details(req) -> list[BikeResult]:
                 and all(_MATCHERS[f](specs[detail_by_bike[b.id]], v) for f, v in spec_fields.items())
             ]
 
-        ratings = _latest_ratings(session, [b.id for b in candidates])
-        default = (_describe_match(fields), [])
+        fill = _search_fill(session, [b.id for b in candidates])
         results = []
         for b in candidates:
-            explanation, accessories = ratings.get(b.id, default)
+            explanation, accessories = fill.get(b.id, ("", []))
             results.append(BikeResult(
                 brand=b.brand, model=b.model, accessories=accessories, explanation=explanation,
             ))

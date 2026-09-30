@@ -1,5 +1,6 @@
 """HTTP client for the on-demand searcher service (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro, bike photos,
-TODO-037 bike review).
+TODO-037 bike review, TODO-041 bike details: `search_details` posts to
+/v1/search/details and unwraps {details}).
 
 The searcher (top-level `searcher/`, port 8100 locally) runs the Claude Code CLI
 once per search — plus Playwright once per OLX listing, or once on the
@@ -46,7 +47,7 @@ from typing import TypeVar
 import httpx
 from pydantic import BaseModel
 
-from .schemas import BikeOfferResponse, BikePhotosResponse, BikeReviewResponse, UsedBikeResponse
+from .schemas import BikeDetailsResponse, BikeOfferResponse, BikePhotosResponse, BikeReviewResponse, UsedBikeResponse
 
 logger = logging.getLogger("biker.searcher")
 
@@ -56,6 +57,7 @@ SEARCH_PATHS = {
     "allegro": "/v1/search/allegro",
     "photos": "/v1/search/photos",
     "review": "/v1/search/review",
+    "details": "/v1/search/details",
 }
 _SOURCE_BY_PATH = {path: source for source, path in SEARCH_PATHS.items()}  # for log lines
 DEFAULT_TIMEOUT = 600.0  # one CLI search + photo scraping can take minutes
@@ -87,6 +89,16 @@ class _SearcherReviewResponse(BaseModel):
     """
 
     review: BikeReviewResponse
+
+
+class _SearcherDetailsResponse(BaseModel):
+    """The searcher's details body: {details: {...}, bike_id, saved} (TODO-041).
+
+    `details` is required and nested, so search_details unwraps it; a body of
+    another route's shape fails validation (502) instead of reading as "no details".
+    """
+
+    details: BikeDetailsResponse
 
 # Searches in progress, keyed on (path, normalised company, normalised model) —
 # a second click for the same bike on the same source awaits the running
@@ -233,7 +245,13 @@ async def _post_search(path: str, company: str, model: str, response_model: type
         items = getattr(result, "photos", None)
     if items is None:
         review = getattr(result, "review", None)
-        items = review.ref if review is not None else []
+        details = getattr(result, "details", None)
+        if review is not None:
+            items = review.ref
+        elif details is not None:
+            items = details.components
+        else:
+            items = []
     logger.info(
         "searcher %s done | company=%r model=%r items=%d bike_id=%s saved=%s elapsed=%.2fs",
         source, company, model, len(items),
@@ -304,3 +322,13 @@ async def search_review(company: str, model: str) -> BikeReviewResponse:
     """
     result = await _search(SEARCH_PATHS["review"], company, model, _SearcherReviewResponse)
     return result.review
+
+
+async def search_details(company: str, model: str) -> BikeDetailsResponse:
+    """Run (or join) the bike-details search for one bike (TODO-041) — see _search.
+
+    Returns the details the searcher now has stored for the bike (the empty
+    response when it found nothing usable); the wrapper's bike_id / saved are dropped.
+    """
+    result = await _search(SEARCH_PATHS["details"], company, model, _SearcherDetailsResponse)
+    return result.details

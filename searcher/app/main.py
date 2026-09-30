@@ -1,6 +1,6 @@
 """Biker Searcher — FastAPI entry point (TODO-031, TODO-032, TODO-033, photos, TODO-037).
 
-Six routes: POST /v1/search/olx (X-Searcher-Key required) runs the OLX
+Seven routes (the last, POST /v1/search/details, TODO-041: bike details through the CLI into bike_detail + bike_detail_component): POST /v1/search/olx (X-Searcher-Key required) runs the OLX
 search through the Claude Code CLI, scrapes listing photos with Playwright and
 writes the result into bike_offer / bike_offer_photos; POST /v1/search/decathlon
 (same key) runs the Decathlon search through the CLI — no Playwright — and
@@ -12,7 +12,7 @@ the CLI, scrapes up to 8 photos with Playwright and stores them in
 bike_detail_photos — only for a bike that has none; POST /v1/search/review
 (same key) runs the expert-review search through the CLI — no Playwright — and
 stores it in bike_review / bike_review_source when it found sources; GET
-/health is open. The FIVE searches share one semaphore of SEARCHER_MAX_CONCURRENT slots
+/health is open. The SIX searches share one semaphore of SEARCHER_MAX_CONCURRENT slots
 (default 10); a slot is one CLI run plus, for OLX and photos, one browser
 (browser launches are capped separately by BROWSER_MAX_CONCURRENCY, default 2).
 The next request is refused with 503, never queued. On Cloud Run each
@@ -34,13 +34,16 @@ from . import config
 from .allegro_finder import ALLEGRO_SOURCE, find_allegro_offers
 from .claude_cli import cli_version
 from .decathlon_finder import DECATHLON_SOURCE, find_decathlon_offers
+from .details_finder import empty_details, find_bike_details, has_components
 from .models import dispose_engine, get_engine, init_db
 from .olx_finder import OLX_SOURCE, SearcherError, SearcherLimitError, find_used_bikes
 from .photos_finder import find_bike_photos
 from .repository import (
+    get_stored_details,
     get_stored_photos,
     get_stored_review,
     is_usable_review,
+    save_details,
     save_offers,
     save_photos,
     save_review,
@@ -48,6 +51,7 @@ from .repository import (
 from .review_finder import find_bike_review
 from .schemas import (
     BikeOffer,
+    DetailsResponse,
     HealthResponse,
     PhotosResponse,
     ReviewResponse,
@@ -369,3 +373,64 @@ async def search_review(req: SearchRequest) -> ReviewResponse:
         bike_id, time.perf_counter() - t_start,
     )
     return ReviewResponse(review=found, bike_id=bike_id, saved=int(saved))
+
+
+async def _complete_stored_details(company: str, model: str) -> DetailsResponse | None:
+    """The bike's stored details as a saved-0 response when complete (components AND description text), else None. 500 on a read failure."""
+    try:
+        bike_id, stored = await asyncio.to_thread(get_stored_details, company, model)
+    except Exception as exc:  # noqa: BLE001 - a read failure must not start a paid run
+        logger.error("details read failed | company=%r model=%r | %s", company, model, exc)
+        raise HTTPException(status_code=500, detail="database read failed") from exc
+    if stored is None or not has_components(stored) or not stored.description.text.strip():
+        return None
+    return DetailsResponse(details=stored, bike_id=bike_id, saved=0)
+
+
+@app.post("/v1/search/details", response_model=DetailsResponse, dependencies=[Depends(require_api_key)])
+async def search_details(req: SearchRequest) -> DetailsResponse:
+    """The bike's details (Polish description + short description + 8-category component tree): stored, or a new search.
+
+    Complete stored details (components and a description) come back from
+    bike_detail / bike_detail_component with saved 0 - no CLI run and no busy
+    check. Otherwise one CLI search (WebSearch + WebFetch, no Playwright); a
+    usable result (components or description) is stored - bike row created if
+    missing, bike_detail updated in place, components replaced, photos
+    untouched - and comes back with saved 1. Anything less writes and deletes
+    nothing (saved 0) and the response is what is stored or the empty details.
+    Same 400 / 401 / 422 / 502 / 503 / 500 mapping as the other routes and the
+    SAME SEARCHER_MAX_CONCURRENT slots.
+    """
+    logger.info("details search request | company=%r model=%r", req.company, req.model)
+    stored = await _complete_stored_details(req.company, req.model)
+    if stored is not None:
+        logger.info("details already stored - no search | bike_id=%s", stored.bike_id)
+        return stored
+    assert _semaphore is not None  # set in lifespan
+    if _semaphore.locked():
+        logger.warning("details search refused: busy | company=%r model=%r", req.company, req.model)
+        raise HTTPException(status_code=503, detail="searcher busy")
+    t_start = time.perf_counter()
+    async with _semaphore:
+        stored = await _complete_stored_details(req.company, req.model)
+        if stored is not None:
+            logger.info("details stored meanwhile - no search | bike_id=%s", stored.bike_id)
+            return stored
+        try:
+            found = await find_bike_details(req.company, req.model)
+        except SearcherError as exc:
+            logger.error("details search failed | company=%r model=%r | %s", req.company, req.model, exc)
+            raise _search_failed(exc) from exc
+        try:
+            bike_id, saved = await asyncio.to_thread(save_details, req.company, req.model, found)
+            # Always answer with what is stored now (what the DB read returns), else the empty details.
+            bike_id, stored_now = await asyncio.to_thread(get_stored_details, req.company, req.model)
+            result = stored_now if stored_now is not None else empty_details(req.company, req.model)
+        except Exception as exc:  # noqa: BLE001 - logged in the repository; callers get a summary only
+            raise HTTPException(status_code=500, detail="database write failed") from exc
+    logger.info(
+        "details search complete | company=%r model=%r elements=%d saved=%d bike_id=%s elapsed=%.2fs",
+        req.company, req.model, sum(len(s.elements) for c in found.components for s in c.subcategories),
+        int(saved), bike_id, time.perf_counter() - t_start,
+    )
+    return DetailsResponse(details=result, bike_id=bike_id, saved=int(saved))

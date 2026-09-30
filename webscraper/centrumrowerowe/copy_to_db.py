@@ -3,7 +3,7 @@
 Phase 1 reads the source (bike_discovery rows with their listings + the details and photos of each
 done/skipped row's bike) into memory and closes it; phase 2 writes the target: bike details through
 the same verified save as the processor, the bike's photos (only when the target bike has none), the
-/v1/bike/details cache, then every queue row upserted by (company_norm, model_norm) and its listings
+then every queue row upserted by (company_norm, model_norm) and its listings
 by (source, source_product_id).
 
     python copy_to_db.py --target-url "postgresql+psycopg://user@127.0.0.1:6543/biker" --allow-remote
@@ -24,8 +24,8 @@ from db import (  # noqa: E402
     DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, BikeDiscovery, BikeDiscoveryListing, models, norm, repository, session,
 )
 from bike_store import (  # noqa: E402
-    CACHE_FAILED, CACHE_PRESENT, CACHE_WRITTEN, KEPT, PHOTOS_FAILED, PHOTOS_NONE, PHOTOS_PRESENT, PHOTOS_WRITTEN,
-    WRITTEN, bike_state, cache_details, store_details, store_photos, tx,
+    KEPT, PHOTOS_FAILED, PHOTOS_NONE, PHOTOS_PRESENT, PHOTOS_WRITTEN,
+    WRITTEN, bike_state, store_details, store_photos, tx,
 )
 from discovery_repo import find_bike, find_listing, listed_by  # noqa: E402
 from app import photos_repository  # noqa: E402
@@ -151,7 +151,6 @@ def copy_bike(bike: SourceBike, index: TargetIndex, counts: dict, dry_run: bool)
             counts["bikes " + (KEPT if has else WRITTEN)] += 1
             if not has and bike.details is None:
                 return None
-            counts["cache " + cache_details(brand, model, bike.details, write=False)] += 1
             photos = (store_photos(bike_id, brand, model, bike.photos, write=False) if bike_id is not None
                       else PHOTOS_WRITTEN if bike.photos else PHOTOS_NONE)
             counts["photos " + photos] += 1
@@ -169,10 +168,6 @@ def copy_bike(bike: SourceBike, index: TargetIndex, counts: dict, dry_run: bool)
             index.add(brand, model, bike_id)
         counts["bikes " + outcome] += 1
         counts["photos " + store_photos(bike_id, brand, model, bike.photos)] += 1
-        if response is None:  # kept: cache the target's own details (first write wins anyway)
-            response = repository.get_bike_details(brand, model)
-        if response is not None:
-            counts["cache " + cache_details(brand, model, response)] += 1
         return bike_id, brand, model
     except Exception as exc:
         counts["bikes failed"] += 1
@@ -236,7 +231,6 @@ def write_target(target_url: str, snap: Snapshot, dry_run: bool = False) -> dict
     counts = {k: 0 for k in ("rows inserted", "rows updated", "rows unchanged", "rows failed",
                              "listings inserted", "listings unchanged",
                              "bikes " + WRITTEN, "bikes " + KEPT, "bikes failed",
-                             "cache " + CACHE_WRITTEN, "cache " + CACHE_PRESENT, "cache " + CACHE_FAILED,
                              "photos " + PHOTOS_WRITTEN, "photos " + PHOTOS_PRESENT, "photos " + PHOTOS_NONE,
                              "photos " + PHOTOS_FAILED)}
     models.configure_db(target_url)

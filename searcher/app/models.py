@@ -1,7 +1,8 @@
-"""SQLAlchemy engine helpers and the six tables the searcher touches.
+"""SQLAlchemy engine helpers and the eight tables the searcher touches.
 
 The DDL below is a verbatim copy of `bike`, `bike_offer`, `bike_offer_photos`,
-`bike_detail_photos`, `bike_review` and `bike_review_source` in
+`bike_detail_photos`, `bike_review`, `bike_review_source`, `bike_detail` and
+`bike_detail_component` in
 backend/app/models.py — same names, columns, constraints and index names —
 because both services share one database. Change it there first, then here.
 init_db() only checks that the tables exist — the backend creates them.
@@ -86,6 +87,7 @@ def get_session():
 
 REQUIRED_TABLES = (
     "bike", "bike_offer", "bike_offer_photos", "bike_detail_photos", "bike_review", "bike_review_source",
+    "bike_detail", "bike_detail_component",
 )
 
 
@@ -117,6 +119,14 @@ def init_db():
             "bike_detail_photos has no bike_id column — run backend/scripts/migrate_photos_bike_id.py "
             "on this database first"
         )
+    # TODO-041: bike_detail gained short_description; create_all() never ALTERs, so an older
+    # table lacks it and every details write would fail.
+    detail_columns = {c["name"] for c in inspector.get_columns("bike_detail")}
+    if "short_description" not in detail_columns:
+        raise RuntimeError(
+            "bike_detail has no short_description column — run backend/scripts/migrate_short_description.py "
+            "on this database first"
+        )
 
 
 class Bike(Base):
@@ -131,6 +141,7 @@ class Bike(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
+    details = relationship("BikeDetails", back_populates="bike", cascade="all, delete-orphan", uselist=False)
     offers = relationship("BikeOffer", back_populates="bike", cascade="all, delete-orphan")
     photos = relationship(
         "BikeDetailPhoto", back_populates="bike", cascade="all, delete-orphan",
@@ -235,3 +246,53 @@ class BikeReviewSource(Base):
 
     # Relationships
     review = relationship("BikeReview", back_populates="sources")
+
+
+class BikeDetails(Base):
+    """Full bike specifications and details (TODO-041: written by the searcher's details search)."""
+
+    __tablename__ = "bike_detail"
+
+    id = Column(Integer, primary_key=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=False)  # JSON serialized BikeDescription
+    short_description = Column(Text, nullable=False, server_default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    bike = relationship("Bike", back_populates="details")
+    components = relationship(
+        "BikeDetailComponent",
+        back_populates="details",
+        cascade="all, delete-orphan",
+        order_by=(
+            "BikeDetailComponent.component_order, "
+            "BikeDetailComponent.element_order, "
+            "BikeDetailComponent.spec_order"
+        ),
+    )
+
+
+class BikeDetailComponent(Base):
+    """One spec row, with its whole ancestry denormalised onto it (see backend/app/models.py)."""
+
+    __tablename__ = "bike_detail_component"
+
+    id = Column(Integer, primary_key=True)
+    bike_detail_id = Column(Integer, ForeignKey("bike_detail.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    category = Column(String(255), nullable=False, index=True)
+    subcategory = Column(String(255), nullable=False, index=True)
+    component_order = Column(Integer, nullable=False, default=0)
+
+    element_name = Column(String(512), nullable=False, index=True)
+    element_description = Column(Text, nullable=False, default="")
+    element_order = Column(Integer, nullable=False, default=0)
+
+    spec_key = Column(String(255), nullable=True, index=True)
+    spec_value = Column(String(1024), nullable=True)
+    spec_order = Column(Integer, nullable=True)
+
+    # Relationships
+    details = relationship("BikeDetails", back_populates="components")
