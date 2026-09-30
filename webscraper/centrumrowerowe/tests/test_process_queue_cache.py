@@ -2,7 +2,7 @@
 import process_queue as pq
 from app import cache
 from app.schemas import BikeDetailsResponse
-from db import DONE, BikeDiscovery, models, repository
+from db import DONE, BikeDiscoveryListing, models, repository
 from test_process_queue import StubParsed, add_row, bike_rows, claim_and_process, get_row, stub_parse
 
 EP = pq.DETAILS_ENDPOINT
@@ -85,7 +85,7 @@ def test_sync_cache_fills_done_rows_and_is_idempotent(temp_db, capsys):
 def test_sync_cache_respects_source(temp_db):
     _done_bike_without_cache("pd1", "Romet", "Wagant 3")
     with pq._tx() as s:
-        s.query(BikeDiscovery).update({BikeDiscovery.source: "other.pl"})
+        s.query(BikeDiscoveryListing).update({BikeDiscoveryListing.source: "other.pl"})
     assert pq.sync_cache("centrumrowerowe.pl")["written"] == 0
     assert pq.sync_cache("other.pl")["written"] == 1
 

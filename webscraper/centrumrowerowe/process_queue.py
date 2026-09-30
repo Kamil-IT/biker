@@ -1,8 +1,9 @@
-"""Process the bike_discovery queue (TODO-036): fetch each product page, parse it, store bike details.
+"""Process the bike_discovery queue (TODO-036, TODO-039): fetch a listing's page, parse it, store bike details.
 
-Dispatcher and worker in one process, no AI: a batch of rows is claimed (and
-committed) before any network I/O, then each page is fetched, parsed by
-`product_parser.parse_product` and saved with `repository.save_bike_details`.
+Dispatcher and worker in one process, no AI: a batch of bikes is claimed (and
+committed) before any network I/O, then each bike's listings are tried newest
+first — page fetched, parsed by the parser registered for the listing's shop
+(`PARSERS`) — and the first one that parses is saved with `repository.save_bike_details`.
 
     python process_queue.py --limit 20 --delay 1.0
     python process_queue.py --dry-run          # fetch + parse + print, write nothing
@@ -22,15 +23,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import db  # noqa: E402  (puts backend/ on sys.path, loads backend/.env)
 from db import (  # noqa: E402
-    DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, SOURCE, BikeDiscovery, models, repository, session, utcnow,
+    DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, SOURCE, BikeDiscovery, BikeDiscoveryListing, models, repository,
+    session, utcnow,
 )
 from bike_store import (  # noqa: E402,F401  (re-exported for callers and tests)
     CACHE_FAILED, CACHE_MISSING, CACHE_PRESENT, CACHE_WRITTEN, DETAILS_ENDPOINT, KEPT,
     cache_details, store_details, store_photos,
 )
 from bike_store import aware as _aware, tx as _tx  # noqa: E402
+from discovery_repo import identity_fields, listed_by, listings_newest_first  # noqa: E402
 from scrape_rowery import UA  # noqa: E402
-from sqlalchemy import and_, inspect, or_, update  # noqa: E402
+from sqlalchemy import and_, exists, inspect, or_, update  # noqa: E402
 
 logger = logging.getLogger("process_queue")
 
@@ -44,6 +47,7 @@ LEASE = timedelta(minutes=15)
 BACKOFF = (timedelta(hours=1), timedelta(hours=6), timedelta(hours=24))
 GONE_STATUSES = (404, 410)
 MAX_ERROR_LEN = 1000
+NO_LISTINGS = "bike has no listings — nothing to fetch"
 
 # fetch(url) -> (status_code, html)
 Fetch = Callable[[str], tuple[int, str]]
@@ -55,6 +59,14 @@ class FetchError(Exception):
 
 class UnsafeURL(Exception):
     """A URL outside https://(www.)centrumrowerowe.pl — never fetched."""
+
+
+class ProductGone(Exception):
+    """The listing's page answered 404 / 410."""
+
+
+class UnknownSource(Exception):
+    """No parser is registered for the listing's shop."""
 
 
 def check_url(url: str) -> str:
@@ -80,10 +92,15 @@ def http_fetch(url: str, transport=None) -> tuple[int, str]:
     raise FetchError(f"more than {MAX_REDIRECTS} redirects, last to {url!r}")
 
 
-def _default_parse(html: str, url: str):
+def _parse_centrumrowerowe(html: str, url: str):
     from product_parser import parse_product
 
     return parse_product(html, url)
+
+
+# source → parse(html, url) -> ParsedBike, and the URL allowlist checked before every fetch of that shop.
+PARSERS = {SOURCE: _parse_centrumrowerowe}
+URL_CHECKS = {SOURCE: check_url}
 
 
 def backoff_for(attempts: int) -> timedelta:
@@ -100,7 +117,7 @@ def _claimable(now: datetime, source: Optional[str]):
     retryable = and_(BikeDiscovery.status.in_([PENDING, FAILED]), due, BikeDiscovery.attempts < MAX_ATTEMPTS)
     stale = and_(BikeDiscovery.status == IN_PROGRESS, _stale_lease(now), BikeDiscovery.attempts < MAX_ATTEMPTS)
     cond = or_(retryable, stale)
-    return and_(cond, BikeDiscovery.source == source) if source else cond
+    return and_(cond, listed_by(source)) if source else cond
 
 
 def _expire_exhausted_leases(s, now: datetime, source: Optional[str]) -> int:
@@ -109,7 +126,7 @@ def _expire_exhausted_leases(s, now: datetime, source: Optional[str]) -> int:
         BikeDiscovery.status == IN_PROGRESS, _stale_lease(now), BikeDiscovery.attempts >= MAX_ATTEMPTS,
     )
     if source:
-        q = q.filter(BikeDiscovery.source == source)
+        q = q.filter(listed_by(source))
     return q.update({
         BikeDiscovery.status: FAILED,
         BikeDiscovery.locked_at: None,
@@ -124,7 +141,7 @@ def requeue_failed(source: Optional[str], now: Optional[datetime] = None) -> int
     with _tx() as s:
         q = s.query(BikeDiscovery).filter(BikeDiscovery.status == FAILED)
         if source:
-            q = q.filter(BikeDiscovery.source == source)
+            q = q.filter(listed_by(source))
         return q.update({
             BikeDiscovery.status: PENDING,
             BikeDiscovery.attempts: 0,
@@ -183,67 +200,120 @@ def _take_lease(row_id: int, claimed_at: Optional[datetime] = None) -> Optional[
         return lease if result.rowcount == 1 else None
 
 
-def _finish(row_id: int, lease: Optional[datetime], **fields) -> bool:
-    """Write the outcome only if this run still holds the lease; False (nothing written) otherwise."""
+def _finish(row_id: int, lease: Optional[datetime], company: Optional[str] = None, model: Optional[str] = None,
+            **fields) -> bool:
+    """Write the outcome only if this run still holds the lease; False (nothing written) otherwise.
+
+    `company`/`model` (the bike's stored casing) go in with their norms — unless another
+    bike_discovery row already owns that identity, then the row keeps its name.
+    """
     fields.update(locked_at=None, updated_at=utcnow())
     with _tx() as s:
+        if company is not None:
+            fields.update(identity_fields(s, row_id, company, model))
         result = s.execute(update(BikeDiscovery).where(_owned([row_id], lease)).values(**fields))
         return result.rowcount == 1
 
 
-def process_row(row_id: int, fetch: Fetch = http_fetch, parse=None, claimed_at: Optional[datetime] = None) -> str:
-    """Fetch, parse and store one claimed row; returns its final status. Never raises (bar Ctrl+C).
+def _mark_listing(row_id: int, lease: Optional[datetime], listing_id: int, error: Optional[str]) -> None:
+    """Record a fetch attempt on the listing — only while this run still holds the bike's lease."""
+    now = utcnow()
+    with _tx() as s:
+        s.execute(update(BikeDiscoveryListing)
+                  .where(BikeDiscoveryListing.id == listing_id, exists().where(_owned([row_id], lease)))
+                  .values(fetched_at=now, fetch_error=error, updated_at=now))
 
-    `claimed_at` (the claim's locked_at) makes the lease check exact; without it
-    any in_progress row is taken.
+
+def _fetch_and_parse(source: str, url: Optional[str], fetch: Fetch, parse):
+    """One listing's page → parsed bike. Raises ProductGone on 404/410, anything else on any other failure."""
+    if not url:
+        raise ValueError("listing has no details_link")
+    if source not in PARSERS:
+        raise UnknownSource(f"no parser registered for source {source!r}")
+    status, html = fetch(URL_CHECKS[source](url))
+    if status in GONE_STATUSES:
+        raise ProductGone(f"HTTP {status}: product gone")
+    if status != 200:
+        raise FetchError(f"HTTP {status} for {url}")
+    return (parse or PARSERS[source])(html, url)
+
+
+def _error_text(exc: Exception) -> str:
+    return (str(exc) if isinstance(exc, ProductGone) else f"{type(exc).__name__}: {exc}")[:MAX_ERROR_LEN]
+
+
+def process_row(row_id: int, fetch: Fetch = http_fetch, parse=None, claimed_at: Optional[datetime] = None) -> str:
+    """Fetch, parse and store one claimed bike; returns its final status. Never raises (bar Ctrl+C).
+
+    The bike's listings are tried newest `last_seen_at` first; the first page that parses wins,
+    and every attempt is recorded on its listing (fetched_at / fetch_error). The bike fails only
+    when every listing failed (or it has none) and is skipped when every listing is gone (404/410).
+    `parse` overrides PARSERS (tests). `claimed_at` (the claim's locked_at) makes the lease check
+    exact; without it any in_progress row is taken.
     """
-    parse = parse or _default_parse
     lease = _take_lease(row_id, claimed_at)
     if lease is None:
         logger.warning("lost | row %s | no longer in_progress on our lease, left alone", row_id)
         return LOST
     with session() as s:
         row = s.get(BikeDiscovery, row_id)
-        url, attempts, pid = row.details_link, row.attempts, row.source_product_id
+        attempts, name = row.attempts, f"{row.company} {row.model}"
+        listings = [(li.id, li.source, li.source_product_id, li.details_link)
+                    for li in listings_newest_first(s, row_id)]
 
     def finish(outcome: str, **fields) -> str:
         if _finish(row_id, lease, status=outcome, **fields):
             return outcome
-        logger.warning("lost | %s | lease taken over before %s could be written", pid, outcome)
+        logger.warning("lost | %s | lease taken over before %s could be written", name, outcome)
         return LOST
 
-    try:
-        if not url:
-            raise ValueError("row has no details_link")
-        status, html = fetch(check_url(url))
-        if status in GONE_STATUSES:
-            logger.info("skipped | %s | HTTP %s | %s", pid, status, url)
-            return finish(SKIPPED, last_error=f"HTTP {status}: product gone", next_attempt_at=None)
-        if status != 200:
-            raise FetchError(f"HTTP {status} for {url}")
+    def fail(error: str) -> str:
+        logger.warning("failed | %s | attempt %s | %s", name, attempts, error)
+        return finish(FAILED, last_error=error[:MAX_ERROR_LEN], next_attempt_at=utcnow() + backoff_for(attempts))
 
-        parsed = parse(html, url)
+    try:
+        errors, gone, parsed = [], 0, None
+        for listing_id, source, pid, url in listings:
+            try:
+                parsed = _fetch_and_parse(source, url, fetch, parse)
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:  # one bad listing never stops the others
+                error = _error_text(exc)
+                gone += isinstance(exc, ProductGone)
+                errors.append(f"{pid}: {error}" if len(listings) > 1 else error)
+                logger.info("listing failed | %s | %s | %s", pid, url, error)
+                _mark_listing(row_id, lease, listing_id, error)
+                continue
+            _mark_listing(row_id, lease, listing_id, None)
+            break
+        if parsed is None:
+            if not listings:
+                return fail(NO_LISTINGS)
+            if gone == len(listings):
+                logger.info("skipped | %s | every listing gone", name)
+                return finish(SKIPPED, last_error="; ".join(errors)[:MAX_ERROR_LEN], next_attempt_at=None)
+            return fail("; ".join(errors))
+
         outcome, bike_id, company, model, response = store_details(
             parsed.brand, parsed.model, parsed.to_details_response)
         # Photos are independent of details: stored whenever the bike has none, never replaced.
         photos = store_photos(bike_id, company, model, parsed.photos)
         if outcome == KEPT:  # existing details (AI- or earlier-parsed) win; nothing overwritten
             logger.info("skipped | %s | details exist for bike %s %r %r | photos %s",
-                        pid, bike_id, company, model, photos)
+                        name, bike_id, company, model, photos)
             return finish(SKIPPED, bike_id=bike_id, company=company, model=model,
                           last_error=None, next_attempt_at=None)
         cache_outcome = cache_details(company, model, response)
         logger.info("done | %s | bike %s %r %r | cache %s | photos %s",
-                    pid, bike_id, company, model, cache_outcome, photos)
+                    name, bike_id, company, model, cache_outcome, photos)
         return finish(DONE, bike_id=bike_id, company=company, model=model,
                       last_error=None, next_attempt_at=None)
     except KeyboardInterrupt:
         release_rows([row_id], lease)
         raise
-    except Exception as exc:  # one bad page never stops the batch
-        error = f"{type(exc).__name__}: {exc}"[:MAX_ERROR_LEN]
-        logger.warning("failed | %s | attempt %s | %s", pid, attempts, error)
-        return finish(FAILED, last_error=error, next_attempt_at=utcnow() + backoff_for(attempts))
+    except Exception as exc:  # e.g. the save did not land; one bad bike never stops the batch
+        return fail(f"{type(exc).__name__}: {exc}")
 
 
 def sync_cache(source: Optional[str], dry_run: bool = False) -> dict[str, int]:
@@ -258,7 +328,7 @@ def sync_cache(source: Optional[str], dry_run: bool = False) -> dict[str, int]:
              .join(BikeDiscovery, BikeDiscovery.bike_id == models.Bike.id)
              .filter(BikeDiscovery.status == DONE).distinct())
         if source:
-            q = q.filter(BikeDiscovery.source == source)
+            q = q.filter(listed_by(source))
         bikes = sorted(q.all())
     for brand, model in bikes:
         details = repository.get_bike_details(brand, model)
@@ -268,13 +338,14 @@ def sync_cache(source: Optional[str], dry_run: bool = False) -> dict[str, int]:
 
 
 def _table_exists() -> bool:
+    if db.has_old_layout():
+        raise SystemExit(db.OLD_LAYOUT_MESSAGE)
     return inspect(models.get_engine()).has_table(BikeDiscovery.__tablename__)
 
 
 def dry_run(limit: int, source: Optional[str], retry_failed: bool, delay: float,
             fetch: Fetch = http_fetch, parse=None) -> int:
-    """Fetch + parse the rows a real run would claim and print them; claims and writes nothing."""
-    parse = parse or _default_parse
+    """Fetch + parse the listings of the bikes a real run would claim and print them; claims and writes nothing."""
     if not _table_exists():
         print("bike_discovery does not exist yet — run scrape_rowery.py first")
         return 0
@@ -283,26 +354,31 @@ def dry_run(limit: int, source: Optional[str], retry_failed: bool, delay: float,
         cond = _claimable(now, source)
         if retry_failed:
             failed = BikeDiscovery.status == FAILED
-            cond = or_(cond, and_(failed, BikeDiscovery.source == source) if source else failed)
-        rows = [(r.source_product_id, r.details_link)
-                for r in s.query(BikeDiscovery).filter(cond).order_by(BikeDiscovery.id).limit(limit)]
+            cond = or_(cond, and_(failed, listed_by(source)) if source else failed)
+        bikes = [(r.id, f"{r.company} {r.model}")
+                 for r in s.query(BikeDiscovery).filter(cond).order_by(BikeDiscovery.id).limit(limit)]
+        listings = {i: [(li.source, li.source_product_id, li.details_link) for li in listings_newest_first(s, i)]
+                    for i, _ in bikes}
         s.rollback()
-    for i, (pid, url) in enumerate(rows):
-        if i:
-            time.sleep(delay)
-        try:
-            status, html = fetch(check_url(url))
-            if status != 200:
-                print(f"{pid}: HTTP {status} {url}")
+    fetched = 0
+    for bike_id, name in bikes:
+        if not listings[bike_id]:
+            print(f"{name}: {NO_LISTINGS}")
+        for src, pid, url in listings[bike_id]:  # like a real run: stop at the first page that parses
+            if fetched:
+                time.sleep(delay)
+            fetched += 1
+            try:
+                p = _fetch_and_parse(src, url, fetch, parse)
+            except Exception as exc:
+                print(f"{pid}: ERROR {_error_text(exc)}")
                 continue
-            p = parse(html, url)
             n_specs = sum(len(el.specs) for c in p.components for sub in c.subcategories for el in sub.elements)
             print(f"{pid}: {p.brand!r} {p.model!r} type={p.bike_type!r} electric={p.is_electric} "
                   f"sizes={p.frame_sizes} photos={len(p.photos)} categories={len(p.components)} specs={n_specs}")
-        except Exception as exc:
-            print(f"{pid}: ERROR {type(exc).__name__}: {exc}")
-    print(f"dry run: {len(rows)} rows, nothing written")
-    return len(rows)
+            break
+    print(f"dry run: {len(bikes)} bikes, nothing written")
+    return len(bikes)
 
 
 def run(limit: int, source: Optional[str], delay: float, retry_failed: bool,
@@ -329,9 +405,9 @@ def run(limit: int, source: Optional[str], delay: float, retry_failed: bool,
 
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--limit", type=int, default=20, help="rows to claim (default 20)")
+    ap.add_argument("--limit", type=int, default=20, help="bikes to claim (default 20)")
     ap.add_argument("--delay", type=float, default=1.0, help="seconds between page fetches (default 1.0)")
-    ap.add_argument("--source", default=None, help=f"only this source, e.g. {SOURCE}")
+    ap.add_argument("--source", default=None, help=f"only bikes with a listing from this shop, e.g. {SOURCE}")
     ap.add_argument("--retry-failed", action="store_true", help="re-queue failed rows, even after 3 attempts")
     ap.add_argument("--dry-run", action="store_true", help="fetch + parse + print; claim and write nothing")
     ap.add_argument("--allow-remote", action="store_true", help="allow writing to a non-local database")
@@ -356,10 +432,10 @@ def main(argv: Optional[list[str]] = None) -> int:
               f"missing details={c[CACHE_MISSING]} failed={c[CACHE_FAILED]}")
         return 0
     if args.dry_run:
-        dry_run(args.limit, args.source, args.retry_failed, args.delay, fetch=http_fetch, parse=_default_parse)
+        dry_run(args.limit, args.source, args.retry_failed, args.delay, fetch=http_fetch)
         return 0
     try:
-        counts = run(args.limit, args.source, args.delay, args.retry_failed, fetch=http_fetch, parse=_default_parse)
+        counts = run(args.limit, args.source, args.delay, args.retry_failed, fetch=http_fetch)
     except KeyboardInterrupt:
         print("interrupted")
         return 130

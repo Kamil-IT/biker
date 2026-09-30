@@ -178,17 +178,21 @@ instead of exceeding the 2 GiB and getting the instance killed; raise it only to
 
 ## Bike discovery (local)
 
-TODO-037: the catalogue can fill itself from a shop listing instead of from user searches. Everything lives in
+TODO-036 (layout split in TODO-039): the catalogue can fill itself from a shop listing instead of from user searches. Everything lives in
 `webscraper/centrumrowerowe/` and runs by hand on your machine — **no AI call** (page parsing only), no endpoint, no
 searcher route, and `backend/app/**` is not modified (the scripts import it). Nothing runs on GCP by itself: the only
 thing there is a one-off **copy** of the queue and the parsed bikes, made with `copy_to_db.py` (see below). Three steps:
 
 1. **Scrape** the centrumrowerowe.pl listing (`https://www.centrumrowerowe.pl/rowery/`, all `?page=N`; each page is
    tried twice, a page that fails both times is skipped with a warning). The ~2044 listing rows are colour/size
-   variants; they collapse to one queue row per `pd…` product ID. Only `https://(www.)centrumrowerowe.pl` links with a
-   `pd…` ID are queued; anything else is counted as "skipped (bad url)".
-2. **Queue** — the products are upserted into the `bike_discovery` table (re-scraping refreshes name, type, link, price
-   and `last_seen_at` but never re-queues rows already processed).
+   variants; they collapse to one product per `pd…` ID. Only `https://(www.)centrumrowerowe.pl` links with a `pd…` ID
+   are queued; anything else is counted as "skipped (bad url)".
+2. **Queue** (TODO-039) — each product is upserted as a **listing** (`bike_discovery_listing`, one product in one shop) and
+   linked to its **bike** (`bike_discovery`, the bike and its processing state, identified by normalised company +
+   model). A new listing goes to the bike with the same normalised name, and a missing bike is inserted as `pending`;
+   one bike can therefore have many listings (other colour pages, other shops). Re-scraping refreshes only the
+   listing's name, link, price and `last_seen_at`: it never touches a bike that exists (`status`, `attempts`, `bike_id`,
+   `company`, `model`, `bike_type`) and a known listing never changes bike.
 3. **Process** — `process_queue.py` claims a batch, fetches each product page, parses it (JSON-LD, the "Specyfikacja"
    table, the variant selector, the photo gallery) and stores `bike` + `bike_detail` + components through the backend's
    `repository.save_bike_details`, so the bike shows up in DB-first search without an Anthropic call. Three more
@@ -219,26 +223,32 @@ cd webscraper\centrumrowerowe
 | | `--dry-run` | off | fetch the listing and print counts only; nothing is written to the DB |
 | | `--max-pages N` | all | stop after N listing pages (testing) |
 | | `--allow-remote` | off | permit a non-local database (see **Database**) |
-| `process_queue.py` | `--limit N` | 20 | rows to claim in this run (≥ 1) |
+| `process_queue.py` | `--limit N` | 20 | bikes to claim in this run (≥ 1) |
 | | `--delay S` | 1.0 | seconds between page fetches (≥ 0) |
-| | `--source NAME` | all | only rows of this source, e.g. `centrumrowerowe.pl` |
+| | `--source NAME` | all | only bikes that have a listing from this shop, e.g. `centrumrowerowe.pl` (also under `--retry-failed`, `--sync-cache`, `--dry-run`) |
 | | `--retry-failed` | off | put every `failed` row back to `pending` first, exhausted ones too (attempts reset to 0) |
-| | `--dry-run` | off | fetch + parse + print the rows a real run would claim; claims and writes nothing (prints the target instead of refusing a remote one). With `--sync-cache` it counts what would be written |
+| | `--dry-run` | off | fetch + parse + print the bikes a real run would claim (each listing tried, stopping at the first page that parses); claims and writes nothing (prints the target instead of refusing a remote one). With `--sync-cache` it counts what would be written |
 | | `--sync-cache` | off | no fetching, no claiming: for every bike of a `done` row (`--source` respected) copy its stored details into the generic `/v1/bike/details` cache unless an entry exists; prints `cache sync: written=… already present=… missing details=… failed=…` (missing = the bike has no details row). Use it for rows processed before the cache write existed; a second run writes 0 |
 | | `--allow-remote` | off | permit a non-local database (see **Database**) |
 
 The scraper prints `listing rows / products seen / skipped (bad url)` and then `target database`, `products seen /
-inserted / updated`; the processor logs `database: …` and ends with `done=… skipped=… failed=…` (plus `lost=…` when a
+bikes inserted / listings inserted / listings updated`; the processor logs `database: …` and ends with `done=… skipped=… failed=…` (plus `lost=…` when a
 lease was taken over).
 
-**Table `bike_discovery`** (created on first use by the scripts via `ensure_table()` — no migration step): `id`, `source`
-(`centrumrowerowe.pl`), `source_product_id` (`pd27404`), `raw_name`, `company`, `model`, `bike_type`, `details_link`
-(product URL without `?v_Id=`), `price` (lowest seen among the variants), `status`, `attempts`, `last_error`,
-`locked_at`, `next_attempt_at`, `bike_id` (FK → `bike.id`, `ON DELETE SET NULL`), `first_seen_at`, `last_seen_at`,
-`updated_at`. Unique key `(source, source_product_id)`, index on `(status, next_attempt_at)`. `bike_id IS NOT NULL`
-means the bike exists in `bike`; `status = 'done'` means it has full `bike_detail` data. A re-scrape keeps `company` /
-`model` once `bike_id` is set (the processor set them to the bike's stored casing) and never touches `status`,
-`attempts` or `bike_id`.
+**Tables** (created on first use by the scripts via `ensure_table()`, which refuses — with a message to run the
+migration — a database whose `bike_discovery` still has the old TODO-036 layout; scraper, processor and copy script all
+stop the same way):
+
+- `bike_discovery` = the bike and its processing state: `id`, `company`, `model`, `company_norm`, `model_norm`
+  (`strip().lower()` in Python, `UNIQUE` together as `uq_bike_discovery_identity`), `bike_type`, `bike_id` (FK →
+  `bike.id`, `ON DELETE SET NULL`), `status`, `attempts`, `last_error`, `locked_at`, `next_attempt_at`, `created_at`,
+  `updated_at`; index `(status, next_attempt_at)`. `bike_id IS NOT NULL` means the bike exists in `bike`;
+  `status = 'done'` means it has full `bike_detail` data.
+- `bike_discovery_listing` = one product in one shop: `id`, `discovery_id` (FK → `bike_discovery.id`, `ON DELETE
+  CASCADE`, `NOT NULL`), `source` (`centrumrowerowe.pl`), `source_product_id` (`pd27404`; `UNIQUE` with `source`),
+  `raw_name`, `details_link` (URL without `?v_Id=`), `price` (lowest seen among the variants), `first_seen_at`,
+  `last_seen_at`, `updated_at`, `fetched_at` (last attempt to fetch this page), `fetch_error` (its error, `NULL` after a
+  fetch that parsed); indexes `(discovery_id)` and `(source, last_seen_at)`.
 
 **Status lifecycle:**
 
@@ -249,6 +259,15 @@ means the bike exists in `bike`; `status = 'done'` means it has full `bike_detai
 | `done` | parsed and stored; `bike_id` set, `company`/`model` set to the bike's stored brand/model. A save counts only when the bike's `bike_detail.updated_at` is at or after the save start (`save_bike_details` swallows errors, and an older row would otherwise look like success) |
 | `failed` | fetch/parse/save error, `last_error` filled. Retried after a backoff of **1 h, then 6 h** (`next_attempt_at`; the 24 h step is only reached with a higher attempt limit); the **3rd** failure is final until `--retry-failed` |
 | `skipped` | HTTP 404/410 (product gone), or the bike already has a `bike_detail` row (any age) — nothing is overwritten, AI-collected or earlier data wins; its photos are still stored if it has none |
+
+**Listings per bike (processor):** the claim, lease and backoff work per bike. For each claimed bike the listings are
+tried newest `last_seen_at` first, each with the parser registered for its shop (`PARSERS`; only `centrumrowerowe.pl`
+so far, URL allowlist unchanged) — the first page that parses wins and storing (details, photos, cache, stored casing)
+is as before. Every attempt is recorded on its listing (`fetched_at`, `fetch_error`). The bike is `failed` only when
+every listing failed (`last_error` = `pid: error; …` when there are several), `skipped` when every listing is 404/410, and
+`failed` at once for a store error, a listing of a shop without a parser (`UnknownSource`) or a bike with no listings
+("bike has no listings — nothing to fetch"). The stored casing is written to `company`/`model` unless another
+`bike_discovery` row already has that normalised identity — then the row keeps its name.
 
 Outcome `lost` (not a stored status): another run took the row's lease over, so this run writes nothing for it.
 Ctrl+C hands claimed-but-unprocessed rows back as `pending` without counting the attempt. On PostgreSQL rows are claimed
@@ -269,7 +288,8 @@ page; done once on 2026-09-30 at the user's explicit request). Two phases: (1) t
 `backend/.env` unless `--source-url` — is read completely into memory (queue rows + details and photos of each
 `done`/`skipped` row's bike) and closed; (2) the target is written: each bike's details through the same verified save as
 the processor (`bike_store.store_details`), its photos (only when the target bike has none), the `/v1/bike/details` cache
-entry, then every queue row upserted by `(source, source_product_id)`.
+entry, then every `bike_discovery` row matched by `(company_norm, model_norm)` and its listings by `(source,
+source_product_id)`. A listing already in the target stays on its bike there.
 
 - **Never downgrade**: details already in the target are kept and only linked; a queue row that is already `done` /
   `skipped` / `in_progress` in the target stays as it is; only a target `pending`/`failed` row is promoted to the source's
@@ -285,14 +305,14 @@ entry, then every queue row upserted by `(source, source_product_id)`.
 |---|---|---|
 | `--target-url URL` | required | SQLAlchemy URL of the database to write, e.g. `postgresql+psycopg://user@127.0.0.1:6543/biker` (no password) |
 | `--source-url URL` | `DATABASE_URL` of `backend/.env` | database to read |
-| `--source NAME` | all | only queue rows of this shop, e.g. `centrumrowerowe.pl` |
-| `--limit N` | all | copy at most N queue rows (>= 1) |
+| `--source NAME` | all | only bikes listed by this shop (and only that shop's listings), e.g. `centrumrowerowe.pl` |
+| `--limit N` | all | copy at most N bikes (queue rows) (>= 1) |
 | `--dry-run` | off | report what would change; write nothing |
 | `--allow-remote` | off | required when the target is not a local database |
 
 It prints `source:` / `target:` (password masked), `read N queue rows, M bikes (… with details, … with photos)` and a
-counter line (`rows_inserted`, `rows_updated`, `rows_unchanged`, `rows_failed`, `bikes_written`, `bikes_kept`,
-`bikes_failed`, `cache_*`, `photos_*`).
+counter line (`rows_inserted`, `rows_updated`, `rows_unchanged`, `rows_failed`, `listings_inserted`,
+`listings_unchanged`, `bikes_written`, `bikes_kept`, `bikes_failed`, `cache_*`, `photos_*`).
 
 ```powershell
 # Terminal 1: the Cloud SQL proxy on the host port the guard treats as remote (gcloud login / ADC needed)
@@ -305,11 +325,32 @@ cd webscraper\centrumrowerowe
 ```
 
 State on GCP after the 2026-09-30 copy: the queue holds 1304 rows (49 `done`, 1 `skipped`, 1254 `pending`) and 49 bikes with
-details, photos and cache entries. Nothing there runs by itself — processing the remaining 1254 rows would be a manual
-`process_queue.py --allow-remote` run against the proxy, only on an explicit decision.
+details, photos and cache entries — still in the **old** one-table layout (TODO-036), so run
+`migrate_discovery_listings.py` there before any script touches it (below), only on the user's explicit go. Nothing there
+runs by itself — processing the remaining 1254 rows would be a manual `process_queue.py --allow-remote` run against the proxy,
+only on an explicit decision.
+
+**Migration to the two-table layout — `migrate_discovery_listings.py`** (TODO-039). Run it **once on every existing
+database before any other script** (local `biker-pg` first; GCP only on the user's explicit go). It moves each old row's
+shop columns (`source`, `source_product_id`, `raw_name`, `details_link`, `price`, `first_seen_at`, `last_seen_at`) into one
+listing linked to that row, fills the norms, and merges rows that share a normalised identity: the survivor has the
+highest status (`done` > `skipped` > `failed` > `in_progress` > `pending`, ties → lowest id), gets every listing, and keeps
+its `bike_id` or takes the first one a merged row had. It then drops the moved columns and the old `UNIQUE(source,
+source_product_id)` and adds the new constraint and indexes. One transaction, verified before commit (listing count = old row
+count, every listing linked, no bike lost its `bike_id`); any mismatch rolls back with exit code 1. SQLite rebuilds the
+table, PostgreSQL alters it in place under an `ACCESS EXCLUSIVE` lock. Idempotent: a second run prints "already migrated".
+Summary: `old_rows`, `bikes`, `listings`, `merged_groups`, `merged_rows`, `bike_id_conflicts` (a WARNING when > 0).
+
+| Flag | Meaning |
+|---|---|
+| `--url URL` | SQLAlchemy URL to migrate (default `DATABASE_URL` of `backend/.env`) |
+| `--dry-run` | migrate, verify and report, then roll back |
+| `--allow-remote` | required for a non-local database — **also with `--dry-run`**, because it runs the DDL and takes the table lock before rolling back |
+
+Run on the local PostgreSQL `biker-pg` on 2026-09-30 (rehearsed first on a PostgreSQL copy of the real table): `old_rows=1310 bikes=1278 listings=1310 merged_groups=30 merged_rows=32 bike_id_conflicts=0` - the merged groups are men's/women's variants of the same model name (e.g. "Rower crossowy ROMET Orkan 5 CS" + "... damski ..."); a second run printed "already migrated". GCP still holds the old layout until the user's go. After the migration, on `biker-pg` (2026-09-30): a full re-scrape saw 1311 products and inserted 7 bikes + 7 listings (new `pd` ids in the catalogue; 6 old ones were not seen) and updated 1304 listings; `process_queue.py --limit 5` gave `done=5 skipped=0 failed=0`; 194 unit tests pass.
 
 **Tests** (fixtures are saved product pages in `webscraper/centrumrowerowe/tests/fixtures/`; every test uses a throwaway
-SQLite file, never the real database; 160 pass on 2026-09-30):
+SQLite file, never the real database; 194 pass on 2026-09-30):
 
 ```powershell
 $env:PYTHONUTF8 = "1"
