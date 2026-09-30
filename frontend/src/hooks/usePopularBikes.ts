@@ -1,13 +1,6 @@
 import { useEffect, useState } from 'react'
+import { NO_RATING, PENDING_RATING, bikeKey } from '../ratings'
 import type { BikeReviewResponse, ExpertRating, PopularBike, PopularBikesResponse } from '../types'
-
-// Key of a popular bike in the ratings map. NUL cannot occur in a brand or model
-// name, so no two brand/model pairs share a key.
-export const popularBikeKey = (bike: Pick<PopularBike, 'brand' | 'model'>): string =>
-  `${bike.brand}\u0000${bike.model}`
-
-export const PENDING_RATING: ExpertRating = { state: 'pending', rating: null }
-const NO_RATING: ExpertRating             = { state: 'error',   rating: null }
 
 interface PopularBikes {
   bikes:   PopularBike[]
@@ -52,7 +45,7 @@ export default function usePopularBikes(): PopularBikes {
       } catch {
         // network failure or malformed JSON — shown as "Brak oceny"
       }
-      if (!ignore) setRatings(prev => ({ ...prev, [popularBikeKey(bike)]: next }))
+      if (!ignore) setRatings(prev => ({ ...prev, [bikeKey(bike)]: next }))
     }
 
     const load = async () => {
@@ -68,7 +61,7 @@ export default function usePopularBikes(): PopularBikes {
       }
       if (ignore) return
       setBikes(list)
-      setRatings(Object.fromEntries(list.map(bike => [popularBikeKey(bike), PENDING_RATING])))
+      setRatings(Object.fromEntries(list.map(bike => [bikeKey(bike), PENDING_RATING])))
       list.forEach(bike => fetchRating(bike))
     }
 

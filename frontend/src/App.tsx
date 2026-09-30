@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import SearchInput from './components/SearchInput'
 import ResultCard from './components/ResultCard'
 import LoadingCard from './components/LoadingCard'
@@ -6,6 +6,8 @@ import BikeDetailsView from './components/BikeDetailsView'
 import EquipmentDetailsView from './components/EquipmentDetailsView'
 import PopularBikesSection from './components/PopularBikesSection'
 import usePopularBikes from './hooks/usePopularBikes'
+import useCachedRatings from './hooks/useCachedRatings'
+import { PENDING_RATING, bikeKey } from './ratings'
 import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikePhotosResponse, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse, EquipmentDetailsResponse, EquipmentReviewResponse, SearchPayload, ParseResponse, SearchFilters } from './types'
 import { EMPTY_FILTERS } from './types'
 
@@ -51,6 +53,15 @@ export default function App() {
   // Home-page "Najpopularniejsze rowery" (TODO-034): fetched once for the app's
   // lifetime — coming back from the details view does not refetch.
   const { bikes: popularBikes, ratings: popularRatings } = usePopularBikes()
+  // TODO-040: expert ratings of the search results (stored reviews only). Until every
+  // rating has settled the backend order is kept so cards do not jump; then rated bikes
+  // go first, best first, and "no rating" bikes last (stable sort = backend order in ties).
+  const { ratings: resultRatings, settled: ratingsSettled } = useCachedRatings(bikes)
+  const sortedBikes = useMemo(() => {
+    if (!ratingsSettled) return bikes
+    const value = (b: Bike) => resultRatings[bikeKey(b)]?.rating ?? -1
+    return [...bikes].sort((a, b) => value(b) - value(a))
+  }, [bikes, resultRatings, ratingsSettled])
 
   // Details state
   const [view, setView]                         = useState<AppView>('search')
@@ -630,12 +641,13 @@ export default function App() {
                       </div>
                     )}
                     {appState === 'results' &&
-                      bikes.map((bike, i) => (
+                      sortedBikes.map((bike, i) => (
                         <ResultCard
                           key={`${bike.brand}-${bike.model}`}
                           bike={bike}
                           rank={i + 1}
-                          isTop={i === 0}
+                          isTop={false}
+                          expertRating={resultRatings[bikeKey(bike)] ?? PENDING_RATING}
                           animationDelay={Math.min(i, 8) * 65}
                           onSelect={handleBikeSelect}
                         />

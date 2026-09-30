@@ -4,7 +4,7 @@ AI-powered bike finder. Describe what you're looking for in plain English and ge
 
 ## How it works
 
-Before the first search the home page shows **Najpopularniejsze rowery** — the curated popular bikes (`GET /v1/bike/popular`) as result-style cards with their expert rating in points ("8.4 / 10", from one `POST /v1/bike/review` per bike; "Brak oceny" without one) and a short description; click one to jump straight to its details page (step 4). The section disappears while a search runs or shows results and returns after "Nowe wyszukiwanie".
+Before the first search the home page shows **Najpopularniejsze rowery** — the curated popular bikes (`GET /v1/bike/popular`) as result-style cards with their expert rating in points ("8.4 / 10", from one `POST /v1/bike/review` per bike; "?" / "Brak oceny" without one) and a short description; click one to jump straight to its details page (step 4). The section disappears while a search runs or shows results and returns after "Nowe wyszukiwanie".
 
 1. You enter a free-text description (e.g. *"comfortable bike for daily 10 km city commute"*)
 2. The backend first searches its own bike database: every structured filter it can check (brand, model, wheel size, frame size, electric) is matched against stored bike specs. All matching bikes are returned (no cap) with no AI call. Search answers are never served from a response cache, so they always reflect the current database
@@ -43,6 +43,8 @@ pip install -U anthropic        # existing venv: keep the SDK as new as the Dock
 copy .env.example .env          # edit .env and set your ANTHROPIC_API_KEY
 python scripts/migrate_photos_bike_id.py --dry-run   # once per existing database: report what would change ...
 python scripts/migrate_photos_bike_id.py             # ... then re-key bike_detail_photos to bike_id (idempotent)
+python scripts/migrate_drop_search_rating.py --dry-run   # once per existing database (TODO-040) ...
+python scripts/migrate_drop_search_rating.py             # ... then drop search_bike_rating_cache.rating (idempotent)
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -57,6 +59,10 @@ uvicorn app.main:app --reload --port 8000
 > script carries the old cached reviews over. Until it has run, stored reviews are simply missing (the Review section shows its
 > "Request data" button). The searcher refuses to start without the two tables. On production Cloud SQL: backend `init_db()` creates the
 > tables, run the script, then deploy searcher and backend.
+>
+> **Also run `migrate_drop_search_rating.py` once on every existing database** (TODO-040, same options). The search
+> match score is gone from the API, and the script drops its `NOT NULL` column `search_bike_rating_cache.rating`;
+> until then the new backend cannot store search results (rollback + WARNING, the answer itself is unaffected).
 
 ### Terminal 2 — Frontend
 
@@ -152,6 +158,10 @@ calls it over the public URL). TODO-035 adds the photo route and TODO-037 the re
 > until the migration has run; once it has run, the **old** backend breaks on that database (it still writes `bike_detail_id`), so expect a short window
 > between steps 1 and 2 in which the old backend's details save fails (it rolls back and logs a warning; no data is lost). The new `save_bike_details` updates
 > the details row in place, so it can never cascade-delete photos through the old foreign key.
+>
+> **TODO-040 (search expert rating):** run `backend/scripts/migrate_drop_search_rating.py` against Cloud SQL first, then deploy the backend, then the
+> frontend. Between the migration and the backend deploy the old backend's `save_search` fails (it still writes the dropped `rating` column):
+> it rolls back and logs a warning, the search answer is still returned, nothing already stored is lost.
 
 Capacity: up to 10 searcher instances and 2 backend instances each hold their own SQLAlchemy pool (default 5 + 10 overflow) against Cloud SQL, whose
 `max_connections` has not been checked (the tier is "smallest shared-core instance" per `TODO_030`; the deploy script sets no tier). There is no per-IP rate limit on the
@@ -405,6 +415,7 @@ biker/
 │   │   ├── repository.py              # ORM data access: bike details + DB-first search (find_bikes_by_details) + missing-data request counter
 │   │   ├── offers_repository.py       # Stored marketplace offers read side: get_used_offers (olx.pl) + get_decathlon_offers (decathlon.pl) + get_allegro_offers (allegro.pl) + bike_exists
 │   │   ├── popular_repository.py      # Popular bikes read side for GET /v1/bike/popular: bike_popular + bike + bike_detail, two-sentence blurb (first_sentences)
+│   │   ├── review_ratings.py          # POST /v1/bike/review/cached: expert ratings of a batch of bikes from the stored reviews in bike_review only (TODO-040)
 │   │   ├── searcher_client.py         # httpx proxy to the searcher (search_olx / search_decathlon / search_allegro / search_photos / search_review), single-flight + shared in-flight cap (10)
 │   │   ├── decathlon_brands.py        # Decathlon house-brand allowlist for /v1/bike/decathlon/search (is_decathlon_brand, not_sold_info; TODO_ISSUE_010)
 │   │   ├── bike_finder.py             # Single Claude call → all matching bikes, min 1 (DB-miss fallback)
@@ -427,8 +438,9 @@ biker/
 │   │       ├── equipment_photos.md        # Equipment manufacturer page URL prompt
 │   │       └── equipment_review.md        # Equipment review prompt (no offer links)
 │   └── scripts/
+│       ├── migrate_drop_search_rating.py  # One-off, idempotent: drop search_bike_rating_cache.rating (the old match score, TODO-040); --dry-run, --db, --url
 │       ├── seed_popular_bikes.py      # Fill bike_popular (home page "Najpopularniejsze rowery") with 3 bikes that have details + photos + a stored review; --dry-run, --count, --bike "Brand|Model"
-│       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing, /v1/bike/popular, /v1/bike/used/olx, /v1/bike/used/search, /v1/bike/decathlon, /v1/bike/decathlon/search, /v1/bike/allegro, /v1/bike/allegro/search)
+│       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing, /v1/bike/popular, /v1/bike/review/cached, /v1/bike/used/olx, /v1/bike/used/search, /v1/bike/decathlon, /v1/bike/decathlon/search, /v1/bike/allegro, /v1/bike/allegro/search)
 │       ├── test_details.py            # Smoke test for /v1/bike/details
 │       ├── copy_review_cache_to_table.py  # One-off: generic-cache reviews -> bike_review tables (TODO-037)
 │       ├── test_equipment.py          # Smoke test for /v1/equipment/details + /review
@@ -441,7 +453,7 @@ biker/
         │   └── usePopularBikes.ts     # Home page: GET /v1/bike/popular once + one POST /v1/bike/review per bike (TODO-034)
         └── components/
             ├── SearchInput.tsx        # Search form
-            ├── ResultCard.tsx         # Per-bike result card (with `expertRating` also the home page's popular look: expert rating instead of match score)
+            ├── ResultCard.tsx         # Per-bike result card (with `expertRating` also the home page's popular look: the expert rating — "?" without one; shared by search results and the home page)
             ├── PopularBikesSection.tsx    # "Najpopularniejsze rowery" under the search form, hidden while searching / showing results
             ├── LoadingCard.tsx        # Shimmer skeleton for search results
             ├── BikeDetailsView.tsx    # Bike details page: Overview, Offers, Review, Specs

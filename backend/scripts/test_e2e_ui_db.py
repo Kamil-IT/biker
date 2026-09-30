@@ -8,7 +8,8 @@ the DB" style of e2e the project asked for.
 Cases
 -----
   E1  Search (brand + type, NO model)  -> search_cache + search_bike_rating_cache
-      + bike. The card count / scores on screen must equal the rows written.
+      + bike. The card count on screen must equal the rows written (the match
+      score and its `rating` column were removed in TODO-040).
       No model is supplied on purpose so the DB-first branch (needs brand AND
       model) is skipped and the AI path actually writes the tables.
 
@@ -182,18 +183,6 @@ def do_search(page, base_url, *, brand=None, model=None, bike_type=None,
     return page.locator(SEL_CARD).count()
 
 
-def card_scores(page) -> list[float]:
-    els = page.locator(SEL_CARD)
-    out: list[float] = []
-    import re
-    for i in range(els.count()):
-        label = els.nth(i).get_attribute("aria-label") or ""
-        m = re.search(r"match score ([\d.]+) out of 10", label)
-        if m:
-            out.append(round(float(m.group(1)), 1))
-    return sorted(out)
-
-
 # ── the cases ───────────────────────────────────────────────────────────────
 def case_search(page, base_url, rep: Report, args) -> tuple[str, str] | None:
     print("\n── E1  Search -> search_cache / search_bike_rating_cache / bike ──")
@@ -213,12 +202,6 @@ def case_search(page, base_url, rep: Report, args) -> tuple[str, str] | None:
         "SELECT COUNT(*) FROM search_bike_rating_cache WHERE search_cache_id=?", (sid,))
     rep.hard("E1.rating_count", n_ratings == n_cards,
              f"search_bike_rating_cache rows={n_ratings} vs cards={n_cards}")
-
-    db_scores = sorted(round(r[0], 1) for r in rows(
-        "SELECT rating FROM search_bike_rating_cache WHERE search_cache_id=?", (sid,)))
-    ui_scores = card_scores(page)
-    rep.hard("E1.scores", db_scores == ui_scores,
-             f"DB ratings {db_scores} == card scores {ui_scores}")
 
     # Every displayed bike must resolve to a canonical `bike` row via the FK.
     n_bikes = scalar(

@@ -165,7 +165,6 @@ class BikeResult(BaseModel):
     brand: str
     model: str
     accessories: list[str]
-    match_score: float
     explanation: str
 
 
@@ -221,6 +220,38 @@ class BikeReviewResponse(BaseModel):
     @classmethod
     def validate_ref(cls, v: list[str]) -> list[str]:
         return v
+
+
+class CachedRatingItem(BaseModel):
+    """One bike of a POST /v1/bike/review/cached batch (TODO-040).
+
+    Validated like BikeOfferRequest (non-empty after strip, <= 255 chars) but
+    the value is kept as sent, so the response echoes the caller's strings.
+    """
+    company: str = Field(max_length=255)
+    model: str = Field(max_length=255)
+
+    @field_validator("company", "model")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v
+
+
+class CachedRatingsRequest(BaseModel):
+    bikes: list[CachedRatingItem] = Field(min_length=1, max_length=100)
+
+
+class CachedRating(BaseModel):
+    company: str
+    model: str
+    rating: Optional[float] = None
+    found: bool = False
+
+
+class CachedRatingsResponse(BaseModel):
+    ratings: list[CachedRating]
 
 
 class BikeOffer(BaseModel):

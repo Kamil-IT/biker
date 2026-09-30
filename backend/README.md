@@ -68,6 +68,8 @@ pip install -U anthropic   # existing venv: -r never upgrades an installed unpin
 copy .env.example .env   # then edit .env with your real ANTHROPIC_API_KEY
 python scripts/migrate_photos_bike_id.py --dry-run   # REQUIRED once on every existing database — see note below
 python scripts/migrate_photos_bike_id.py
+python scripts/migrate_drop_search_rating.py --dry-run   # REQUIRED once on every existing database (TODO-040)
+python scripts/migrate_drop_search_rating.py
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -84,6 +86,13 @@ uvicorn app.main:app --reload --port 8000
 > its details save fails (rolls back, logs a warning, no data lost). The new `save_bike_details` updates the `bike_detail` row in
 > place instead of deleting it, so it can no longer cascade-delete photos through the old `bike_detail_id` foreign key. See [Photos migration](#photos-migration-scriptsmigrate_photos_bike_idpy) below and
 > [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md).
+>
+> **Also run `scripts/migrate_drop_search_rating.py` once on every existing database before starting the new backend**
+> (TODO-040; same `--dry-run` / `--db` / `--url` options). It drops `search_bike_rating_cache.rating`, the column that
+> held the removed search `match_score`. The column is `NOT NULL`, so until it is gone the new backend's `save_search`
+> fails (rollback + WARNING, the AI answer is still returned, just not stored); once it is gone the **old** backend's
+> `save_search` fails the same way. Production order: (1) migrate Cloud SQL, (2) deploy the backend, (3) deploy the frontend.
+> See [Search rating migration](#search-rating-migration-scriptsmigrate_drop_search_ratingpy).
 
 `SEARCHER_URL` / `SEARCHER_API_KEY` (TODO-031/032/033/035) point `POST /v1/bike/used/search`, `POST /v1/bike/decathlon/search`,
 `POST /v1/bike/allegro/search` and `POST /v1/bike/photos/search` at the on-demand searcher (top-level `searcher/`, `http://localhost:8100` locally; the key
@@ -97,7 +106,7 @@ the database.
 
 ```bash
 # In a second terminal:
-python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, popular, used, used/search, decathlon, decathlon/search, allegro, allegro/search, photos, photos/search, review, review/search; add --ai for the API cases
+python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, missing, popular, review/cached, used, used/search, decathlon, decathlon/search, allegro, allegro/search, photos, photos/search, review, review/search; add --ai for the API cases
 python scripts/test_details.py  # smoke-test POST /v1/bike/details
 ```
 
@@ -189,14 +198,14 @@ Two queryable layers (in the same `cache.db`) sit **on top of** the generic resp
 
 | Layer | Tables | Key | TTL |
 |-------|--------|-----|-----|
-| Search | `searches` + `bike_results` + `accessories` | `searches.query` — the `norm()`'d enriched query | 24 h |
+| Search | `search_cache` + `search_bike_rating_cache` (explanation, accessories, `display_order`; no score since TODO-040) | `search_cache.query` — the `norm()`'d enriched query | 24 h |
 | Details | `bike` + `bike_detail` + `bike_detail_component` | `bike.(brand_norm, model_norm)` — `.strip().lower()` of brand+model | none (TODO-035) |
 
 Both reference the shared `bikes` identity row, so a bike found by search and a bike with cached details are the same row.
 
 - Both are indexed on their key columns and upsert on conflict (a re-run refreshes the entry).
 - Freshness: searches are fresh for 24 h (`store.SEARCH_TTL_SECONDS`, a module constant on `time_stored`; there is no per-row `ttl_seconds` column) and a stale one is treated as a miss (never served). **Details have no TTL** since TODO-035 (`repository.TTL_DETAILS` was removed): a stored details row is served whatever its age.
-- Search results carry an explicit **`position`** — the bikes are returned best match first, so their order is meaningful, and a row set (unlike the old JSON blob) does not preserve it for free. Reads order by `position`.
+- Search results carry an explicit **`display_order`** — the order of the AI answer, which a row set (unlike the old JSON blob) does not preserve for free. Reads order by `display_order`.
 - Searches are also queryable **by attribute** — `find_bikes_by_brand(brand)` returns de-duplicated bikes of that brand across fresh cached searches, powering `GET /v1/bike/search-cache?brand=`.
 - Writes are best-effort: a cache-table failure is logged but never breaks the underlying request.
 - This layer is **additive** — the generic per-endpoint cache is unchanged.
@@ -243,6 +252,30 @@ python scripts/migrate_photos_bike_id.py --url postgresql+psycopg://biker:biker@
 - **Required on every existing database, and BEFORE the new backend or searcher runs against it** (production order: migrate Cloud SQL, deploy backend + searcher together, then the frontend): the searcher refuses to start on an unmigrated database, the backend answers `{"photos": []}` (ERROR log) until it has run, and the old backend breaks on a migrated database.
 - The older `migrate_bike_details.py` / `test_details_parity.py` (blob → ORM backfill and parity test) no longer exist in the tree.
 
+#### Search rating migration (`scripts/migrate_drop_search_rating.py`)
+
+TODO-040 removed the search `match_score` from the API; its storage column `search_bike_rating_cache.rating` goes with it.
+Columns afterwards: `id`, `search_cache_id`, `bike_id`, `explanation`, `accessories`, `display_order` (`display_order` stays —
+it is the AI answer's order, not a score).
+
+```bash
+cd backend
+python scripts/migrate_drop_search_rating.py --dry-run     # report only; database: $DATABASE_URL (backend/.env), else cache.db
+python scripts/migrate_drop_search_rating.py               # migrate
+python scripts/migrate_drop_search_rating.py --db path/to/copy.db
+python scripts/migrate_drop_search_rating.py --url postgresql+psycopg://biker:biker@localhost:5432/<db>
+```
+
+- `ALTER TABLE search_bike_rating_cache DROP COLUMN rating` on both dialects (SQLite ≥ 3.35), in one transaction; PostgreSQL
+  takes `LOCK TABLE search_bike_rating_cache IN SHARE ROW EXCLUSIVE MODE` first. Every other column of every row is snapshotted
+  before and compared after — any difference rolls back and leaves the database unchanged (exit code 1). Row counts are printed.
+- Idempotent: no `rating` column → `already-migrated`, nothing written; no table → `absent` (`init_db()` creates it without the
+  column). Importable as `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `rows_before`, `rows_after`,
+  `verified`, `error`).
+- **Required on every existing database, BEFORE the new backend runs against it** (production: migrate Cloud SQL → deploy the
+  backend → deploy the frontend). Between the migration and the backend deploy the old backend's `save_search` fails (it still
+  writes `rating`): rollback + WARNING, the search answer itself is unaffected, nothing already stored is lost.
+
 ## Search Cache
 
 `POST /v1/bike/search` resolves through a **two-step cascade** (TODO-024), stopping at the first step that produces bikes:
@@ -266,13 +299,13 @@ A bike matches when **every** checkable field given matches. A bike missing the 
 | `is_electric` | `Electric / Powertrain` category present / absent | |
 | `bike_type`, `year`, `search` | — | **not checkable**, ignored by the DB step |
 
-A request with **only** non-checkable fields skips the DB and goes straight to the AI call. **Every** matching DB bike is returned (no cap, TODO-025), highest `match_score` first — never topped up with AI results.
+A request with **only** non-checkable fields skips the DB and goes straight to the AI call. **Every** matching DB bike is returned (no cap, TODO-025), sorted by brand then model (case-insensitive) — never topped up with AI results. There is no match score any more (TODO-040): the frontend orders the cards by the stored expert rating it reads from [`POST /v1/bike/review/cached`](#post-v1bikereviewcached).
 
-`match_score` / `explanation` / `accessories` of a DB hit come from the bike's most recent `search_bike_rating_cache` row when one exists; otherwise `match_score = 10`, `accessories = []` and the explanation lists the matched fields, e.g. `"Pasuje: marka Trek, koła 29\", elektryczny."` (Polish, like the AI-generated explanations).
+`explanation` / `accessories` of a DB hit come from the bike's most recent `search_bike_rating_cache` row when one exists; otherwise `accessories = []` and the explanation lists the matched fields, e.g. `"Pasuje: marka Trek, koła 29\", elektryczny."` (Polish, like the AI-generated explanations).
 
 ### No generic cache for search
 
-`/v1/bike/search` neither reads nor writes `endpoint_req_to_body_cache` (`get_cached` / `set_cached`). That table has **no TTL** and the first write wins, so any answer stored there is served for that exact request body forever. That is how the answers stored before TODO-025 (capped at 5 bikes) kept coming back after the cap was removed. The DB step always reflects the current `bike` table, and an AI answer is stored only as data: `store.save_search` writes the bikes into `bike` and their ratings into `search_cache` + `search_bike_rating_cache`. A later search by brand/model then finds those bikes in the DB. A spec filter (`wheel_size`, `frame_size`, `is_electric`) also needs their `bike_detail` rows, and free-text-only or `bike_type`/`year`-only searches are never checkable. Those repeats call Claude again every time, because nothing replays an earlier answer. The old `/v1/bike/search` rows in `endpoint_req_to_body_cache` are dead: nothing reads them.
+`/v1/bike/search` neither reads nor writes `endpoint_req_to_body_cache` (`get_cached` / `set_cached`). That table has **no TTL** and the first write wins, so any answer stored there is served for that exact request body forever. That is how the answers stored before TODO-025 (capped at 5 bikes) kept coming back after the cap was removed. The DB step always reflects the current `bike` table, and an AI answer is stored only as data: `store.save_search` writes the bikes into `bike` and their explanations/accessories into `search_cache` + `search_bike_rating_cache`. A later search by brand/model then finds those bikes in the DB. A spec filter (`wheel_size`, `frame_size`, `is_electric`) also needs their `bike_detail` rows, and free-text-only or `bike_type`/`year`-only searches are never checkable. Those repeats call Claude again every time, because nothing replays an earlier answer. The old `/v1/bike/search` rows in `endpoint_req_to_body_cache` are dead: nothing reads them.
 
 **Test:** `scripts/test_search.py` `case_search_db_hit_and_search_cache` seeds a stale generic-cache row for the exact request body and asserts the DB answer is returned instead; the `--ai` free-text case asserts no generic-cache row is written.
 
@@ -302,9 +335,19 @@ Content-Type: application/json
 
 All fields except `search` default to `null` (no constraint). The backend assembles an enriched query such as `"Brand: Trek, Type: Gravel, Frame size: M — comfortable bike…"` and, on a DB miss, sends it to a single Claude call. Nothing is served from a response cache, so every request is answered from the current DB (or the AI). `price_max`, `rider_height_cm`, `rider_weight_kg`, `has_suspension` and `is_kids` were removed (TODO-023), and so were `gender`, `frame_material`, `brake_type`, `drivetrain`, `belt_drive` and `battery_capacity_wh` (together with the search form's "Opcje zaawansowane" group); they are silently ignored if sent, so a payload made only of them is rejected with 422.
 
+**Response:**
+```json
+{
+  "search": "Brand: Trek, Model: FX 3, …",
+  "bikes": [ { "brand": "Trek", "model": "FX 3", "accessories": ["Shimano Deore"], "explanation": "Pasuje: marka Trek, model FX 3." } ]
+}
+```
+
+No `match_score` (removed in TODO-040): a DB hit is sorted by brand/model, an AI answer keeps the model's order, and the UI re-orders the cards by expert rating.
+
 **Flow:**
 0. DB reads only — the DB details search over `bike` + `bike_detail_component` (skipped when no checkable field is set). **A hit returns immediately, making zero outbound HTTP calls.** No generic-cache lookup. See [Search Cache](#search-cache)
-1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns every matching bike as a JSON array (min 1: when nothing meets every filter, the closest bike with a low `match_score` and an explanation naming the unmet filter; `max_tokens=8000`, a warning is logged on `stop_reason == "max_tokens"`), parsed with `app/json_extract.extract_json()`; `explanation` and `accessories` come back in Polish (brand/model and named components untranslated). Runs only on a DB miss
+1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns every matching bike as a JSON array (min 1: when nothing meets every filter, the closest bike with an explanation naming the unmet filter; `max_tokens=8000`, a warning is logged on `stop_reason == "max_tokens"`), parsed with `app/json_extract.extract_json()`; `explanation` and `accessories` come back in Polish (brand/model and named components untranslated). Runs only on a DB miss
 
 A response with no parseable JSON returns `bikes: []` (never a 502) and nothing is stored; an upstream API error is a 502, except an Anthropic 400, which is a 400 with Anthropic's message. When the AI returns bikes, they are written to `bike` + `search_cache` + `search_bike_rating_cache` via `store.save_search` — never to the generic cache. A DB-served result is not written anywhere — see [Search Cache](#search-cache).
 
@@ -314,7 +357,7 @@ A response with no parseable JSON returns `bikes: []` (never a 502) and nothing 
 
 Follow-up read served **purely from the search tables** (`searches` + `bike_results`, read via `app/repository.py`) — makes **no** web/Claude call. Two modes:
 
-- `?query=<enriched query>` — exact (case-insensitive, trimmed) repeat of a prior search, matched on `searches.query`. Returns 404 if not cached or the entry is older than its 24 h TTL. Bikes come back in their original score-weighted order (`ORDER BY bike_results.position`).
+- `?query=<enriched query>` — exact (case-insensitive, trimmed) repeat of a prior search, matched on `search_cache.query`. Returns 404 if not cached or the entry is older than its 24 h TTL. Bikes come back in their original order (`ORDER BY search_bike_rating_cache.display_order`).
 - `?brand=<brand>` — lookup-by-attribute: every cached bike of that brand across all fresh cached searches (de-duplicated by brand+model). **`brand` is matched exactly** (against `bikes.brand_norm`, so casing and surrounding whitespace are ignored) — a partial brand name will not match. This matches the behaviour this endpoint has always shipped: the live implementation in `store.py` did an exact normalised compare too. The ORM's previously unused `ilike` substring variant was never wired to an endpoint, so no caller loses anything.
 
 ```http
@@ -327,7 +370,7 @@ GET http://localhost:8000/v1/bike/search-cache?brand=Trek
 {
   "query": "Brand: Trek — trail riding",
   "cached": true,
-  "bikes": [ { "brand": "Trek", "model": "Marlin 5", "accessories": [], "match_score": 8.0, "explanation": "…" } ]
+  "bikes": [ { "brand": "Trek", "model": "Marlin 5", "accessories": [], "explanation": "…" } ]
 }
 ```
 
@@ -561,6 +604,43 @@ Content-Type: application/json
 2. Otherwise `POST {SEARCHER_URL}/v1/search/review` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once (`WebSearch` + `WebFetch`, no browser) and writes `bike_review` / `bike_review_source`. The backend itself makes no Anthropic call.
 
 **Tests:** `scripts/test_search.py` `case_review_search` — an unknown bike is a **404** before any searcher call, and a bike with a seeded review gets that review back fast without a searcher call (no paid run); `scripts/test_searcher_client_review.py` covers the client with a mocked transport; `searcher/scripts/test_searcher.py` covers the searcher route without a paid run.
+
+---
+
+### `POST /v1/bike/review/cached`
+
+Expert ratings for a batch of bikes, read **only** from the stored reviews in `bike_review` — the table `POST /v1/bike/review` serves (TODO-037) (TODO-040). The search results page calls it once per result list to show each card's expert rating; a bike without a stored review gets `found: false` and the card shows "?". **No** AI call, **no** write, **no** generic cache, no TTL.
+
+```http
+POST http://localhost:8000/v1/bike/review/cached
+Content-Type: application/json
+
+{
+  "bikes": [
+    { "company": "Giant", "model": "Revolt Advanced Pro" },
+    { "company": "Trek", "model": "Marlin 5" }
+  ]
+}
+```
+
+**Response** (same order and the same `company`/`model` strings as the request):
+```json
+{
+  "ratings": [
+    { "company": "Giant", "model": "Revolt Advanced Pro", "rating": 8.4, "found": true },
+    { "company": "Trek", "model": "Marlin 5", "rating": null, "found": false }
+  ]
+}
+```
+
+- `bikes`: 1–100 items; `company` and `model` non-empty after trimming, ≤ 255 chars each — otherwise **422**.
+- Lookup (`app/review_ratings.py`): the bikes are resolved to `bike.id` by Python-normalised brand/model (`strip().lower()`, like `repository._find_bike_id`; never SQL `lower()`, oldest row wins on a case-split duplicate) in **one** scan of `bike`, then **one** query reads `bike_review.rating` / `sources_used` for those ids. Casing and surrounding spaces do not matter. The old generic-cache rows under `/v1/bike/review` are not read.
+- `found: false, rating: null` for an unknown bike, a bike without a `bike_review` row, or a stored `rating` ≤ 0 or `sources_used` < 1 (the "no review" placeholder).
+- A DB error → **200** with `found: false` for every bike + an ERROR log, never a 500.
+
+**Flow:** none — two DB reads (`bike`, then `bike_review`), zero outbound HTTP calls.
+
+**Test:** `scripts/test_search.py` `case_review_cached`.
 
 ---
 

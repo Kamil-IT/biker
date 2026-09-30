@@ -2,7 +2,6 @@ export interface Bike {
   brand: string
   model: string
   accessories: string[]
-  match_score: number
   explanation: string
 }
 
@@ -197,6 +196,15 @@ export interface PopularBikesResponse {
 // Expert rating of one popular bike, from its own POST /v1/bike/review call. 'error'
 // covers a failed call and a `rating` of 0 alike — both read "Brak oceny" on the card —
 // so `rating` is a number only in the 'loaded' state.
+// POST /v1/bike/review/cached (TODO-040): ratings come back in the request's order.
+export interface CachedRatingsRequest {
+  bikes: { company: string; model: string }[]
+}
+
+export interface CachedRatingsResponse {
+  ratings: { company: string; model: string; rating: number | null; found: boolean }[]
+}
+
 export interface ExpertRating {
   state:  'pending' | 'loaded' | 'error'
   rating: number | null

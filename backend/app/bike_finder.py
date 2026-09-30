@@ -26,7 +26,6 @@ def _to_bike(item) -> BikeResult | None:
             brand=str(item["brand"]).strip(),
             model=str(item["model"]).strip(),
             accessories=[str(a) for a in item.get("accessories") or []],
-            match_score=max(0.0, min(10.0, float(item["match_score"]))),
             explanation=str(item.get("explanation", "")),
         )
     except (KeyError, TypeError, ValueError):

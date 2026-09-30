@@ -13,6 +13,7 @@ from .schemas import (  # noqa: E402
     SearchRequest, BikeSearchResponse,
     BikeDetailsRequest, BikeDetailsResponse,
     BikeReviewRequest, BikeReviewResponse,
+    CachedRatingsRequest, CachedRatingsResponse,
     BikeOfferRequest, BikeOfferResponse,
     UsedBikeRequest, UsedBikeResponse,
     BikePhotosRequest, BikePhotosResponse,
@@ -44,6 +45,7 @@ from .offers_repository import (  # noqa: E402
     get_used_offers, get_decathlon_offers, get_allegro_offers, bike_exists,
 )
 from .popular_repository import get_popular_bikes  # noqa: E402
+from .review_ratings import get_cached_ratings  # noqa: E402
 from .photos_repository import get_bike_photos  # noqa: E402
 from .reviews_repository import get_review  # noqa: E402
 # The OLX used-bike search (TODO-031), the Decathlon search (TODO-032), the
@@ -336,6 +338,24 @@ async def bike_review_search(req: BikeReviewRequest) -> BikeReviewResponse:
     logger.info(
         "review search complete | rating=%.1f sources_used=%d refs=%d elapsed=%.2fs",
         result.rating, result.sources_used, len(result.ref), elapsed,
+    )
+    return result
+
+
+@app.post("/v1/bike/review/cached", response_model=CachedRatingsResponse)
+async def bike_review_cached(req: CachedRatingsRequest) -> CachedRatingsResponse:
+    """Expert ratings of up to 100 bikes from their stored reviews (TODO-040).
+
+    Pure read of bike_review (TODO-037), the table /v1/bike/review serves: no
+    AI, no write, no generic cache. A bike without a usable stored review →
+    rating null, found false. DB error → 200 with found false for every bike
+    (logged at ERROR).
+    """
+    t_start = time.perf_counter()
+    result = get_cached_ratings(req.bikes)
+    logger.info(
+        "cached ratings | bikes=%d found=%d elapsed=%.3fs",
+        len(req.bikes), sum(r.found for r in result.ratings), time.perf_counter() - t_start,
     )
     return result
 

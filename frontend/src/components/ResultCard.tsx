@@ -8,26 +8,12 @@ interface ResultCardProps {
   isTop: boolean
   animationDelay: number
   onSelect: (bike: Bike) => void
-  // Home-page "popular" look (TODO-034): the numeral, bar and aria text show this
-  // expert rating instead of `bike.match_score`, and the bar's percentage is dropped.
-  // Callers pass isTop={false} and accessories: [] (no badge, accent bar or chips) and
-  // put the bike's description in `bike.explanation`. Absent → the search-result card.
-  expertRating?: ExpertRating
-}
-
-const scoreLabel = (score: number): string => {
-  if (score >= 10) return 'Idealne dopasowanie'
-  if (score >= 9)  return 'Znakomite dopasowanie'
-  if (score >= 8)  return 'Bardzo dobre dopasowanie'
-  if (score >= 7)  return 'Dobre dopasowanie'
-  if (score >= 5)  return 'Możliwe dopasowanie'
-  if (score >= 3)  return 'Częściowe dopasowanie'
-  if (score >= 1)  return 'Słabe dopasowanie'
-  return 'Brak dopasowania'
+  // Expert rating (from the stored review) shown in the numeral, bar and aria text:
+  // a number, "—" while pending, "?" when there is none.
+  expertRating: ExpertRating
 }
 
 const formatScore = (score: number): string => {
-  if (score === 0)  return '—'
   if (score === 10) return '10'
   return score.toFixed(1)
 }
@@ -46,13 +32,16 @@ const ratingText = ({ state, rating }: ExpertRating): string => {
 }
 
 export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect, expertRating }: ResultCardProps) {
-  const { brand, model, accessories, match_score, explanation } = bike
-  // A pending or missing rating is 0 here: "—" in the numeral slot, an empty bar.
-  const score        = expertRating ? (expertRating.rating ?? 0) : match_score
-  const scoreDisplay = formatScore(score)
+  const { brand, model, accessories, explanation } = bike
+  // A pending or missing rating is 0 for the bar (empty). The numeral shows "—" while
+  // pending and "?" when there is no rating.
+  const score        = expertRating.rating ?? 0
+  const scoreDisplay = expertRating.state === 'pending' ? '—'
+    : expertRating.rating == null ? '?'
+    : formatScore(expertRating.rating)
   const barWidth     = `${score * 10}%`
-  const label        = expertRating ? ratingLabel(expertRating) : scoreLabel(match_score)
-  const ariaScore    = expertRating ? ratingText(expertRating) : `dopasowanie ${match_score} na 10`
+  const label        = ratingLabel(expertRating)
+  const ariaScore    = ratingText(expertRating)
 
   return (
     <button
@@ -180,11 +169,6 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
           <span className="font-mono text-[11px] text-muted uppercase tracking-wider">
             {label}
           </span>
-          {!expertRating && (
-            <span className="font-mono text-[11px] text-muted" aria-hidden="true">
-              {Math.round(match_score * 10)}%
-            </span>
-          )}
         </div>
 
         <div
@@ -193,12 +177,12 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
           aria-valuenow={score}
           aria-valuemin={0}
           aria-valuemax={10}
-          aria-label={expertRating ? ariaScore : `Dopasowanie: ${match_score} na 10`}
+          aria-label={ariaScore}
         >
           {/* Keyed on the rating state so the fill animation replays from 0 once the
               rating arrives, instead of relying on the keyframe re-reading --bar-target. */}
           <div
-            key={expertRating?.state}
+            key={expertRating.state}
             className={`h-full rounded-full ${isTop ? 'bg-terra' : 'bg-ink'}`}
             style={{
               '--bar-target': barWidth,
