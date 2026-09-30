@@ -21,7 +21,7 @@ import time
 
 from . import config
 from .claude_cli import ClaudeCliError, run_structured
-from .olx_finder import OLX_SCHEMA, PRICE_MAX_LEN, TEXT_MAX_LEN, URL_MAX_LEN, SearcherError
+from .olx_finder import OLX_SCHEMA, PRICE_MAX_LEN, TEXT_MAX_LEN, URL_MAX_LEN, searcher_error
 from .schemas import BikeOffer
 
 logger = logging.getLogger("searcher.allegro")
@@ -98,7 +98,7 @@ async def find_allegro_offers(company: str, model: str) -> tuple[list[BikeOffer]
         # Blocking subprocess → worker thread, so /health keeps answering meanwhile.
         data = await asyncio.to_thread(run_structured, system_prompt, user_message, OFFERS_SCHEMA)
     except ClaudeCliError as exc:
-        raise SearcherError(str(exc)) from exc
+        raise searcher_error(exc) from exc
     elapsed = time.perf_counter() - t
 
     info_text = str(data.get("info", ""))

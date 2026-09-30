@@ -35,7 +35,7 @@ from .allegro_finder import ALLEGRO_SOURCE, find_allegro_offers
 from .claude_cli import cli_version
 from .decathlon_finder import DECATHLON_SOURCE, find_decathlon_offers
 from .models import dispose_engine, get_engine, init_db
-from .olx_finder import OLX_SOURCE, SearcherError, find_used_bikes
+from .olx_finder import OLX_SOURCE, SearcherError, SearcherLimitError, find_used_bikes
 from .photos_finder import find_bike_photos
 from .repository import (
     get_stored_photos,
@@ -136,6 +136,19 @@ async def health() -> HealthResponse:
     return HealthResponse(status="ok", claude_cli=_cli_version, database=database)
 
 
+def _search_failed(exc: SearcherError) -> HTTPException:
+    """The HTTP error for a failed finder run, shared by every CLI-backed route.
+
+    400 {"detail": <the CLI's limit notice>} when the Claude subscription
+    limit is used up (TODO-038 — the same shape the backend returns for an
+    Anthropic credit-balance 400; the searcher's validation errors are 422,
+    so its 400 means only this), else 502 with the sanitised CLI summary.
+    """
+    if isinstance(exc, SearcherLimitError):
+        return HTTPException(status_code=400, detail=str(exc))
+    return HTTPException(status_code=502, detail=str(exc))
+
+
 async def _run_search(label: str, source: str, finder: Finder, req: SearchRequest) -> SearchResponse:
     """The body all three search routes share: busy check, one finder run under
     the semaphore, one DB write, the stored rows back.
@@ -144,7 +157,8 @@ async def _run_search(label: str, source: str, finder: Finder, req: SearchReques
     is the bike_offer.source the rows are stored under, `finder(company, model)`
     returns (offers, info) or raises SearcherError. 502 with a short
     sanitised detail when the CLI fails (exit code, timeout, no structured
-    output); a run that finds nothing is a 200 with offers: []. 500 when the
+    output), 400 with the CLI's notice when the subscription limit is used
+    up (see _search_failed); a run that finds nothing is a 200 with offers: []. 500 when the
     DB write fails. 503 "searcher busy" straight away when
     SEARCHER_MAX_CONCURRENT searches (default 10, counted across the five
     routes) are already running — queueing behind a multi-minute search would
@@ -165,7 +179,7 @@ async def _run_search(label: str, source: str, finder: Finder, req: SearchReques
             offers, info = await finder(req.company, req.model)
         except SearcherError as exc:
             logger.error("%s search failed | company=%r model=%r | %s", label, req.company, req.model, exc)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            raise _search_failed(exc) from exc
         try:
             bike_id, saved = await asyncio.to_thread(save_offers, req.company, req.model, offers, source)
         except Exception as exc:  # noqa: BLE001 — logged in the repository; callers get a summary only
@@ -234,7 +248,7 @@ async def _photo_search(company: str, model: str) -> PhotosResponse:
             photos, product_url = await find_bike_photos(company, model)
         except SearcherError as exc:
             logger.error("photos search failed | company=%r model=%r | %s", company, model, exc)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            raise _search_failed(exc) from exc
         try:
             bike_id, stored, saved = await asyncio.to_thread(save_photos, company, model, photos)
         except Exception as exc:  # noqa: BLE001 — logged in the repository; callers get a summary only
@@ -258,7 +272,7 @@ async def search_photos(req: SearchRequest) -> PhotosResponse:
     with display_order 0..n-1 under the bike (created if missing). Photos are
     never deleted or replaced; a search that finds nothing writes nothing and
     is a 200 with photos: []. An identical request arriving while that search
-    runs joins it (one paid run). Same 401 / 422 / 502 / 503 / 500 mapping as
+    runs joins it (one paid run). Same 400 / 401 / 422 / 502 / 503 / 500 mapping as
     the offer routes, and the SAME SEARCHER_MAX_CONCURRENT slots.
     """
     logger.info("photos search request | company=%r model=%r", req.company, req.model)
@@ -318,7 +332,7 @@ async def search_review(req: SearchRequest) -> ReviewResponse:
     result replaces the bike's stored review and its sources (bike row
     created if missing) and comes back with saved 1. Anything less writes and
     deletes nothing (saved 0) and the response carries what this run found
-    (score 0 / no sources, which the UI reads as "no review"). Same 401 / 422
+    (score 0 / no sources, which the UI reads as "no review"). Same 400 / 401 / 422
     / 502 / 503 / 500 mapping as the offer routes and the SAME
     SEARCHER_MAX_CONCURRENT slots.
     """
@@ -343,7 +357,7 @@ async def search_review(req: SearchRequest) -> ReviewResponse:
             found = await find_bike_review(req.company, req.model)
         except SearcherError as exc:
             logger.error("review search failed | company=%r model=%r | %s", req.company, req.model, exc)
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            raise _search_failed(exc) from exc
         try:
             bike_id, saved = await asyncio.to_thread(save_review, req.company, req.model, found)
         except Exception as exc:  # noqa: BLE001 — logged in the repository; callers get a summary only

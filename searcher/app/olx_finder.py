@@ -9,7 +9,7 @@ import logging
 import time
 
 from . import config
-from .claude_cli import ClaudeCliError, run_structured
+from .claude_cli import ClaudeCliError, ClaudeCliLimitError, run_structured
 from .olx_image_fetcher import fetch_images_for_offers
 from .schemas import BikeOffer
 
@@ -52,6 +52,17 @@ OLX_SCHEMA = {
 
 class SearcherError(Exception):
     """The search could not produce a result; str(exc) is safe to send to callers."""
+
+
+class SearcherLimitError(SearcherError):
+    """The CLI run was refused because the Claude subscription limit is used up (TODO-038) — a 400, not a 502."""
+
+
+def searcher_error(exc: ClaudeCliError) -> SearcherError:
+    """The SearcherError a finder raises for a failed CLI run — SearcherLimitError for a used-up subscription."""
+    if isinstance(exc, ClaudeCliLimitError):
+        return SearcherLimitError(str(exc))
+    return SearcherError(str(exc))
 
 
 def _to_offers(items: list) -> list[BikeOffer]:
@@ -107,7 +118,7 @@ async def find_used_bikes(company: str, model: str) -> tuple[list[BikeOffer], st
         # Blocking subprocess → worker thread, so /health keeps answering meanwhile.
         data = await asyncio.to_thread(run_structured, system_prompt, user_message, OLX_SCHEMA)
     except ClaudeCliError as exc:
-        raise SearcherError(str(exc)) from exc
+        raise searcher_error(exc) from exc
     elapsed = time.perf_counter() - t
 
     info_text = str(data.get("info", ""))

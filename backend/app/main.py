@@ -52,7 +52,7 @@ from .reviews_repository import get_review  # noqa: E402
 # proxies the on-demand searches to it.
 from .searcher_client import (  # noqa: E402
     search_olx, search_decathlon, search_allegro, search_photos, search_review,
-    SearcherNotConfigured, SearcherUnavailable, SearcherBusy, SearcherFailed,
+    SearcherNotConfigured, SearcherUnavailable, SearcherBusy, SearcherFailed, SearcherLimitReached,
 )
 from .decathlon_brands import is_decathlon_brand, not_sold_info  # noqa: E402
 from .models import init_db  # noqa: E402
@@ -86,6 +86,15 @@ async def anthropic_bad_request(request: Request, exc: anthropic.BadRequestError
     message = error.get("message") or exc.message
     logger.error("anthropic bad request | path=%s error=%s", request.url.path, message)
     return JSONResponse(status_code=400, content={"detail": message})
+
+
+@app.exception_handler(SearcherLimitReached)
+async def searcher_limit_reached(request: Request, exc: SearcherLimitReached) -> JSONResponse:
+    # TODO-038: the searcher's `claude -p` hit the Claude subscription limit. It
+    # reaches the browser in the same shape as anthropic_bad_request above —
+    # 400 {"detail": <the CLI's own notice>} — not as a 502 / 503.
+    logger.error("searcher limit reached | path=%s detail=%s", request.url.path, exc.detail)
+    return JSONResponse(status_code=400, content={"detail": exc.detail})
 
 
 @app.post("/v1/bike/search", response_model=BikeSearchResponse)
