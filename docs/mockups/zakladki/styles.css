@@ -1,0 +1,134 @@
+/* Makiety zakładek — tokeny 1:1 z frontend/src/index.css (Café Rider) */
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Lora:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --font-display: 'Barlow Condensed', sans-serif;
+  --font-body: 'Lora', Georgia, serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  --sand: #EDE7DC;
+  --parchment: #F5F1EA;
+  --charcoal: #2B2620;
+  --ink: #4A3F35;
+  --muted: #9C8E82;
+  --terra: #C45C38;
+  --terra-dark: #A34B2E;
+  --border: #D6CBB9;
+
+  --col: 42rem;          /* max-w-2xl, jak w aplikacji */
+  --gutter: 1rem;
+}
+@media (min-width: 640px) { :root { --gutter: 1.5rem; } }
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-font-smoothing: antialiased; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--sand);
+  color: var(--charcoal);
+  font-family: var(--font-body);
+  line-height: 1.6;
+}
+main { flex: 1; }
+a { color: inherit; }
+
+.wrap { max-width: var(--col); margin: 0 auto; padding: 0 var(--gutter); }
+
+:focus-visible { outline: 2px solid color-mix(in srgb, var(--terra) 60%, transparent); outline-offset: 3px; border-radius: 4px; }
+
+/* ── Nagłówek z zakładkami ─────────────────────────── */
+.site-header {
+  position: sticky; top: 0; z-index: 20;
+  background: color-mix(in srgb, var(--sand) 92%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--border);
+}
+.brand-row { display: flex; align-items: center; justify-content: space-between; height: 3.25rem; }
+.wordmark {
+  font-family: var(--font-display); font-weight: 700; font-size: 1.25rem;
+  letter-spacing: 0.18em; text-decoration: none; color: var(--charcoal);
+}
+.wordmark:hover { color: var(--terra); }
+.tagline { font-family: var(--font-body); font-style: italic; font-size: 0.875rem; color: var(--muted); }
+@media (max-width: 639px) { .tagline { display: none; } }
+
+.tabs { display: flex; gap: 1.75rem; margin: 0; padding: 0; list-style: none; }
+.tabs a {
+  position: relative; display: block;
+  padding: 0.35rem 0 0.8rem;
+  font-family: var(--font-display); font-weight: 600; font-size: 1.1rem; letter-spacing: 0.01em;
+  color: var(--ink); text-decoration: none; white-space: nowrap;
+  transition: color 150ms;
+}
+.tabs a:hover { color: var(--terra); }
+.tabs a::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 3px;
+  background: var(--terra); border-radius: 3px 3px 0 0;
+  transform: scaleX(0); transform-origin: left; transition: transform 200ms ease-out;
+}
+.tabs a:hover::after { transform: scaleX(0.35); background: var(--border); }
+.tabs a[aria-current="page"] { color: var(--charcoal); }
+.tabs a[aria-current="page"]::after { transform: scaleX(1); background: var(--terra); }
+.tabs .short { display: none; }
+@media (max-width: 420px) {
+  .tabs { gap: 1.1rem; }
+  .tabs a { font-size: 1rem; }
+  .tabs .long { display: none; }
+  .tabs .short { display: inline; }
+}
+
+/* ── Wspólne ───────────────────────────────────────── */
+.hero { padding-block: 3.5rem 2.5rem; }
+@media (min-width: 768px) { .hero { padding-block: 5rem 3.5rem; } }
+.hero h1 {
+  font-family: var(--font-display); font-weight: 700; line-height: 0.92; letter-spacing: -0.01em;
+  font-size: clamp(3.25rem, 9vw, 5rem); margin: 0 0 1rem;
+}
+.hero p { max-width: 30rem; margin: 0; color: var(--ink); font-size: 1.0625rem; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; text-decoration: none;
+  border: 0; border-radius: 0.75rem; cursor: pointer;
+  padding: 0.85rem 1.4rem;
+  background: var(--terra); color: var(--parchment);
+  font-family: var(--font-display); font-weight: 700; font-size: 1.1rem; letter-spacing: 0.04em;
+  transition: background 150ms;
+}
+.btn:hover { background: var(--terra-dark); }
+.btn-ghost {
+  background: transparent; color: var(--terra); border: 1px solid var(--border);
+}
+.btn-ghost:hover { background: var(--parchment); color: var(--terra-dark); }
+
+.field-label { display: block; margin-bottom: 0.35rem; font-size: 0.875rem; color: var(--ink); }
+.field {
+  width: 100%; padding: 0.75rem 0.9rem;
+  background: var(--parchment); color: var(--charcoal);
+  border: 1px solid var(--border); border-radius: 0.75rem;
+  font: inherit; font-size: 1rem;
+}
+.field:focus { outline: none; border-color: var(--terra); box-shadow: 0 0 0 3px color-mix(in srgb, var(--terra) 18%, transparent); }
+
+.section-title {
+  font-family: var(--font-display); font-weight: 700; font-size: 1.6rem; line-height: 1.1;
+  margin: 0 0 1.25rem;
+}
+
+.card {
+  background: var(--parchment); border: 1px solid var(--border); border-radius: 1rem;
+}
+
+.site-footer { border-top: 1px solid var(--border); margin-top: 4rem; }
+.site-footer .wrap {
+  display: flex; justify-content: space-between; padding-top: 1.5rem; padding-bottom: 1.5rem;
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
+}
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0ms !important; animation-duration: 0ms !important; }
+}
