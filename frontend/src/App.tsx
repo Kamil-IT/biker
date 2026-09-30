@@ -5,6 +5,10 @@ import LoadingCard from './components/LoadingCard'
 import BikeDetailsView from './components/BikeDetailsView'
 import EquipmentDetailsView from './components/EquipmentDetailsView'
 import PopularBikesSection from './components/PopularBikesSection'
+import TopTabs from './components/TopTabs'
+import FitComingSoonPage from './components/FitComingSoonPage'
+import ContactPage from './components/ContactPage'
+import useRoute, { ROUTES, type Route } from './hooks/useRoute'
 import usePopularBikes from './hooks/usePopularBikes'
 import useCachedRatings from './hooks/useCachedRatings'
 import { PENDING_RATING, bikeKey } from './ratings'
@@ -31,6 +35,10 @@ interface SearchResponse {
 const NO_MATCH_MSG = 'Nie mamy tego roweru w naszej bazie'
 
 export default function App() {
+  // TODO-041: top tabs. The search flow stays mounted in App, so leaving for another
+  // tab and coming back keeps the results.
+  const [route, navigate] = useRoute()
+
   // Search state
   const [appState, setAppState]             = useState<AppState>('idle')
   const [query, setQuery]                   = useState('')
@@ -478,6 +486,21 @@ export default function App() {
 
   const showResults = appState === 'loading' || appState === 'results'
 
+  // "Szukanie rowerów" from the details or equipment view goes back to the result list;
+  // from another tab it only switches the tab, the search state is kept.
+  const handleNavigate = (to: Route) => {
+    if (to === ROUTES.search && route === ROUTES.search && view !== 'search') {
+      handleBackToResults()
+      return
+    }
+    navigate(to)
+  }
+
+  const handleWordmark = () => {
+    navigate(ROUTES.search)
+    handleReset()
+  }
+
   /* ── Render ───────────────────────────────────────── */
 
   return (
@@ -487,7 +510,7 @@ export default function App() {
       <header className="sticky top-0 z-20 bg-sand/90 backdrop-blur-sm border-b border-border">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
           <button
-            onClick={handleReset}
+            onClick={handleWordmark}
             className="
               -ml-1 px-1 py-2
               font-display font-bold text-xl tracking-[0.18em] text-charcoal
@@ -506,12 +529,18 @@ export default function App() {
             Wyszukiwarka rowerów AI
           </span>
         </div>
+        <div className="max-w-2xl mx-auto px-4 sm:px-6">
+          <TopTabs active={route} onNavigate={handleNavigate} />
+        </div>
       </header>
 
       <main className="flex-1">
 
+        {route === ROUTES.fit && <FitComingSoonPage onNavigate={navigate} />}
+        {route === ROUTES.contact && <ContactPage />}
+
         {/* ── Search view ──────────────────────────────── */}
-        {view === 'search' && (
+        {route === ROUTES.search && view === 'search' && (
           <>
             {/* Hero / Search */}
             <section
@@ -661,7 +690,7 @@ export default function App() {
         )}
 
         {/* ── Details view ─────────────────────────────── */}
-        {view === 'details' && selectedBike && (
+        {route === ROUTES.search && view === 'details' && selectedBike && (
           <BikeDetailsView
             bike={selectedBike}
             categories={bikeCategories}
@@ -689,7 +718,7 @@ export default function App() {
         )}
 
         {/* ── Equipment details view ───────────────────── */}
-        {view === 'equipment' && equipItem && (
+        {route === ROUTES.search && view === 'equipment' && equipItem && (
           <EquipmentDetailsView
             company={equipItem.company}
             model={equipItem.model}
