@@ -11,9 +11,14 @@ ROWS = [
 ]
 
 
-def _rows(db):
+def _listings(db):
     with db.session() as s:
-        return {r.source_product_id: r for r in s.query(db.BikeDiscovery)}
+        return {r.source_product_id: r for r in s.query(db.BikeDiscoveryListing) if not s.expunge(r)}
+
+
+def _bikes(db):
+    with db.session() as s:
+        return {(r.company_norm, r.model_norm): r for r in s.query(db.BikeDiscovery) if not s.expunge(r)}
 
 
 def test_grouping():
@@ -29,52 +34,49 @@ def test_grouping():
 def test_upsert_twice_inserts_nothing_and_keeps_state(temp_db):
     db = temp_db
     items = sr.group_products(ROWS)
-    assert sr.upsert(items) == (2, 0)
+    assert sr.upsert(items) == (2, 2, 0)
+    bikes = _bikes(db)
+    assert set(bikes) == {("romet", "wagant 3"), ("kross", "level x300")}
+    assert _listings(db)["pd27404"].discovery_id == bikes[("romet", "wagant 3")].id
 
-    with db.session() as s:  # simulate the worker having processed a row
+    with db.session() as s:  # simulate the worker having processed the bike (and corrected its name)
         bike = db.models.Bike(brand="Romet", model="Wagant 3")
         s.add(bike)
         s.flush()
-        row = s.query(db.BikeDiscovery).filter_by(source_product_id="pd27404").one()
-        row.status, row.attempts, row.bike_id = db.DONE, 2, bike.id
+        row = s.query(db.BikeDiscovery).filter_by(company_norm="romet").one()
+        row.status, row.attempts, row.bike_id, row.company = db.DONE, 2, bike.id, "Romet"
         bike_id = bike.id
         s.commit()
 
-    assert sr.upsert(items) == (0, 2)
+    assert sr.upsert(items) == (0, 0, 2)
     changed = sr.group_products([{**ROWS[0], "name": "Rower trekkingowy ROMET Wagant 3 NEW", "price": "1500.00"}])
-    assert sr.upsert(changed) == (0, 1)
+    assert sr.upsert(changed) == (0, 0, 1)
 
-    rows = _rows(db)
-    assert len(rows) == 2
-    wagant = rows["pd27404"]
-    assert (wagant.status, wagant.attempts, wagant.bike_id) == (db.DONE, 2, bike_id)
-    assert wagant.raw_name.endswith("NEW") and wagant.price == "1500.00"
-    assert rows["pd57104"].status == db.PENDING and rows["pd57104"].attempts == 0
+    bikes, listings = _bikes(db), _listings(db)
+    assert len(bikes) == 2 and len(listings) == 2
+    wagant = bikes[("romet", "wagant 3")]
+    assert (wagant.status, wagant.attempts, wagant.bike_id, wagant.company) == (db.DONE, 2, bike_id, "Romet")
+    listing = listings["pd27404"]
+    assert listing.raw_name.endswith("NEW") and listing.price == "1500.00"
+    assert listing.discovery_id == wagant.id  # a known listing never changes bike
+    kross = bikes[("kross", "level x300")]
+    assert kross.status == db.PENDING and kross.attempts == 0
 
 
-def test_upsert_keeps_company_model_of_linked_row(temp_db):
+def test_second_product_with_same_name_joins_the_bike(temp_db):
     db = temp_db
     sr.upsert(sr.group_products(ROWS))
     with db.session() as s:
-        row = s.query(db.BikeDiscovery).filter_by(source_product_id="pd27404").one()
-        row.company, row.model = "Romet", "Wagant 3 (corrected)"
-        row.bike_id = None
+        row = s.query(db.BikeDiscovery).filter_by(company_norm="romet").one()
+        row.status, row.attempts = db.FAILED, 1
         s.commit()
-    # not linked yet: the scraper's split wins
-    sr.upsert(sr.group_products(ROWS))
-    assert _rows(db)["pd27404"].company == "ROMET"
-
-    with db.session() as s:
-        bike = db.models.Bike(brand="Romet", model="Wagant 3")
-        s.add(bike)
-        s.flush()
-        row = s.query(db.BikeDiscovery).filter_by(source_product_id="pd27404").one()
-        row.company, row.model, row.bike_id = "Romet", "Wagant 3 (corrected)", bike.id
-        s.commit()
-    sr.upsert(sr.group_products([{**ROWS[0], "name": "Rower trekkingowy ROMET Wagant 3 X", "price": "1000.00"}]))
-    row = _rows(db)["pd27404"]
-    assert (row.company, row.model) == ("Romet", "Wagant 3 (corrected)")
-    assert row.raw_name.endswith(" X") and row.price == "1000.00"
+    other = {"name": "Rower trekkingowy Romet WAGANT 3", "price": "1800.00",
+             "url": "https://www.centrumrowerowe.pl/rower-trekkingowy-romet-wagant-3-pd99999/"}
+    assert sr.upsert(sr.group_products([other])) == (0, 1, 0)
+    bikes, listings = _bikes(db), _listings(db)
+    wagant = bikes[("romet", "wagant 3")]
+    assert listings["pd99999"].discovery_id == listings["pd27404"].discovery_id == wagant.id
+    assert (wagant.company, wagant.status, wagant.attempts) == ("ROMET", db.FAILED, 1)  # bike untouched
 
 
 def test_off_host_and_bad_urls_rejected():

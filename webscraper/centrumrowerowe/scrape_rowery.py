@@ -1,4 +1,7 @@
-"""Scrape the centrumrowerowe.pl bike listing into the `bike_discovery` queue (TODO-035).
+"""Scrape the centrumrowerowe.pl bike listing into the `bike_discovery` queue (TODO-035, TODO-039).
+
+Each product becomes a `bike_discovery_listing` row linked to its bike in `bike_discovery`
+(found by normalised company + model, inserted as `pending` when new).
 
     python scrape_rowery.py                 # upsert into the DB the backend is configured for
     python scrape_rowery.py --dry-run       # counts only, no DB
@@ -12,22 +15,26 @@ import json
 import re
 import time
 import urllib.request
+from typing import NamedTuple
 from urllib.parse import parse_qs, urlsplit, urlunsplit
-
-from sqlalchemy import case
 
 BASE = "https://www.centrumrowerowe.pl/rowery/"
 UA = {"User-Agent": "Mozilla/5.0"}
 LD = re.compile(r'<script type="application/ld\+json">(.*?)</script>', re.S)
 PRODUCT_ID = re.compile(r"-(pd\d+)(?:/|$)")
 ALLOWED_HOSTS = ("www.centrumrowerowe.pl", "centrumrowerowe.pl")
-# Column sizes of bike_discovery.
+# Column sizes of bike_discovery (company, model, bike_type) and bike_discovery_listing (the rest).
 LIMITS = {"raw_name": 512, "company": 255, "model": 255, "bike_type": 64, "price": 100, "details_link": 2048}
 
-# Columns a re-scrape may refresh. status / attempts / bike_id / first_seen_at are never touched.
-# company / model are kept once the worker linked a bike (bike_id set): it corrected them from the page.
-UPDATABLE = ("raw_name", "bike_type", "details_link", "price", "last_seen_at", "updated_at")
-KEEP_WHEN_LINKED = ("company", "model")
+# Listing columns a re-scrape refreshes. The listing's bike and first_seen_at, and everything on
+# the bike row (status, attempts, bike_id, company, model, bike_type) are never touched.
+UPDATABLE = ("raw_name", "details_link", "price", "last_seen_at", "updated_at")
+
+
+class UpsertCounts(NamedTuple):
+    bikes_inserted: int
+    listings_inserted: int
+    listings_updated: int
 
 
 def fetch(url):
@@ -164,44 +171,54 @@ def group_products(rows, stats=None):
 
 
 def upsert(items, source=None):
-    """Insert new products, refresh the listing columns of known ones. Returns (inserted, updated)."""
+    """Upsert one listing per product and link it to its bike; one transaction.
+
+    A known listing (source, source_product_id) only gets UPDATABLE refreshed and stays on its
+    bike. A new one is linked to the bike with the same normalised company + model, which is
+    inserted as `pending` when there is none. Returns UpsertCounts.
+    """
     import db
+    import discovery_repo
 
     source = source or db.SOURCE
     db.ensure_table()
-    table = db.BikeDiscovery.__table__
     now = db.utcnow()
+    bikes_inserted = listings_inserted = listings_updated = 0
     with db.session() as s:
-        known = {pid for (pid,) in s.query(table.c.source_product_id).filter(table.c.source == source)}
+        listings = {row.source_product_id: row for row in s.query(db.BikeDiscoveryListing).filter_by(source=source)}
+        bikes = discovery_repo.bike_ids_by_identity(s)
         for item in items:
             values = {
-                "source": source,
-                "source_product_id": item["source_product_id"],
                 "raw_name": _fit(item["raw_name"], "raw_name"),
-                "company": _fit(item["company"], "company"),
-                "model": _fit(item["model"], "model"),
-                "bike_type": _fit(item["bike_type"], "bike_type") or None,
                 "details_link": _fit(item["details_link"], "details_link"),
                 "price": _fit(item["price"], "price"),
-                "status": db.PENDING,
-                "attempts": 0,
-                "first_seen_at": now,
                 "last_seen_at": now,
                 "updated_at": now,
             }
-            stmt = db.models.dialect_insert(table).values(**values)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["source", "source_product_id"],
-                set_={
-                    **{c: getattr(stmt.excluded, c) for c in UPDATABLE},
-                    **{c: case((table.c.bike_id.is_(None), getattr(stmt.excluded, c)), else_=table.c[c])
-                       for c in KEEP_WHEN_LINKED},
-                },
-            )
-            s.execute(stmt)
+            listing = listings.get(item["source_product_id"])
+            if listing is not None:
+                for column in UPDATABLE:
+                    setattr(listing, column, values[column])
+                listings_updated += 1
+                continue
+            company, model = _fit(item["company"], "company"), _fit(item["model"], "model")
+            key = (db.norm(company), db.norm(model))
+            if key not in bikes:
+                bike = db.BikeDiscovery(company=company, model=model,
+                                        bike_type=_fit(item["bike_type"], "bike_type") or None,
+                                        status=db.PENDING, attempts=0, created_at=now, updated_at=now)
+                s.add(bike)
+                s.flush()
+                bikes[key] = bike.id
+                bikes_inserted += 1
+            listing = db.BikeDiscoveryListing(discovery_id=bikes[key], source=source,
+                                              source_product_id=item["source_product_id"],
+                                              first_seen_at=now, **values)
+            s.add(listing)
+            listings[item["source_product_id"]] = listing
+            listings_inserted += 1
         s.commit()
-    inserted = sum(1 for i in items if i["source_product_id"] not in known)
-    return inserted, len(items) - inserted
+    return UpsertCounts(bikes_inserted, listings_inserted, listings_updated)
 
 
 def main():
@@ -226,8 +243,9 @@ def main():
         return
     import db
     print(f"target database: {db.check_target(args.allow_remote)}")
-    inserted, updated = upsert(items)
-    print(f"products seen: {len(items)}, inserted: {inserted}, updated: {updated}")
+    counts = upsert(items)
+    print(f"products seen: {len(items)}, bikes inserted: {counts.bikes_inserted}, "
+          f"listings inserted: {counts.listings_inserted}, listings updated: {counts.listings_updated}")
 
 
 if __name__ == "__main__":

@@ -1,9 +1,10 @@
-"""Copy what bike discovery stored in one database into another (TODO-036) — no page is re-fetched.
+"""Copy what bike discovery stored in one database into another (TODO-036, TODO-039) — no page is re-fetched.
 
-Phase 1 reads the source (bike_discovery rows + the details and photos of each done/skipped row's
-bike) into memory and closes it; phase 2 writes the target: bike details through the same verified
-save as the processor, the bike's photos (only when the target bike has none), the /v1/bike/details
-cache, then every queue row upserted by (source, source_product_id).
+Phase 1 reads the source (bike_discovery rows with their listings + the details and photos of each
+done/skipped row's bike) into memory and closes it; phase 2 writes the target: bike details through
+the same verified save as the processor, the bike's photos (only when the target bike has none), the
+/v1/bike/details cache, then every queue row upserted by (company_norm, model_norm) and its listings
+by (source, source_product_id).
 
     python copy_to_db.py --target-url "postgresql+psycopg://user@127.0.0.1:6543/biker" --allow-remote
     python copy_to_db.py --target-url ... --dry-run      # report what would change, write nothing
@@ -19,11 +20,14 @@ from typing import Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import db  # noqa: E402  (puts backend/ on sys.path, loads backend/.env)
-from db import DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, BikeDiscovery, models, repository, session  # noqa: E402
+from db import (  # noqa: E402
+    DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, BikeDiscovery, BikeDiscoveryListing, models, norm, repository, session,
+)
 from bike_store import (  # noqa: E402
     CACHE_FAILED, CACHE_PRESENT, CACHE_WRITTEN, KEPT, PHOTOS_FAILED, PHOTOS_NONE, PHOTOS_PRESENT, PHOTOS_WRITTEN,
     WRITTEN, bike_state, cache_details, store_details, store_photos, tx,
 )
+from discovery_repo import find_bike, find_listing, listed_by  # noqa: E402
 from app import photos_repository  # noqa: E402
 from app.schemas import BikeDetailsResponse  # noqa: E402
 from sqlalchemy import inspect  # noqa: E402
@@ -31,10 +35,12 @@ from sqlalchemy.engine import make_url  # noqa: E402
 
 logger = logging.getLogger("copy_to_db")
 
-# Copied as-is from the source row; id, bike_id and locked_at never are.
-COPIED_COLUMNS = ("source", "source_product_id", "raw_name", "company", "model", "bike_type", "details_link",
-                  "price", "status", "attempts", "last_error", "next_attempt_at",
-                  "first_seen_at", "last_seen_at", "updated_at")
+# Copied as-is from the source row (the norms follow company/model); id, bike_id and locked_at never are.
+COPIED_COLUMNS = ("company", "model", "bike_type", "status", "attempts", "last_error", "next_attempt_at",
+                  "created_at", "updated_at")
+# Copied as-is from each listing; id and discovery_id (the target's bike) never are.
+LISTING_COLUMNS = ("source", "source_product_id", "raw_name", "details_link", "price",
+                   "first_seen_at", "last_seen_at", "updated_at", "fetched_at", "fetch_error")
 FINAL = (DONE, SKIPPED)
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
@@ -49,7 +55,7 @@ class SourceBike:
 
 @dataclass
 class Snapshot:
-    rows: list[dict] = field(default_factory=list)          # COPIED_COLUMNS + "src_bike_id"
+    rows: list[dict] = field(default_factory=list)          # COPIED_COLUMNS + "src_bike_id" + "listings"
     bikes: dict[int, SourceBike] = field(default_factory=dict)  # source bike id → bike
 
 
@@ -69,20 +75,34 @@ def database_identity(url: str) -> tuple:
 
 
 def read_source(source_url: str, shop: Optional[str] = None, limit: Optional[int] = None) -> Snapshot:
-    """Phase 1: everything needed from the source, as plain objects; the source engine is closed after."""
+    """Phase 1: everything needed from the source, as plain objects; the source engine is closed after.
+
+    With `shop`, only bikes listed by that shop and only that shop's listings; `limit` counts bikes.
+    """
     models.configure_db(source_url)
     try:
         if not inspect(models.get_engine()).has_table(BikeDiscovery.__tablename__):
             raise SystemExit(f"the source has no {BikeDiscovery.__tablename__} table")
+        if db.has_old_layout():
+            raise SystemExit("source: " + db.OLD_LAYOUT_MESSAGE)
         snap = Snapshot()
         with session() as s:
             q = s.query(BikeDiscovery).order_by(BikeDiscovery.id)
             if shop:
-                q = q.filter(BikeDiscovery.source == shop)
+                q = q.filter(listed_by(shop))
             if limit:
                 q = q.limit(limit)
+            by_id = {}
             for row in q:
-                snap.rows.append({**{c: getattr(row, c) for c in COPIED_COLUMNS}, "src_bike_id": row.bike_id})
+                by_id[row.id] = {**{c: getattr(row, c) for c in COPIED_COLUMNS},
+                                 "src_bike_id": row.bike_id, "listings": []}
+                snap.rows.append(by_id[row.id])
+            lq = s.query(BikeDiscoveryListing).order_by(BikeDiscoveryListing.id)
+            if shop:
+                lq = lq.filter(BikeDiscoveryListing.source == shop)
+            for li in lq:  # every listing, kept for the selected bikes (one query instead of one per bike)
+                if li.discovery_id in by_id:
+                    by_id[li.discovery_id]["listings"].append({c: getattr(li, c) for c in LISTING_COLUMNS})
             bike_ids = {r["src_bike_id"] for r in snap.rows if r["src_bike_id"] is not None and r["status"] in FINAL}
             for bike in s.query(models.Bike).filter(models.Bike.id.in_(bike_ids)) if bike_ids else []:
                 snap.bikes[bike.id] = SourceBike(bike.brand, bike.model, None)
@@ -169,44 +189,62 @@ def target_values(row: dict, linked: Optional[tuple[int, str, str]]) -> dict:
         if linked is None:  # the bike could not be written here: let the processor fetch it again
             values.update(status=PENDING, attempts=0, next_attempt_at=None)
         else:
-            values["bike_id"], values["company"], values["model"] = linked
+            values["bike_id"] = linked[0]
+            # The target bike's casing, as long as it is the same identity (it is the row's lookup key).
+            if (norm(linked[1]), norm(linked[2])) == (norm(values["company"]), norm(values["model"])):
+                values["company"], values["model"] = linked[1], linked[2]
     elif row["status"] == IN_PROGRESS:
         values.update(status=PENDING, attempts=0, next_attempt_at=None)
     return values
 
 
-def upsert_row(values: dict, counts: dict, dry_run: bool) -> None:
-    """Insert a new queue row, or promote an existing pending/failed one — never downgrade."""
+def upsert_row(values: dict, listings: list[dict], counts: dict, dry_run: bool) -> None:
+    """Insert a new queue row, or promote an existing pending/failed one — never downgrade — then add
+    its listings the target does not have yet. A listing already in the target stays on its own bike."""
     with tx() as s:
-        existing = s.query(BikeDiscovery).filter_by(
-            source=values["source"], source_product_id=values["source_product_id"]).first()
+        existing = find_bike(s, values["company"], values["model"])
+        target_id = existing.id if existing is not None else None
         if existing is None:
             counts["rows inserted"] += 1
             if not dry_run:
-                s.add(BikeDiscovery(**values))
-            return
-        if existing.status in (PENDING, FAILED) and values["status"] in FINAL:
+                bike = BikeDiscovery(**values)
+                s.add(bike)
+                s.flush()
+                target_id = bike.id
+        elif existing.status in (PENDING, FAILED) and values["status"] in FINAL:
             counts["rows updated"] += 1
             if not dry_run:
                 for key in ("status", "bike_id", "company", "model", "last_error", "attempts", "updated_at"):
                     setattr(existing, key, values[key])
                 existing.next_attempt_at = None
                 existing.locked_at = None
-            return
-        counts["rows unchanged"] += 1
-        s.rollback()
+        else:
+            counts["rows unchanged"] += 1
+        for listing in listings:
+            if find_listing(s, listing["source"], listing["source_product_id"]) is not None:
+                counts["listings unchanged"] += 1
+                continue
+            counts["listings inserted"] += 1
+            if not dry_run:
+                s.add(BikeDiscoveryListing(discovery_id=target_id, **listing))
+        if dry_run:
+            s.rollback()
 
 
 def write_target(target_url: str, snap: Snapshot, dry_run: bool = False) -> dict[str, int]:
-    """Phase 2: bikes first (commit per bike), then every queue row (commit per row)."""
+    """Phase 2: bikes first (commit per bike), then every queue row with its listings (commit per row)."""
     counts = {k: 0 for k in ("rows inserted", "rows updated", "rows unchanged", "rows failed",
+                             "listings inserted", "listings unchanged",
                              "bikes " + WRITTEN, "bikes " + KEPT, "bikes failed",
                              "cache " + CACHE_WRITTEN, "cache " + CACHE_PRESENT, "cache " + CACHE_FAILED,
                              "photos " + PHOTOS_WRITTEN, "photos " + PHOTOS_PRESENT, "photos " + PHOTOS_NONE,
                              "photos " + PHOTOS_FAILED)}
     models.configure_db(target_url)
     try:
-        has_table = inspect(models.get_engine()).has_table(BikeDiscovery.__tablename__)
+        insp = inspect(models.get_engine())
+        has_table = all(insp.has_table(t.name) for t in db.TABLES)
+        if db.has_old_layout():
+            raise SystemExit("target: " + db.OLD_LAYOUT_MESSAGE)
         if not dry_run:
             db.ensure_table()  # the backend owns (and has created) its own tables
         index = TargetIndex()
@@ -216,11 +254,13 @@ def write_target(target_url: str, snap: Snapshot, dry_run: bool = False) -> dict
             try:
                 if dry_run and not has_table:
                     counts["rows inserted"] += 1
+                    counts["listings inserted"] += len(row["listings"])
                 else:
-                    upsert_row(values, counts, dry_run)
+                    upsert_row(values, row["listings"], counts, dry_run)
             except Exception as exc:
                 counts["rows failed"] += 1
-                logger.warning("queue row %s not copied | %s: %s", row["source_product_id"], type(exc).__name__, exc)
+                logger.warning("queue row %r %r not copied | %s: %s", row["company"], row["model"],
+                               type(exc).__name__, exc)
         return counts
     finally:
         models.dispose_engine()
@@ -231,8 +271,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--target-url", required=True, help="SQLAlchemy URL of the database to write (password may "
                                                         "come from PGPASSFILE / PGPASSWORD)")
     ap.add_argument("--source-url", default=None, help="database to read (default: DATABASE_URL from backend/.env)")
-    ap.add_argument("--source", default=None, help="only this shop, e.g. centrumrowerowe.pl")
-    ap.add_argument("--limit", type=int, default=None, help="copy at most this many queue rows")
+    ap.add_argument("--source", default=None,
+                    help="only bikes listed by this shop, and only its listings, e.g. centrumrowerowe.pl")
+    ap.add_argument("--limit", type=int, default=None, help="copy at most this many bikes (queue rows)")
     ap.add_argument("--dry-run", action="store_true", help="report what would change; write nothing")
     ap.add_argument("--allow-remote", action="store_true", help="required when the target is not a local database")
     args = ap.parse_args(argv)
@@ -249,7 +290,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         raise SystemExit("source and target are the same database — refusing to copy onto itself")
 
     snap = read_source(source_url, args.source, args.limit)
-    print(f"read {len(snap.rows)} queue rows, {len(snap.bikes)} bikes "
+    print(f"read {len(snap.rows)} queue rows, {sum(len(r['listings']) for r in snap.rows)} listings, "
+          f"{len(snap.bikes)} bikes "
           f"({sum(b.details is not None for b in snap.bikes.values())} with details, "
           f"{sum(bool(b.photos) for b in snap.bikes.values())} with photos)")
     counts = write_target(args.target_url, snap, dry_run=args.dry_run)

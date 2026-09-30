@@ -5,7 +5,10 @@ from pathlib import Path
 import pytest
 
 import process_queue as pq
-from db import DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, SOURCE, BikeDiscovery, models, repository, utcnow
+from db import (
+    DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, SOURCE, BikeDiscovery, BikeDiscoveryListing, models, repository,
+    utcnow,
+)
 from app import photos_repository
 from app.schemas import (
     BikeCategory, BikeDescription, BikeDetailsResponse, BikeSubcategory, ComponentElement, SpecItem,
@@ -51,13 +54,21 @@ def fetch_ok(url):
     return 200, "<html></html>"
 
 
-def add_row(pid="pd27404", **kw):
+def add_row(pid="pd27404", model=None, source=SOURCE, url=URL, **kw):
+    """A bike_discovery row with one listing `pid`; the model defaults to one per pid (identity is unique)."""
+    model = model or ("Wagant 3" if pid == "pd27404" else f"Wagant 3 {pid}")
     with pq._tx() as s:
-        row = BikeDiscovery(source=SOURCE, source_product_id=pid, raw_name="Rower trekkingowy ROMET Wagant 3",
-                            company="ROMET", model="Wagant 3", details_link=URL, **kw)
+        row = BikeDiscovery(company="ROMET", model=model, **kw)
         s.add(row)
         s.flush()
+        add_listing(s, row.id, pid, source=source, url=url)
         return row.id
+
+
+def add_listing(s, row_id, pid, source=SOURCE, url=URL, seen_ago=timedelta(0)):
+    s.add(BikeDiscoveryListing(discovery_id=row_id, source=source, source_product_id=pid,
+                               raw_name=f"Rower trekkingowy ROMET Wagant 3 {pid}", details_link=url,
+                               last_seen_at=utcnow() - seen_ago))
 
 
 def get_row(row_id):
@@ -281,8 +292,9 @@ def test_claim_respects_limit_source_and_done(temp_db):
     a = add_row("pd1")
     add_row("pd2")
     add_row("pd3", status=DONE)
+    add_row("x", source="other.pl")
     with pq._tx() as s:
-        s.add(BikeDiscovery(source="other.pl", source_product_id="x", raw_name="r", company="c", model="m"))
+        s.add(BikeDiscovery(company="c", model="no listing"))
     assert pq.claim_batch(1, SOURCE) == [a]
     assert len(pq.claim_batch(10, SOURCE)) == 1
     assert pq.claim_batch(10, SOURCE) == []
@@ -313,7 +325,7 @@ def test_dry_run_writes_nothing(temp_db, capsys):
 def test_main_dry_run_cli(temp_db, monkeypatch):
     add_row()
     monkeypatch.setattr(pq, "http_fetch", fetch_ok)
-    monkeypatch.setattr(pq, "_default_parse", stub_parse())
+    monkeypatch.setitem(pq.PARSERS, SOURCE, stub_parse())
     assert pq.main(["--dry-run", "--delay", "0"]) == 0
     assert bike_rows() == []
 
@@ -392,9 +404,7 @@ def test_run_counts_are_exact_with_claim_lease(temp_db):
     "file:///etc/passwd",
 ])
 def test_unsafe_url_fails_without_fetch(temp_db, url):
-    row_id = add_row()
-    with pq._tx() as s:
-        s.get(BikeDiscovery, row_id).details_link = url
+    row_id = add_row(url=url)
     fetched = []
     assert claim_and_process(stub_parse(), fetch=lambda u: fetched.append(u) or (200, "")) == [FAILED]
     assert fetched == []
@@ -465,7 +475,7 @@ def test_main_checks_db_target(temp_db, monkeypatch):
 
     monkeypatch.setattr(pq.db, "check_target", check_target)
     monkeypatch.setattr(pq, "http_fetch", fetch_ok)
-    monkeypatch.setattr(pq, "_default_parse", stub_parse())
+    monkeypatch.setitem(pq.PARSERS, SOURCE, stub_parse())
     row_id = add_row()
     with pytest.raises(SystemExit):
         pq.main(["--delay", "0"])
@@ -478,7 +488,7 @@ def test_main_checks_db_target(temp_db, monkeypatch):
 
 def test_main_on_local_sqlite_passes_real_check_target(temp_db, monkeypatch):
     monkeypatch.setattr(pq, "http_fetch", fetch_ok)
-    monkeypatch.setattr(pq, "_default_parse", stub_parse())
+    monkeypatch.setitem(pq.PARSERS, SOURCE, stub_parse())
     add_row()
     assert pq.main(["--delay", "0"]) == 0
     assert len(bike_rows()) == 1

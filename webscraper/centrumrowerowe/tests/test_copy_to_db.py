@@ -7,8 +7,8 @@ import copy_to_db as ctd
 from bike_store import DETAILS_ENDPOINT, tx
 from app import cache, photos_repository
 from app.schemas import BikeDetailsResponse
-from db import DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, SOURCE, BikeDiscovery, ensure_table, models, repository, \
-    session, utcnow
+from db import DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, SOURCE, BikeDiscovery, BikeDiscoveryListing, ensure_table, \
+    models, repository, session, utcnow
 from test_process_queue import StubParsed
 
 
@@ -45,16 +45,24 @@ def photos(brand, model):
     return photos_repository.get_bike_photos(brand, model).photos
 
 
-def add_row(pid, status=PENDING, bike_id=None, **kw):
+def add_row(pid, status=PENDING, bike_id=None, model=None, **kw):
+    """A queue row (bike identity ROMET / `model`, default one per pid) with the single listing `pid`."""
     with tx() as s:
-        s.add(BikeDiscovery(source=SOURCE, source_product_id=pid, raw_name=f"Rower {pid}", company="ROMET",
-                            model="Wagant 3", details_link=f"https://www.centrumrowerowe.pl/{pid}/",
-                            status=status, bike_id=bike_id, **kw))
+        row = BikeDiscovery(company="ROMET", model=model or f"Model {pid}", status=status, bike_id=bike_id, **kw)
+        s.add(row)
+        s.flush()
+        s.add(BikeDiscoveryListing(discovery_id=row.id, source=SOURCE, source_product_id=pid, raw_name=f"Rower {pid}",
+                                   details_link=f"https://www.centrumrowerowe.pl/{pid}/"))
 
 
 def rows():
+    """listing pid → its bike_discovery row, in the current database."""
     with session() as s:
-        return {r.source_product_id: r for r in s.query(BikeDiscovery).all() if not s.expunge(r)}
+        pairs = s.query(BikeDiscoveryListing.source_product_id, BikeDiscovery).join(
+            BikeDiscovery, BikeDiscovery.id == BikeDiscoveryListing.discovery_id).all()
+        for _, row in pairs:
+            s.expunge(row)
+        return dict(pairs)
 
 
 def bikes():
@@ -70,7 +78,7 @@ def copy(urls, **kw):
 def seed_source(urls):
     use(urls["src"])
     bike_id = add_bike("Romet", "Wagant 3")
-    add_row("pd1", DONE, bike_id, attempts=1)
+    add_row("pd1", DONE, bike_id, model="Wagant 3", attempts=1)
     add_row("pd2", SKIPPED, last_error="HTTP 404: product gone", attempts=1)
     add_row("pd3")
     add_row("pd4", IN_PROGRESS, attempts=1, locked_at=utcnow())
@@ -84,6 +92,7 @@ def test_full_copy(dbs):
     counts = copy(dbs)
     assert (counts["rows inserted"], counts["bikes written"], counts["cache written"], counts["bikes failed"]) == \
         (5, 1, 1, 0)
+    assert (counts["listings inserted"], counts["listings unchanged"]) == (5, 0)
     use(dbs["tgt"])
     r = rows()
     assert bikes() == [("Kross", "Other"), ("Romet", "Wagant 3")]  # Romet is id 2 in the target, 1 in the source
@@ -104,6 +113,7 @@ def test_second_run_changes_nothing(dbs):
     before = (bikes(), {k: (v.status, v.bike_id, v.updated_at) for k, v in rows().items()})
     counts = copy(dbs)
     assert (counts["rows inserted"], counts["rows updated"], counts["rows unchanged"]) == (0, 0, 5)
+    assert (counts["listings inserted"], counts["listings unchanged"]) == (0, 5)
     assert (counts["bikes written"], counts["bikes kept"], counts["cache written"], counts["cache present"],
             counts["photos written"], counts["photos present"]) == (0, 1, 0, 1, 0, 1)
     use(dbs["tgt"])
@@ -160,11 +170,11 @@ def test_target_done_row_not_downgraded_pending_promoted(dbs):
     use(dbs["src"])
     bike_id = add_bike("Romet", "Wagant 3")
     add_row("pd1")  # pending in the source
-    add_row("pd2", DONE, bike_id)
+    add_row("pd2", DONE, bike_id, model="Wagant 3")
     use(dbs["tgt"])
     other = add_bike("Kross", "Other")
     add_row("pd1", DONE, other)
-    add_row("pd2", FAILED, attempts=3, last_error="old")
+    add_row("pd2", FAILED, model="WAGANT 3", attempts=3, last_error="old")  # same identity, other casing
     counts = copy(dbs)
     assert (counts["rows unchanged"], counts["rows updated"]) == (1, 1)
     use(dbs["tgt"])
