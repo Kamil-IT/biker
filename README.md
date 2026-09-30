@@ -325,8 +325,8 @@ cd webscraper\centrumrowerowe
 ```
 
 State on GCP after the 2026-09-30 copy: the queue holds 1304 rows (49 `done`, 1 `skipped`, 1254 `pending`) and 49 bikes with
-details, photos and cache entries — still in the **old** one-table layout (TODO-036), so run
-`migrate_discovery_listings.py` there before any script touches it (below), only on the user's explicit go. Nothing there
+details, photos and cache entries — migrated to the two-table layout (TODO-039) on 2026-09-30 evening by the user, so no further step is needed before
+the scripts touch it (the migration is described below). Nothing there
 runs by itself — processing the remaining 1254 rows would be a manual `process_queue.py --allow-remote` run against the proxy,
 only on an explicit decision.
 
@@ -347,7 +347,7 @@ Summary: `old_rows`, `bikes`, `listings`, `merged_groups`, `merged_rows`, `bike_
 | `--dry-run` | migrate, verify and report, then roll back |
 | `--allow-remote` | required for a non-local database — **also with `--dry-run`**, because it runs the DDL and takes the table lock before rolling back |
 
-Run on the local PostgreSQL `biker-pg` on 2026-09-30 (rehearsed first on a PostgreSQL copy of the real table): `old_rows=1310 bikes=1278 listings=1310 merged_groups=30 merged_rows=32 bike_id_conflicts=0` - the merged groups are men's/women's variants of the same model name (e.g. "Rower crossowy ROMET Orkan 5 CS" + "... damski ..."); a second run printed "already migrated". GCP still holds the old layout until the user's go. After the migration, on `biker-pg` (2026-09-30): a full re-scrape saw 1311 products and inserted 7 bikes + 7 listings (new `pd` ids in the catalogue; 6 old ones were not seen) and updated 1304 listings; `process_queue.py --limit 5` gave `done=5 skipped=0 failed=0`; 194 unit tests pass.
+Run on the local PostgreSQL `biker-pg` on 2026-09-30 (rehearsed first on a PostgreSQL copy of the real table): `old_rows=1310 bikes=1278 listings=1310 merged_groups=30 merged_rows=32 bike_id_conflicts=0` - the merged groups are men's/women's variants of the same model name (e.g. "Rower crossowy ROMET Orkan 5 CS" + "... damski ..."); a second run printed "already migrated". Run on GCP Cloud SQL the same evening (through the proxy, `--allow-remote`, started by the user by hand): identical numbers (1310 → 1278 bikes, 1310 listings, 49 done / 1 skipped / 1228 pending, 50 `bike_id` kept), second run "already migrated". After the migration, on `biker-pg` (2026-09-30): a full re-scrape saw 1311 products and inserted 7 bikes + 7 listings (new `pd` ids in the catalogue; 6 old ones were not seen) and updated 1304 listings; `process_queue.py --limit 5` gave `done=5 skipped=0 failed=0`; 194 unit tests pass.
 
 **Tests** (fixtures are saved product pages in `webscraper/centrumrowerowe/tests/fixtures/`; every test uses a throwaway
 SQLite file, never the real database; 194 pass on 2026-09-30):
