@@ -14,6 +14,11 @@ written once and never replaced: get_stored_photos / save_photos below.
 Bike reviews (/v1/search/review, TODO-037) go into bike_review (one row per
 bike) + bike_review_source (its `ref` URLs in order): get_stored_review /
 save_review below. A review is replaced only by a usable one.
+
+Bike details (/v1/search/details, TODO-041) go into bike_detail (one row per
+bike, updated in place) + bike_detail_component (the flattened tree): a port
+of the backend's repository.save_bike_details / get_bike_details, plus the
+new short_description column. get_stored_details / save_details below.
 """
 import logging
 from datetime import datetime, timezone
@@ -28,10 +33,22 @@ from .models import (
     BikeDetailPhoto,
     BikeReview as BikeReviewRow,  # aliased: schemas.BikeReview is the response shape
     BikeReviewSource,
+    BikeDetailComponent,
+    BikeDetails as BikeDetailsRow,  # aliased: schemas.BikeDetails is the response shape
     dialect_insert,
     get_session,
 )
-from .schemas import BikeOffer, BikeReview
+from .details_finder import has_components, is_usable_details
+from .schemas import (
+    BikeCategory,
+    BikeDescription,
+    BikeDetails,
+    BikeOffer,
+    BikeReview,
+    BikeSubcategory,
+    ComponentElement,
+    SpecItem,
+)
 
 logger = logging.getLogger("searcher.repository")
 
@@ -309,6 +326,152 @@ def save_review(company: str, model: str, review: BikeReview) -> tuple[Optional[
     except Exception as exc:
         session.rollback()
         logger.error("review store failed | company=%r model=%r | %s", company, model, exc)
+        raise
+    finally:
+        session.close()
+
+
+def _rebuild_components(rows) -> list[BikeCategory]:
+    """Regroup flat bike_detail_component rows (ordered by component/element/spec order) into the tree.
+
+    Same grouping as the backend's repository.rebuild_components: by the order
+    integers, not by names; a NULL spec_key is an element without specs.
+    """
+    comps: dict[int, dict] = {}
+    for r in rows:
+        comp = comps.setdefault(r.component_order, {"category": r.category, "subcategory": r.subcategory, "elements": {}})
+        element = comp["elements"].setdefault(
+            r.element_order, {"name": r.element_name, "description": r.element_description or "", "specs": []},
+        )
+        if r.spec_key is not None:
+            element["specs"].append(SpecItem(key=r.spec_key, value=r.spec_value or ""))
+    grouped: dict[str, list[BikeSubcategory]] = {}
+    for comp_order in sorted(comps):
+        comp = comps[comp_order]
+        grouped.setdefault(comp["category"], []).append(BikeSubcategory(
+            subcategory=comp["subcategory"],
+            elements=[
+                ComponentElement(name=el["name"], description=el["description"], specs=el["specs"])
+                for _, el in sorted(comp["elements"].items())
+            ],
+        ))
+    return [BikeCategory(category=name, subcategories=subs) for name, subs in grouped.items()]
+
+
+def _stored_details(session, bike_id: int, company: str, model: str) -> Optional[BikeDetails]:
+    row = session.query(BikeDetailsRow).filter(BikeDetailsRow.bike_id == bike_id).one_or_none()
+    if row is None:
+        return None
+    try:
+        description = BikeDescription.model_validate_json(row.description)
+    except Exception as exc:  # noqa: BLE001 - an unreadable blob must not break the request
+        logger.warning("stored details description unreadable | bike_id=%d | %s", bike_id, exc)
+        description = BikeDescription()
+    return BikeDetails(
+        company=company, model=model, description=description,
+        components=_rebuild_components(row.components), short_description=row.short_description or "",
+    )
+
+
+def get_stored_details(company: str, model: str) -> tuple[Optional[int], Optional[BikeDetails]]:
+    """(bike_id, stored details in the caller's casing or None); (None, None) for an unknown bike. Never creates anything."""
+    session = get_session()
+    try:
+        bike_id = _find_bike_id(session, company, model)
+        if bike_id is None:
+            return None, None
+        return bike_id, _stored_details(session, bike_id, company, model)
+    finally:
+        session.close()
+
+
+def _upgrade_casing(session, bike_id: int, company: str, model: str) -> None:
+    """A stored brand/model equal to its own normalised form is a placeholder - the caller's real casing replaces it.
+
+    Monotonic (lower-case never overwrites real casing) and skipped when
+    another bike row already owns the upgraded (brand, model) pair.
+    """
+    bike = session.get(Bike, bike_id)
+    brand, name = company.strip(), model.strip()
+    new_brand = brand if bike.brand == _lc(bike.brand) and brand != bike.brand else bike.brand
+    new_model = name if bike.model == _lc(bike.model) and name != bike.model else bike.model
+    if (new_brand, new_model) == (bike.brand, bike.model):
+        return
+    clash = session.query(Bike.id).filter(Bike.brand == new_brand, Bike.model == new_model, Bike.id != bike_id).first()
+    if clash is None:
+        bike.brand, bike.model = new_brand, new_model
+
+
+def save_details(company: str, model: str, details: BikeDetails) -> tuple[Optional[int], bool]:
+    """Store `details` as the bike's details when usable; returns (bike_id, saved).
+
+    Usable = a non-empty component tree or a non-empty description. Then, in
+    one transaction: the bike row is created if missing (caller's casing; an
+    existing placeholder casing is upgraded), its bike_detail row is updated
+    IN PLACE (id stable; description JSON and short_description replaced) or
+    inserted, and its bike_detail_component rows are replaced with the
+    flattened tree (one row per spec, an element without specs gets one row
+    with NULL spec_*; component_order counts subcategories across the tree).
+    Photos hang off `bike` and are never touched. An unusable result writes and
+    deletes nothing - not even a bike row - so a bad run never wipes stored
+    details. Raises on a DB error after rolling back.
+    """
+    session = get_session()
+    try:
+        if not is_usable_details(details):
+            bike_id = _find_bike_id(session, company, model)
+            logger.warning("no usable details to store - nothing written | company=%r model=%r", company, model)
+            return bike_id, False
+        bike_id = _get_or_create_bike(session, company, model)
+        _upgrade_casing(session, bike_id, company, model)
+        now = datetime.now(timezone.utc)
+        row = session.query(BikeDetailsRow).filter_by(bike_id=bike_id).first()
+        has_desc = bool(details.description.text.strip())
+        has_comps = has_components(details)
+        if row is not None:
+            # Only the half this run produced is replaced; the other half stays as stored.
+            if has_desc:
+                row.description = details.description.model_dump_json()
+                row.short_description = details.short_description
+            row.updated_at = now
+            if has_comps:
+                session.query(BikeDetailComponent).filter_by(bike_detail_id=row.id).delete(synchronize_session=False)
+                session.expire(row, ["components"])
+        else:
+            row = BikeDetailsRow(
+                bike_id=bike_id, description=details.description.model_dump_json(),
+                short_description=details.short_description,
+            )
+            session.add(row)
+        session.flush()
+
+        comp_order = 0
+        rows = 0
+        for category in (details.components if has_comps else []):
+            for subcategory in category.subcategories:
+                for e_idx, element in enumerate(subcategory.elements):
+                    base = dict(
+                        bike_detail_id=row.id, category=category.category, subcategory=subcategory.subcategory,
+                        component_order=comp_order, element_name=element.name,
+                        element_description=element.description, element_order=e_idx,
+                    )
+                    if not element.specs:
+                        session.add(BikeDetailComponent(**base, spec_key=None, spec_value=None, spec_order=None))
+                        rows += 1
+                        continue
+                    for s_idx, spec in enumerate(element.specs):
+                        session.add(BikeDetailComponent(**base, spec_key=spec.key, spec_value=spec.value, spec_order=s_idx))
+                        rows += 1
+                comp_order += 1
+        session.commit()
+        logger.info(
+            "details stored | company=%r model=%r bike_id=%d detail_id=%d component_rows=%d",
+            company, model, bike_id, row.id, rows,
+        )
+        return bike_id, True
+    except Exception as exc:
+        session.rollback()
+        logger.error("details store failed | company=%r model=%r | %s", company, model, exc)
         raise
     finally:
         session.close()

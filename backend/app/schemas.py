@@ -62,8 +62,10 @@ class SearchRequest(BaseModel):
 
 
 class BikeDetailsRequest(BaseModel):
-    company: str
-    model: str
+    # Bounded to the bike.brand / bike.model column width: /v1/bike/details/search
+    # forwards both into the searcher's CLI prompt and its bike row (TODO-041).
+    company: str = Field(max_length=255)
+    model: str = Field(max_length=255)
 
     @field_validator("company", "model")
     @classmethod
@@ -159,6 +161,7 @@ class BikeDetailsResponse(BaseModel):
     model: str
     description: BikeDescription
     components: list[BikeCategory]
+    short_description: str = ""
 
 
 class BikeResult(BaseModel):

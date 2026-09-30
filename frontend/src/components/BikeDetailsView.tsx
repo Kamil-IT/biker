@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react'
 import type { Bike, BikeCategory, BikeDescription, BikeReviewResponse, BikeOffer, BikeOfferResponse, UsedBikeResponse } from '../types'
 import { MissingType } from '../types'
@@ -58,6 +58,8 @@ interface BikeDetailsViewProps {
   onSearchPhotos: () => Promise<void>
   // On-demand review search behind the Review section's "Request data" button (TODO-037).
   onSearchReview: () => Promise<void>
+  // Description + component tree come from one on-demand search (TODO-041).
+  onSearchDetails: () => Promise<void>
 }
 
 export default function BikeDetailsView({
@@ -83,6 +85,7 @@ export default function BikeDetailsView({
   onSearchNew,
   onSearchPhotos,
   onSearchReview,
+  onSearchDetails,
 }: BikeDetailsViewProps) {
   const { brand, model, accessories } = bike
   // Each section: loading state for the first 5 s, then its data if any arrived,
@@ -94,7 +97,23 @@ export default function BikeDetailsView({
   const hasDescription = !!description && (
     !!description.text?.trim() || description.segments.some(seg => seg.text.trim())
   )
-  const hasComponents = !!categories && categories.length > 0
+  const hasComponents = !!categories && categories.some(c => c.subcategories.some(s => s.elements.length > 0))
+  // One search fills both halves, so the button runs it whenever either is missing; the
+  // backend refuses to search when the stored details are complete (description AND components).
+  // The Opis and Specyfikacja buttons share ONE run: a click while it is in flight joins it,
+  // and the other button watches the same promise (spinner, no second request).
+  const detailsRunRef = useRef<Promise<void> | null>(null)
+  const [detailsRun, setDetailsRun] = useState<Promise<void> | null>(null)
+  const runDetails = () => {
+    if (detailsRunRef.current) return detailsRunRef.current
+    const run = onSearchDetails()
+    detailsRunRef.current = run
+    setDetailsRun(run)
+    const clear = () => { detailsRunRef.current = null; setDetailsRun(null) }
+    run.then(clear, clear)
+    return run
+  }
+  const searchDetails = !(hasDescription && hasComponents) ? runDetails : undefined
   const hasReview = !!review && (review.ref.some(Boolean) || review.sources_used > 0)
 
   return (
@@ -165,7 +184,16 @@ export default function BikeDetailsView({
         ) : detailsGrace ? (
           <DescriptionCard description={null} state="loading" />
         ) : (
-          <RequestDataButton title="Opis" company={brand} model={model} missingType={MissingType.Description} />
+          <RequestDataButton
+            title="Opis"
+            company={brand}
+            model={model}
+            missingType={MissingType.Description}
+            onRequested={searchDetails}
+            watch={detailsRun}
+            pendingLabel="Szukam danych roweru…"
+            emptyLabel="Nie znaleziono danych"
+          />
         )}
 
         {/* Offers — all sources pooled, split by is_new (Used on top, New below) */}
@@ -235,6 +263,10 @@ export default function BikeDetailsView({
             company={brand}
             model={model}
             missingType={MissingType.Components}
+            onRequested={searchDetails}
+            watch={detailsRun}
+            pendingLabel="Szukam danych roweru…"
+            emptyLabel="Nie znaleziono danych"
           />
         )}
 

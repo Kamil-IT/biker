@@ -24,8 +24,6 @@ from .schemas import (  # noqa: E402
     MissingDataRequest, MissingDataResponse, PopularBikesResponse,
 )
 from .bike_finder import find_bikes  # noqa: E402
-from .bike_details_finder import find_bike_details  # noqa: E402
-from .bike_description_finder import find_bike_description  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
 from .equipment_details_finder import find_equipment_details  # noqa: E402
 from .equipment_description_finder import find_equipment_description  # noqa: E402
@@ -39,7 +37,8 @@ from .store import (  # noqa: E402
 # Details are served from the ORM tables (bike_detail + bike_detail_component),
 # not the retired bike_details_cache blob — see TODO-019.
 from .repository import (  # noqa: E402
-    save_bike_details, get_bike_details, find_bikes_by_details, record_missing_request,
+    get_bike_details, find_bikes_by_details, record_missing_request,
+    empty_details, has_complete_details, fill_bike_results,
 )
 from .offers_repository import (  # noqa: E402
     get_used_offers, get_decathlon_offers, get_allegro_offers, bike_exists,
@@ -53,7 +52,7 @@ from .reviews_repository import get_review  # noqa: E402
 # (TODO-037) live in the separate searcher service; the backend reads the DB and
 # proxies the on-demand searches to it.
 from .searcher_client import (  # noqa: E402
-    search_olx, search_decathlon, search_allegro, search_photos, search_review,
+    search_olx, search_decathlon, search_allegro, search_photos, search_review, search_details,
     SearcherNotConfigured, SearcherUnavailable, SearcherBusy, SearcherFailed, SearcherLimitReached,
 )
 from .decathlon_brands import is_decathlon_brand, not_sold_info  # noqa: E402
@@ -132,6 +131,9 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
     # their details) and their ratings.
     if bikes:
         save_search(enriched, bikes)
+        # explanation / accessories come from the bikes' stored details (TODO-041),
+        # never from the AI: a bike found only by the AI has none → "" / [].
+        bikes = fill_bike_results(bikes)
     return BikeSearchResponse(search=enriched, bikes=bikes)
 
 
@@ -167,38 +169,59 @@ async def bike_details_cache_lookup(company: str, model: str) -> BikeDetailsResp
 
 @app.post("/v1/bike/details", response_model=BikeDetailsResponse)
 async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
-    logger.info("details request | company=%r model=%r", req.company, req.model)
-    _fields = {"company": req.company, "model": req.model}
-    cached = get_cached("/v1/bike/details", _fields, BikeDetailsResponse)
-    if cached is not None:
-        # Backfill the ORM details tables on the hit path too. Without this they
-        # only ever fill on a generic-cache MISS, so a warm cache leaves them
-        # empty — see TODO-011.
-        save_bike_details(req.company, req.model, cached)
-        return cached
+    """Stored bike details — a pure DB read (TODO-041): no AI, no generic cache.
 
+    Unknown bike / nothing stored → 200 with the empty response (the frontend
+    shows "Poproś o dane"). The on-demand search is /v1/bike/details/search.
+    """
+    logger.info("details request | company=%r model=%r", req.company, req.model)
+    stored = get_bike_details(req.company, req.model)
+    if stored is None:
+        return empty_details(req.company, req.model)
+    return stored.model_copy(update={"company": req.company, "model": req.model})
+
+
+@app.post("/v1/bike/details/search", response_model=BikeDetailsResponse)
+async def bike_details_search(req: BikeDetailsRequest) -> BikeDetailsResponse:
+    """Run the bike-details search on demand through the searcher service (TODO-041).
+
+    Proxies to {SEARCHER_URL}/v1/search/details and waits for it
+    (SEARCHER_TIMEOUT, default 600 s) — unless the bike already has complete
+    stored details (components + description text), which are returned without a
+    searcher call. The searcher runs `claude -p` once, stores the result only when
+    usable, and returns what is now stored (the empty response when nothing usable
+    was found). Shares SEARCHER_MAX_INFLIGHT with the other searches. 503 when the
+    searcher is not configured, unreachable or busy, 502 (its detail passed
+    through) when it fails. Never cached.
+    """
+    logger.info("details search request | company=%r model=%r", req.company, req.model)
+    if not bike_exists(req.company, req.model):
+        logger.warning("details search refused: unknown bike | company=%r model=%r", req.company, req.model)
+        raise HTTPException(status_code=404, detail="Bike not found")
+    stored = get_bike_details(req.company, req.model)
+    if has_complete_details(stored):
+        logger.info("details search skipped: details already stored | company=%r model=%r", req.company, req.model)
+        return stored.model_copy(update={"company": req.company, "model": req.model})
     t_start = time.perf_counter()
-    # Photos are not part of details any more: /v1/bike/photos reads them from
-    # the DB and /v1/bike/photos/search fetches them through the searcher.
-    components, description = await asyncio.gather(
-        find_bike_details(req.company, req.model),
-        find_bike_description(req.company, req.model),
-    )
-    elapsed = time.perf_counter() - t_start
+    try:
+        result = await search_details(req.company, req.model)
+    except SearcherNotConfigured as exc:
+        logger.error("details search: searcher not configured | %s", exc)
+        raise HTTPException(status_code=503, detail="Details searcher is not configured") from exc
+    except SearcherUnavailable as exc:
+        logger.error("details search: searcher unavailable | %s", exc)
+        raise HTTPException(status_code=503, detail="Details searcher unavailable") from exc
+    except SearcherBusy as exc:
+        logger.warning("details search: searcher busy | %s", exc)
+        raise HTTPException(status_code=503, detail="Details searcher is busy — try again in a moment") from exc
+    except SearcherFailed as exc:
+        logger.error("details search failed | status=%d detail=%r", exc.status, exc.detail)
+        raise HTTPException(status_code=502, detail=exc.detail) from exc
     logger.info(
-        "details complete | categories=%d elapsed=%.2fs",
-        len(components),
-        elapsed,
+        "details search complete | categories=%d elapsed=%.2fs",
+        len(result.components), time.perf_counter() - t_start,
     )
-    response = BikeDetailsResponse(
-        company=req.company,
-        model=req.model,
-        description=description,
-        components=components,
-    )
-    set_cached("/v1/bike/details", _fields, response)
-    save_bike_details(req.company, req.model, response)
-    return response
+    return result
 
 
 @app.post("/v1/bike/missing", response_model=MissingDataResponse)

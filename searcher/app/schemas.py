@@ -84,6 +84,60 @@ class ReviewResponse(BaseModel):
     saved: int = 0              # 1 when this call wrote the review, else 0
 
 
+class SpecItem(BaseModel):
+    key: str
+    value: str
+
+
+class ComponentElement(BaseModel):
+    name: str
+    description: str = ""
+    specs: list[SpecItem] = []
+
+
+class BikeSubcategory(BaseModel):
+    subcategory: str
+    elements: list[ComponentElement] = []
+
+
+class BikeCategory(BaseModel):
+    category: str
+    subcategories: list[BikeSubcategory] = []
+
+
+class DescriptionCitation(BaseModel):
+    url: str
+    title: str
+    cited_text: str = ""
+
+
+class TextSegment(BaseModel):
+    text: str
+    citations: list[DescriptionCitation] = []
+
+
+class BikeDescription(BaseModel):
+    text: str = ""
+    segments: list[TextSegment] = []
+    citations: list[DescriptionCitation] = []
+
+
+class BikeDetails(BaseModel):
+    """The backend's BikeDetailsResponse shape (TODO-041). All-default description/components = nothing found."""
+
+    company: str
+    model: str
+    description: BikeDescription = BikeDescription()
+    components: list[BikeCategory] = []
+    short_description: str = ""
+
+
+class DetailsResponse(BaseModel):
+    details: BikeDetails        # the details now stored for the bike (or what this run found when nothing was stored)
+    bike_id: int | None = None  # the bike row the details belong to (null: unknown bike, nothing stored)
+    saved: int = 0              # 1 when this call wrote the details, else 0
+
+
 class HealthResponse(BaseModel):
     status: str = "ok"
     claude_cli: str | None = None  # `claude --version` output, null when the CLI is missing

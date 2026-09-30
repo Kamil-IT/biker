@@ -12,7 +12,6 @@ hand. The backend code is never modified; the scripts import it.
 listing pages ──scrape_rowery.py──▶ bike_discovery + bike_discovery_listing ──process_queue.py──▶ bike
                                                                                   bike_detail (+ components)
                                                                                   bike_detail_photos
-                                                                                  /v1/bike/details cache entry
                                     copy_to_db.py: local database ───────────────▶ another database (e.g. Cloud SQL)
 ```
 
@@ -57,10 +56,10 @@ recorded on the listing (`fetched_at`, `fetch_error`, `NULL` after a success). P
    `app.models`.
 3. **Store** through the backend's own functions (`bike_store.py`): the bike in `bike` (looked up
    by normalised brand + model, reusing the stored casing so no duplicate row is minted), details
-   in `bike_detail` + components, photos in `bike_detail_photos` (only when the bike has none),
-   and the generic cache entry under `POST /v1/bike/details`, because that endpoint reads only
-   the cache and would otherwise run the AI pipeline. A save counts only when a `bike_detail` row
-   updated at or after the save start exists.
+   in `bike_detail` + components (`short_description` stays `""` — the parser writes none) and photos in
+   `bike_detail_photos` (only when the bike has none). `POST /v1/bike/details` reads `bike_detail`
+   directly (TODO-041), so no generic-cache entry is written any more. A save counts only when a
+   `bike_detail` row updated at or after the save start exists.
 4. **Mark** the bike: `done`; `skipped` when the bike already had details (nothing overwritten —
    photos are still added if it had none) or every listing is gone (404/410); `failed` with
    `last_error` and a backoff of 1 h, then 6 h — the third failure is final until `--retry-failed`.
@@ -77,8 +76,7 @@ run is reported as `lost` and not written. Ctrl+C releases the claimed rows back
 Reads the `bike_discovery` rows with their listings, the processed bikes, their details and photos
 from the source database into memory, then writes them into the target: bikes are matched by
 `(company_norm, model_norm)` and listings by `(source, source_product_id)` (a listing already in the
-target stays on its bike there), existing details and photos in the target are kept, cache entries
-are written, queue rows get the **target's** bike ids and are never downgraded (a `done` target row
+target stays on its bike there), existing details and photos in the target are kept, queue rows get the **target's** bike ids and are never downgraded (a `done` target row
 stays `done`; `in_progress` becomes `pending`). The run is idempotent — a second run changes
 nothing. Counters include `listings_inserted` and `listings_unchanged`.
 
@@ -166,7 +164,6 @@ $env:PYTHONUTF8 = '1'
 ..\..\backend\.venv\Scripts\python.exe process_queue.py --limit 20
 ..\..\backend\.venv\Scripts\python.exe process_queue.py --limit 5 --dry-run     # fetch + parse + print, write nothing
 ..\..\backend\.venv\Scripts\python.exe process_queue.py --retry-failed           # put failed rows back first
-..\..\backend\.venv\Scripts\python.exe process_queue.py --sync-cache             # cache entries for done rows
 
 # 3. copy the result into Cloud SQL (proxy in another terminal:
 #    cloud-sql-proxy --gcloud-auth --port 6543 biker-engine-prod:europe-central2:biker-pg)
@@ -188,7 +185,6 @@ Flags:
 | | `--source` | only bikes that have a listing from this shop |
 | | `--retry-failed` | reset every `failed` row to `pending` with 0 attempts before claiming |
 | | `--dry-run` | fetch, parse and print; claim nothing, write nothing |
-| | `--sync-cache` | write the `/v1/bike/details` cache entry for every `done` row; no fetching |
 | | `--allow-remote` | allow a non-local database |
 | `copy_to_db.py` | `--target-url URL` | database to write (password via `PGPASSFILE` / `PGPASSWORD`) |
 | | `--source-url URL` | database to read (default: `DATABASE_URL` from `backend/.env`) |
@@ -214,8 +210,8 @@ the database from `backend/.env`.
 - One shop only. Other shops need their own parser and `source` value.
 - The size selector shows only the sizes the shop has for the displayed colour, so `Sizes` can be
   incomplete.
-- `GET /v1/bike/details-cache` and `repository.get_bike_details` match brand and model by exact
-  casing; the processor always stores the page's casing (or the casing already in `bike`).
-- The generic-cache write exists only because `POST /v1/bike/details` never reads `bike_detail`;
-  if the backend ever reads the ORM tables first, the cache write and `--sync-cache` become
-  unnecessary.
+- `repository.get_bike_details` now matches brand and model on the normalised columns (TODO-041),
+  so a discovered bike is found whatever casing the caller uses; the processor still stores the
+  page's casing (or the casing already in `bike`).
+- Until the `bike_detail.short_description` column exists (`backend/scripts/migrate_short_description.py`)
+  the processor's save fails on that database — run the migration first.

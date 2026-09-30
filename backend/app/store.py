@@ -12,12 +12,13 @@ Two tables, both defined as ORM models in `app/models.py` and created by
 - `search_cache`               — one row per query: `query`, `time_stored`.
 - `search_bike_rating_cache`   — one row per bike a search returned: FK to
   `search_cache`, FK to `bike`, `explanation`, `accessories` (inline
-  JSON array), `display_order` (the AI answer's order). The `rating` column
+  JSON array), `display_order` (the AI answer's order). Since TODO-041 the last two
+  hold `""` / `"[]"` and nothing reads them: a result's explanation / accessories are
+  filled at read time from the bike's stored details (repository._search_fill). The `rating` column
   (the old match score) was dropped in TODO-040 — `scripts/migrate_drop_search_rating.py`.
 
 Freshness is `time_stored + SEARCH_TTL_SECONDS`; there is no per-row ttl column.
 """
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
@@ -25,6 +26,7 @@ from typing import Optional
 from sqlalchemy import func
 
 from .models import Bike, SearchBikeRating, SearchCache, get_session
+from .repository import search_fill_for
 from .schemas import BikeResult
 
 logger = logging.getLogger(__name__)
@@ -84,18 +86,18 @@ def _get_or_create_bike(session, brand: str, model: str) -> int:
     return bike.id
 
 
-def _row_to_bike(brand, model, explanation, accessories_json) -> BikeResult:
-    """Turn one joined search_bike_rating_cache row back into a BikeResult schema."""
-    try:
-        accessories = json.loads(accessories_json) if accessories_json else []
-    except (TypeError, ValueError):
-        accessories = []
-    return BikeResult(
-        brand=brand,
-        model=model,
-        accessories=accessories,
-        explanation=explanation,
-    )
+def _fill_rows(rows) -> list[BikeResult]:
+    """Turn (bike_id, brand, model) rows into BikeResults filled from stored details.
+
+    explanation = bike_detail.short_description, accessories = component chips
+    (TODO-041); `""` / `[]` for a bike without details.
+    """
+    fill = search_fill_for([r[0] for r in rows])
+    return [
+        BikeResult(brand=brand, model=model, accessories=fill.get(bid, ("", []))[1],
+                   explanation=fill.get(bid, ("", []))[0])
+        for bid, brand, model in rows
+    ]
 
 
 def save_search(query: str, bikes: list[BikeResult], ttl: int = SEARCH_TTL_SECONDS) -> None:
@@ -118,8 +120,8 @@ def save_search(query: str, bikes: list[BikeResult], ttl: int = SEARCH_TTL_SECON
             session.add(SearchBikeRating(
                 search_cache_id=search.id,
                 bike_id=_get_or_create_bike(session, b.brand, b.model),
-                explanation=b.explanation,
-                accessories=json.dumps(b.accessories),
+                explanation="",
+                accessories="[]",
                 display_order=i,
             ))
         session.commit()
@@ -131,11 +133,8 @@ def save_search(query: str, bikes: list[BikeResult], ttl: int = SEARCH_TTL_SECON
         session.close()
 
 
-# brand, model, explanation, accessories — the columns _row_to_bike takes.
-_RATED_COLUMNS = (
-    Bike.brand, Bike.model,
-    SearchBikeRating.explanation, SearchBikeRating.accessories,
-)
+# bike_id, brand, model — the columns _fill_rows takes.
+_RATED_COLUMNS = (Bike.id, Bike.brand, Bike.model)
 
 
 def get_search_by_query(query: str) -> Optional[list[BikeResult]]:
@@ -161,7 +160,7 @@ def get_search_by_query(query: str) -> Optional[list[BikeResult]]:
             .order_by(SearchBikeRating.display_order, SearchBikeRating.id)
             .all()
         )
-        return [_row_to_bike(*r) for r in rows]
+        return _fill_rows(rows)
     finally:
         session.close()
 
@@ -186,17 +185,17 @@ def _find_rated_bikes(brand: Optional[str], model: Optional[str]) -> list[BikeRe
     finally:
         session.close()
 
-    matches: list[BikeResult] = []
+    kept: list[tuple[int, str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for time_stored, br, mo, expl, acc in rows:
+    for time_stored, bid, br, mo in rows:
         if not _is_fresh(time_stored, SEARCH_TTL_SECONDS):
             continue
         key = (_norm(br), _norm(mo))
         if key in seen:
             continue
         seen.add(key)
-        matches.append(_row_to_bike(br, mo, expl, acc))
-    return matches
+        kept.append((bid, br, mo))
+    return _fill_rows(kept)
 
 
 def find_bikes_by_brand(brand: str) -> list[BikeResult]:

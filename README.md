@@ -9,8 +9,9 @@ Before the first search the home page shows **Najpopularniejsze rowery** — the
 1. You enter a free-text description (e.g. *"comfortable bike for daily 10 km city commute"*)
 2. The backend first searches its own bike database: every structured filter it can check (brand, model, wheel size, frame size, electric) is matched against stored bike specs. All matching bikes are returned (no cap) with no AI call. Search answers are never served from a response cache, so they always reflect the current database
 3. Only when the database has no match, a single Claude Haiku call recommends every real bike that fits (at least 1 — the closest match when nothing meets every filter)
-4. Click a result to open the details page — the backend fetches specs and description in parallel via Claude web search, and the expert review is read from the database; the photos, review, Allegro offers, Decathlon offers and used OLX listings are read from the database only (they get there through the on-demand searches below — opening a bike never runs a marketplace or photo search). Any section (photos, overview, specs, review, Used / New offers) still without data after 5 s — or with an empty/failed response — shows a **Request data** button instead of its spinner; clicking it records the request via `POST /v1/bike/missing`. Data that arrives later replaces the button
-5. In the **Recenzja eksperta** section the button also starts the on-demand review search (`POST /v1/bike/review/search` → the same `searcher/` service runs the Claude Code CLI once over the curated review sites, computes the weighted rating and stores it in `bike_review` / `bike_review_source` — only when it found at least one professional source; a stored review is never wiped by a bad run); it reads "Szukam recenzji…" while it runs, then the review replaces it — or "Nie znaleziono recenzji".
+4. Click a result to open the details page — the description, component specs, photos, review, Allegro offers, Decathlon offers and used OLX listings are all read from the database only (they get there through the on-demand searches below — opening a bike never runs a details, marketplace, photo or review search). The result cards' text is read from the database too: the explanation is the bike's stored two-sentence `short_description` and the chips are drivetrain / brakes / frame-material names from its stored components (both hidden for a bike without stored details). Any section (photos, overview, specs, review, Used / New offers) still without data after 5 s — or with an empty/failed response — shows a **Request data** button instead of its spinner; clicking it records the request via `POST /v1/bike/missing`. Data that arrives later replaces the button
+5. In the **Opis** and **Komponenty** sections the button starts the on-demand details search (`POST /v1/bike/details/search` → the `searcher/` service runs the Claude Code CLI once — `WebSearch` + `WebFetch` — for the Polish description, a Polish two-sentence short description and the 8-category component tree, and stores a usable result in `bike_detail` / `bike_detail_component`, updated in place, photos untouched; complete stored details are returned without a run); one click fills both sections, it reads "Szukam danych roweru…" while it runs, then the data replaces it — or "Nie znaleziono danych".
+   In the **Recenzja eksperta** section the button also starts the on-demand review search (`POST /v1/bike/review/search` → the same `searcher/` service runs the Claude Code CLI once over the curated review sites, computes the weighted rating and stores it in `bike_review` / `bike_review_source` — only when it found at least one professional source; a stored review is never wiped by a bad run); it reads "Szukam recenzji…" while it runs, then the review replaces it — or "Nie znaleziono recenzji".
    In the photo gallery slot the button also starts the on-demand photo search (`POST /v1/bike/photos/search` → the same `searcher/` service finds the manufacturer's product page with the Claude Code CLI, scrapes up to 8 photos from it with Playwright and stores them in `bike_detail_photos` — only for a bike that has none, stored photos are never replaced); it reads "Szukam zdjęć…" while it runs, then the gallery replaces it — or "Nie znaleziono zdjęć". In the **Used** offers card that same button also starts the on-demand OLX search (`POST /v1/bike/used/search` → the `searcher/` service, which runs the Claude Code CLI on your subscription and stores what it finds in `bike_offer`). The button reads "Szukam na OLX…" while it runs, then the real listings with photos replace it — or "Nie znaleziono ofert" when there are none. In the **New** card it fires **two** searches at once — Decathlon (`POST /v1/bike/decathlon/search`) and Allegro (`POST /v1/bike/allegro/search`) — through the same searcher; neither stores photos (Allegro blocks every automated fetch with 403, so its photo scrape was dropped); the button reads "Szukam na Allegro i Decathlon…" and rows from either source replace it as they arrive ("Nie znaleziono ofert" only when both came back empty; clickable again when a search failed and neither brought rows). Allegro is searched for every brand, and a used Allegro listing lands in the **Used** card by its `is_new` flag; Decathlon only for its house brands (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt; `backend/app/decathlon_brands.py`) — any other brand gets an instant empty Decathlon answer with no search spent (closes `TODO_ISSUE_010`)
 6. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel). Equipment is informational only — no shopping/offer links
 
@@ -47,6 +48,9 @@ python scripts/migrate_photos_bike_id.py --dry-run   # once per existing databas
 python scripts/migrate_photos_bike_id.py             # ... then re-key bike_detail_photos to bike_id (idempotent)
 python scripts/migrate_drop_search_rating.py --dry-run   # once per existing database (TODO-040) ...
 python scripts/migrate_drop_search_rating.py             # ... then drop search_bike_rating_cache.rating (idempotent)
+python scripts/migrate_short_description.py --dry-run    # once per existing database (TODO-041) ...
+python scripts/migrate_short_description.py              # ... then add bike_detail.short_description (idempotent)
+python scripts/purge_details_cache.py --dry-run          # once per database (TODO-041): count the dead '/v1/bike/details' generic-cache rows ... (then without --dry-run; production only on an explicit go)
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -55,6 +59,8 @@ uvicorn app.main:app --reload --port 8000
 > existing table. Until it has run, `POST /v1/bike/photos` answers `{"photos": []}` (ERROR in the log) and the searcher
 > refuses to start. On production Cloud SQL run it **before** deploying the new backend and searcher. Details:
 > `backend/app/DB_MIGRATION.md`.
+>
+> **Run `migrate_short_description.py` once on every existing database** (TODO-041; `--dry-run` first, idempotent, `--url` / `--db`). `POST /v1/bike/details` is now a DB read and the searcher stores a two-sentence Polish `short_description` in the new column `bike_detail.short_description`; `create_all()` never alters a table. The searcher refuses to start without the column. On production Cloud SQL: backup, migrate, then deploy backend + searcher together, then the frontend (the old backend keeps working on the migrated database — the column has a server default). `purge_details_cache.py` deletes the dead generic-cache rows of `/v1/bike/details` (local only; production on an explicit go). Details: `backend/app/DB_MIGRATION.md`.
 >
 > **Also run `copy_review_cache_to_table.py` once per database** (TODO-037; `--dry-run` first, idempotent): bike reviews are no longer
 > a JSON blob in the generic cache but rows in `bike_review` / `bike_review_source` (created by the backend's `init_db()`), and the
@@ -101,12 +107,13 @@ curl -X POST http://localhost:8100/v1/search/olx -H "X-Searcher-Key: dev-local-s
 curl -X POST http://localhost:8100/v1/search/decathlon -H "X-Searcher-Key: dev-local-searcher-key" -H "Content-Type: application/json" -d "{\"company\":\"Rockrider\",\"model\":\"ST 100\"}"
 curl -X POST http://localhost:8100/v1/search/allegro -H "X-Searcher-Key: dev-local-searcher-key" -H "Content-Type: application/json" -d "{\"company\":\"Trek\",\"model\":\"Marlin 5\"}"
 curl -X POST http://localhost:8100/v1/search/review -H "X-Searcher-Key: dev-local-searcher-key" -H "Content-Type: application/json" -d "{\"company\":\"Canyon\",\"model\":\"Grizl CF 7 ESC\"}"
+curl -X POST http://localhost:8100/v1/search/details -H "X-Searcher-Key: dev-local-searcher-key" -H "Content-Type: application/json" -d "{\"company\":\"Canyon\",\"model\":\"Grizl CF 7 ESC\"}"
 curl -X POST http://localhost:8100/v1/search/photos -H "X-Searcher-Key: dev-local-searcher-key" -H "Content-Type: application/json" -d "{\"company\":\"Trek\",\"model\":\"Marlin 5\"}"
 ```
 
 In docker compose one searcher container gets all 10 slots (browsers stay capped at 2 per process, so RAM is the limit — lower `SEARCHER_MAX_CONCURRENT` in `searcher/.env` if needed).
-The five routes share `SEARCHER_MAX_CONCURRENT` busy slots (default 10, was 2 — the New card fires Decathlon and Allegro
-together and a details page can add OLX and photos); an eleventh concurrent call answers 503 `searcher busy` while the
+The six routes share `SEARCHER_MAX_CONCURRENT` busy slots (default 10, was 2 — the New card fires Decathlon and Allegro
+together and a details page can add OLX, photos, details and a review); an eleventh concurrent call answers 503 `searcher busy` while the
 others run, nothing queues. When the Claude subscription limit is used up, every search route answers **400**
 `{"detail": "<the CLI's notice, e.g. You've hit your session limit · resets …>"}` and the backend's `/v1/bike/*/search`
 relays it as the same 400 — the shape of the Anthropic credit-balance 400 (TODO-038). Browser launches are capped separately (`BROWSER_MAX_CONCURRENCY`, default 2 per process).
@@ -186,7 +193,7 @@ Who may call the services is a separate, one-time IAM decision made after the fi
 every redeploy and a brand-new service starts closed.
 
 Sizing (cost cap on the Free Trial): backend 2 vCPU / 2 GiB (Chromium), frontend 1 vCPU / 256 MiB, both `min-instances 0`,
-`max-instances 2`, request timeout 600 s (`/v1/bike/details` takes minutes). The backend caps simultaneous browser launches
+`max-instances 2`, request timeout 600 s (the on-demand searches, e.g. `/v1/bike/details/search`, take minutes). The backend caps simultaneous browser launches
 at `BROWSER_MAX_CONCURRENCY=2` (each ≈ 0.5–0.9 GiB; only the equipment photo scraper remains in the backend — the
 OLX and bike photo scrapers live in the searcher, and Allegro / Decathlon offers carry no photos), so a burst of uncached details requests queues for a browser
 instead of exceeding the 2 GiB and getting the instance killed; raise it only together with `--memory`.
@@ -210,12 +217,8 @@ thing there is a one-off **copy** of the queue and the parsed bikes, made with `
    `company`, `model`, `bike_type`) and a known listing never changes bike.
 3. **Process** — `process_queue.py` claims a batch, fetches each product page, parses it (JSON-LD, the "Specyfikacja"
    table, the variant selector, the photo gallery) and stores `bike` + `bike_detail` + components through the backend's
-   `repository.save_bike_details`, so the bike shows up in DB-first search without an Anthropic call. Three more
-   things are handled by the shared module `bike_store.py`, each because a different backend reader needs it:
-   - **Details cache** — the frontend's details view calls `POST /v1/bike/details`, which reads only the generic cache and
-     never `bike_detail`, so after a verified save the processor also writes the generic-cache entry `/v1/bike/details`
-     `{company, model}` (the bike's stored casing; an existing entry — e.g. AI-made — is kept, first write wins; a cache
-     failure only logs a WARNING and does not fail the row).
+   `repository.save_bike_details` (with `short_description` `""`), so the bike shows up in DB-first search and in `POST /v1/bike/details` (a pure DB read since TODO-041 — no generic-cache write is needed any more) without an Anthropic call. Two more
+   things are handled by the shared module `bike_store.py`:
    - **Photos** — `BikeDetailsResponse` has no photos since PR #115. The parsed shop photos (up to 8, http/https) are stored
      per bike through the backend's `photos_repository.save_bike_photos` (table `bike_detail_photos`, keyed by
      `bike_id`), **only when the bike has none**; a failure is a WARNING and the row stays `done`. The details view reads
@@ -240,10 +243,9 @@ cd webscraper\centrumrowerowe
 | | `--allow-remote` | off | permit a non-local database (see **Database**) |
 | `process_queue.py` | `--limit N` | 20 | bikes to claim in this run (≥ 1) |
 | | `--delay S` | 1.0 | seconds between page fetches (≥ 0) |
-| | `--source NAME` | all | only bikes that have a listing from this shop, e.g. `centrumrowerowe.pl` (also under `--retry-failed`, `--sync-cache`, `--dry-run`) |
+| | `--source NAME` | all | only bikes that have a listing from this shop, e.g. `centrumrowerowe.pl` (also under `--retry-failed`, `--dry-run`) |
 | | `--retry-failed` | off | put every `failed` row back to `pending` first, exhausted ones too (attempts reset to 0) |
-| | `--dry-run` | off | fetch + parse + print the bikes a real run would claim (each listing tried, stopping at the first page that parses); claims and writes nothing (prints the target instead of refusing a remote one). With `--sync-cache` it counts what would be written |
-| | `--sync-cache` | off | no fetching, no claiming: for every bike of a `done` row (`--source` respected) copy its stored details into the generic `/v1/bike/details` cache unless an entry exists; prints `cache sync: written=… already present=… missing details=… failed=…` (missing = the bike has no details row). Use it for rows processed before the cache write existed; a second run writes 0 |
+| | `--dry-run` | off | fetch + parse + print the bikes a real run would claim (each listing tried, stopping at the first page that parses); claims and writes nothing (prints the target instead of refusing a remote one) |
 | | `--allow-remote` | off | permit a non-local database (see **Database**) |
 
 The scraper prints `listing rows / products seen / skipped (bad url)` and then `target database`, `products seen /
@@ -302,8 +304,7 @@ as remote — unless `--allow-remote` is passed. Never point them at the product
 page; done once on 2026-09-30 at the user's explicit request). Two phases: (1) the source — the `DATABASE_URL` from
 `backend/.env` unless `--source-url` — is read completely into memory (queue rows + details and photos of each
 `done`/`skipped` row's bike) and closed; (2) the target is written: each bike's details through the same verified save as
-the processor (`bike_store.store_details`), its photos (only when the target bike has none), the `/v1/bike/details` cache
-entry, then every `bike_discovery` row matched by `(company_norm, model_norm)` and its listings by `(source,
+the processor (`bike_store.store_details`), its photos (only when the target bike has none), then every `bike_discovery` row matched by `(company_norm, model_norm)` and its listings by `(source,
 source_product_id)`. A listing already in the target stays on its bike there.
 
 - **Never downgrade**: details already in the target are kept and only linked; a queue row that is already `done` /
@@ -380,10 +381,9 @@ Manual test plan and results (13 of 13 cases pass in round 3, after the merge of
 
 | Command | What it does |
 |---|---|
-| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/bike/popular`, `/v1/bike/used/olx`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`, `/v1/bike/allegro`, `/v1/bike/allegro/search`, `/v1/bike/photos`, `/v1/bike/photos/search`) |
+| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/bike/popular`, `/v1/bike/used/olx`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`, `/v1/bike/allegro`, `/v1/bike/allegro/search`, `/v1/bike/photos`, `/v1/bike/photos/search`, `/v1/bike/details`, `/v1/bike/details/search`) |
 | `cd backend && python scripts/seed_popular_bikes.py` | Fill `bike_popular` — the home page's "Najpopularniejsze rowery" served by `GET /v1/bike/popular` (TODO-034) — with 3 bikes that have details, photos and a stored review (`bike_review`) with a real rating; `--dry-run`, `--count N`, repeatable `--bike "Brand\|Model"`; replaces the table contents |
-| `cd searcher && python scripts/test_searcher.py` | Smoke-test the searcher (`/health`, 401/422 on all five search routes and a stored-photos answer from the DB — free, no CLI run; the single paid live run lives in `backend/scripts/test_search.py` `case_decathlon_search`) |
-| `cd backend && python scripts/test_details.py` | Smoke-test `POST /v1/bike/details` |
+| `cd searcher && python scripts/test_searcher.py` | Smoke-test the searcher (`/health`, 401/422 on all six search routes and a stored-photos answer from the DB — free, no CLI run; the single paid live run lives in `backend/scripts/test_search.py` `case_decathlon_search`) |
 | `cd backend && python scripts/copy_review_cache_to_table.py` | One-off (TODO-037): copy the old generic-cache bike reviews into `bike_review` / `bike_review_source`; `--dry-run`, `--force`, `--db` / `--url`; idempotent |
 | `cd backend && python scripts/test_equipment.py` | Smoke-test `POST /v1/equipment/details` + `/v1/equipment/review` |
 | `cd backend && pytest` | Unit tests (no API key): stored reviews + cache copy, browser-launch cap, searcher client photo and review routes (the review aggregation tests live in `searcher/`) |
@@ -424,8 +424,6 @@ biker/
 │   │   ├── searcher_client.py         # httpx proxy to the searcher (search_olx / search_decathlon / search_allegro / search_photos / search_review), single-flight + shared in-flight cap (10)
 │   │   ├── decathlon_brands.py        # Decathlon house-brand allowlist for /v1/bike/decathlon/search (is_decathlon_brand, not_sold_info; TODO_ISSUE_010)
 │   │   ├── bike_finder.py             # Single Claude call → all matching bikes, min 1 (DB-miss fallback)
-│   │   ├── bike_details_finder.py     # Fetch full component specs via web search
-│   │   ├── bike_description_finder.py # Generate Polish plain-text overview via web search
 │   │   ├── reviews_repository.py      # Stored bike review (bike_review + bike_review_source) — DB read for /v1/bike/review
 │   │   ├── photos_repository.py       # Stored bike photos: get_bike_photos (POST /v1/bike/photos) — bike_detail_photos keyed on bike_id
 │   │   ├── equipment_categories.py    # 4 equipment category registry + inference
@@ -435,7 +433,6 @@ biker/
 │   │   ├── equipment_review_finder.py      # Equipment review (review/forum links only)
 │   │   └── prompts/
 │   │       ├── bike_search.md         # Single-call bike-finding prompt
-│   │       ├── bike_details.md        # Component extraction prompt
 │   │       ├── bike_offer.md          # Multi-marketplace offer prompt (unused)
 │   │       ├── bike_offer_ceneo.md    # Ceneo offer search prompt (the only offer finder still on the API key)
 │   │       ├── equipment_details_*.md # Per-category equipment spec prompts (helmets/lights/locks/apparel)
@@ -446,7 +443,6 @@ biker/
 │       ├── migrate_drop_search_rating.py  # One-off, idempotent: drop search_bike_rating_cache.rating (the old match score, TODO-040); --dry-run, --db, --url
 │       ├── seed_popular_bikes.py      # Fill bike_popular (home page "Najpopularniejsze rowery") with 3 bikes that have details + photos + a stored review; --dry-run, --count, --bike "Brand|Model"
 │       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing, /v1/bike/popular, /v1/bike/review/cached, /v1/bike/used/olx, /v1/bike/used/search, /v1/bike/decathlon, /v1/bike/decathlon/search, /v1/bike/allegro, /v1/bike/allegro/search)
-│       ├── test_details.py            # Smoke test for /v1/bike/details
 │       ├── copy_review_cache_to_table.py  # One-off: generic-cache reviews -> bike_review tables (TODO-037)
 │       ├── test_equipment.py          # Smoke test for /v1/equipment/details + /review
 │       └── test_equipment_review.py   # Focused regression for equipment-review JSON extraction
@@ -467,16 +463,17 @@ biker/
             └── BikeDetailsShared.tsx  # Shared building blocks for both detail views
 ├── searcher/                          # On-demand OLX + Decathlon + Allegro + photos + review searcher (TODO-031 / 032 / 033 / 035 / 036) — FastAPI on :8100, Claude Code CLI + Playwright (OLX listing photos, bike photos)
 │   ├── app/
-│   │   ├── main.py                    # POST /v1/search/olx + /decathlon + /allegro + /photos + /review (X-Searcher-Key, SEARCHER_MAX_CONCURRENT shared slots, default 10) + GET /health
+│   │   ├── main.py                    # POST /v1/search/olx + /decathlon + /allegro + /photos + /review + /details (X-Searcher-Key, SEARCHER_MAX_CONCURRENT shared slots, default 10) + GET /health
 │   │   ├── claude_cli.py              # subprocess wrapper around `claude -p --json-schema …`
 │   │   ├── olx_finder.py              # the former backend bike_used_finder (CLI call + photo scrape)
 │   │   ├── decathlon_finder.py        # the former backend bike_offer_decathlon_finder (CLI call only, no photos)
 │   │   ├── allegro_finder.py          # the former backend bike_offer_finder (CLI call only, no photos — allegro.pl 403s every automated fetch; ≤ 3 offers)
 │   │   ├── olx_image_fetcher.py       # Playwright: up to 4 OLX CDN photos per listing
+│   │   ├── details_finder.py          # TODO-041: bike details in one CLI run (description + short_description + 8-category component tree, no Playwright) → bike_detail + bike_detail_component
 │   │   ├── photos_finder.py           # the former backend bike_photos_finder (CLI finds the manufacturer page, Playwright takes ≤ 8 photos)
 │   │   ├── repository.py / models.py  # save_offers: writes bike_offer + bike_offer_photos (replace per bike + source); save_photos: bike_detail_photos, insert-only
 │   │   └── prompts/                   # bike_offer_olx.md + bike_offer_decathlon.md + bike_offer_allegro.md + bike_photos.md — the search prompts (moved from the backend)
-│   ├── scripts/test_searcher.py       # Smoke test (health, auth + validation on all five routes, stored photos — no paid runs)
+│   ├── scripts/test_searcher.py       # Smoke test (health, auth + validation on all six routes, stored photos — no paid runs)
 │   └── Dockerfile                     # Python 3.14 + Node 24 + claude CLI + Chromium for the OLX and bike photos (Cloud Run image)
 └── webscraper/centrumrowerowe/        # Local bike discovery (TODO-036), no AI: scrape_rowery.py -> bike_discovery queue -> process_queue.py -> bike + bike_detail
     ├── db.py                          # backend engine/.env + BikeDiscovery model + local-database guard (--allow-remote)

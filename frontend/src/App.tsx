@@ -367,6 +367,18 @@ export default function App() {
     setReviewState('loaded')
   }
 
+  // The Opis / Komponenty "Poproś o dane" button (TODO-041): one searcher run fills both
+  // sections. POST /v1/bike/details answers an empty response (no description, no
+  // components) when nothing is stored; that stays the "no data" state, so the button
+  // then reads "Nie znaleziono danych".
+  const searchDetails = async (bike: Bike) => {
+    const data = await postOnDemandSearch<BikeDetailsResponse>('/v1/bike/details/search', bike)
+    if (!data) return
+    setBikeCategories(data.components)
+    setBikeDescription(data.description ?? null)
+    setDetailsState('loaded')
+  }
+
   const fetchEquipmentDetails = async (company: string, model: string) => {
     setEquipState('loading')
     setEquipError(null)
@@ -714,6 +726,7 @@ export default function App() {
             onSearchNew={() => searchNew(selectedBike)}
             onSearchPhotos={() => searchPhotos(selectedBike)}
             onSearchReview={() => searchReview(selectedBike)}
+            onSearchDetails={() => searchDetails(selectedBike)}
           />
         )}
 

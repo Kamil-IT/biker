@@ -47,6 +47,7 @@ export interface BikeDetailsResponse {
   company: string
   model: string
   description: BikeDescription
+  short_description: string
   components: BikeCategory[]
 }
 

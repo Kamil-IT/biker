@@ -139,6 +139,9 @@ class BikeDetails(Base):
     id = Column(Integer, primary_key=True)
     bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
     description = Column(Text, nullable=False)  # JSON serialized BikeDescription
+    # TODO-041: two-sentence Polish summary written by the searcher; "" = none.
+    # scripts/migrate_short_description.py adds it to an existing database.
+    short_description = Column(Text, nullable=False, default="", server_default="")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

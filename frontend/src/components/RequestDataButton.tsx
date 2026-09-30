@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { MissingDataRequest, MissingType } from '../types'
 
 type RequestStatus = 'idle' | 'sending' | 'searching' | 'requested' | 'empty'
@@ -21,6 +21,10 @@ interface RequestDataButtonProps {
   // Shown when `onRequested` resolved with nothing found — offers by default,
   // "Nie znaleziono zdjęć" in the photo gallery, "Nie znaleziono recenzji" in the review.
   emptyLabel?: string
+  // A search another button started (the Opis and Specyfikacja buttons share one run): while
+  // it runs this button shows `pendingLabel` and cannot be clicked; it then ends like its own
+  // search would (empty when it resolved, clickable again when it threw).
+  watch?: Promise<void> | null
 }
 
 // Stands in for a bike-details section that has no data yet (TODO-027). The click
@@ -39,8 +43,21 @@ export default function RequestDataButton({
   onRequested,
   pendingLabel = 'Szukam…',
   emptyLabel = 'Nie znaleziono ofert',
+  watch = null,
 }: RequestDataButtonProps) {
   const [status, setStatus] = useState<RequestStatus>('idle')
+
+  useEffect(() => {
+    if (!watch || status !== 'idle') return
+    let active = true
+    setStatus('searching')
+    watch.then(
+      () => { if (active) setStatus('empty') },
+      () => { if (active) setStatus('idle') },
+    )
+    return () => { active = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watch])
 
   const request = async () => {
     setStatus('sending')
