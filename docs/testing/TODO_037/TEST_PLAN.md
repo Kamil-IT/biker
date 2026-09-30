@@ -1,6 +1,6 @@
 # TODO-037 — Test plan: bike expert review through the searcher
 
-Test basis: `backlog/TODO_037_REVIEW_SEARCHER.md` (decisions 1–11, contract, acceptance criteria AC1–AC10).
+Test basis: `backlog/done/DONE_037_REVIEW_SEARCHER.md` (decisions 1–11, contract, acceptance criteria AC1–AC10).
 Branch `feature/036-review-searcher` (uncommitted diff vs `origin/main`, based on TODO-035).
 Two executors: **qa-fake** (this plan's default — isolated stack with a fake searcher) and **qa-real**
 (real searcher, one paid `claude -p` run, migration script on Postgres). Cases marked `qa-real` are executed by that agent.
