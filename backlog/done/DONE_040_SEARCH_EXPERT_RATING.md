@@ -2,7 +2,7 @@
 
 **Branch:** `feature/040-search-expert-rating`
 **Worktree:** `C:\Users\kamil_wolny\Projects\biker-wt\feature-039-search-expert-rating` (backend 8001, frontend 5174)
-**Status:** TODO
+**Status:** DONE — merged in PR #126 (2026-09-30)
 
 ## Potwierdzona intencja (wywiad 2026-09-30)
 
