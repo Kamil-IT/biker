@@ -16,8 +16,10 @@ Before the first search the home page shows **Najpopularniejsze rowery** — the
 
 ## Running the project
 
-You need **Docker** for the database and **two terminals** — backend and frontend run separately (a third one for the
-optional OLX / Decathlon / Allegro / photos / review searcher, see Terminal 3).
+You need **Docker** for the database and **three terminals** — backend, frontend and the searcher run separately. The
+searcher (Terminal 3) is part of the normal local stack: without it the app still works, but every **Poproś o dane**
+search (review, photos, OLX, Decathlon, Allegro) answers 503. The `app-runner` agent starts all four (database, backend,
+searcher, frontend) for you.
 
 ### Step 0 — Database (PostgreSQL in Docker)
 
@@ -76,7 +78,7 @@ Open **http://localhost:5173** in your browser.
 
 > The frontend proxies `/v1/*` to the backend automatically — no CORS config needed.
 
-### Terminal 3 — OLX / Decathlon / Allegro / photos / review searcher (optional, TODO-031 / TODO-032 / TODO-033 / TODO-035 / TODO-037)
+### Terminal 3 — OLX / Decathlon / Allegro / photos / review searcher (TODO-031 / TODO-032 / TODO-033 / TODO-035 / TODO-037)
 
 The used-bike search on OLX, the new-bike search on decathlon.pl, the Allegro offer search and the bike photo search run in their own service so
 they only spend tokens when a user asks for them — and they spend them from the **Claude Code subscription**
@@ -85,8 +87,11 @@ they only spend tokens when a user asks for them — and they spend them from th
 ```bash
 cd searcher
 copy .env.example .env          # DATABASE_URL (same Postgres as the backend) + SEARCHER_API_KEY
-..\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --port 8100
+..\backend\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8100
 ```
+
+Check it is up: `curl http://127.0.0.1:8100/health` → `{"status":"ok",...}` (the log prints `searcher ready`). In a git worktree
+use the worktree's port (8101, 8102, …) and set the same port in that worktree's `backend/.env` `SEARCHER_URL`.
 
 `backend/.env` needs the matching `SEARCHER_URL=http://localhost:8100` and `SEARCHER_API_KEY`. Without the searcher the
 app still works — the Used and New cards' and the photo gallery's **Poproś o dane** buttons just get a 503 and stay clickable. Try it by hand:

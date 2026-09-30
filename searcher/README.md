@@ -90,6 +90,7 @@ Startup logs the database URL (password hidden) and the CLI version; a missing `
 ```
 
 The backend picks it up through `SEARCHER_URL=http://localhost:8100` + `SEARCHER_API_KEY` in `backend/.env`.
+Health check: `curl http://127.0.0.1:8100/health` → `{"status":"ok",...}`. The `app-runner` agent (`.claude/agents/app-runner.md`) starts the searcher together with the database, backend and frontend. In a git worktree use the worktree's own port (8101, 8102, …) and set it in that worktree's `backend/.env` `SEARCHER_URL`.
 
 ## Environment variables
 
