@@ -748,6 +748,7 @@ def case_parse():
     assert data.get("brand") == "Trek" and data.get("year") == 2022 and data.get("is_electric") is False, data
 
 
+# DEPRECATED endpoint, not used by the frontend or searcher; test kept until removal.
 def case_ceneo():
     """/v1/bike/ceneo finds an offer on ceneo.pl — one web_search call."""
     resp = _post(CENEO_URL, {"company": "INDIANA", "model": "Rock Jr 24"}, timeout=180)

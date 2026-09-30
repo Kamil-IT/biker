@@ -712,6 +712,8 @@ Content-Type: application/json
 
 ### `POST /v1/bike/ceneo`
 
+**Deprecated — not used** (no frontend or searcher caller; kept until removal).
+
 Return current buying offers from ceneo.pl for a specific bike model.
 
 ```http

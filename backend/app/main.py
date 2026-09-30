@@ -449,7 +449,8 @@ async def bike_used_search(req: UsedBikeRequest) -> UsedBikeResponse:
     return result
 
 
-@app.post("/v1/bike/ceneo", response_model=BikeOfferResponse)
+# DEPRECATED — not used: no frontend or searcher caller since the UI dropped Ceneo; kept only until removal.
+@app.post("/v1/bike/ceneo", response_model=BikeOfferResponse, deprecated=True)
 async def bike_ceneo(req: BikeOfferRequest) -> BikeOfferResponse:
     logger.info("ceneo request | company=%r model=%r", req.company, req.model)
     _fields = {"company": req.company, "model": req.model}

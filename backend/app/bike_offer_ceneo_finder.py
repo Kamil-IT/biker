@@ -1,3 +1,4 @@
+"""DEPRECATED — not used; only /v1/bike/ceneo (itself deprecated) calls this."""
 import logging
 import time
 from pathlib import Path
