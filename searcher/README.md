@@ -57,7 +57,7 @@ launches no browser.
 | `app/photos_finder.py` | The moved `find_bike_photos` (the backend's former `bike_photos_finder`): CLI (`WebSearch` only) → `{url}` of the official manufacturer product page → URL validated (http/https, public addresses only) → patchright opens it once (`domcontentloaded`, 60 s, + 4 s) with every browser request passing a route guard (`_RouteGuard`: http/https to public hosts only) → ≤ 8 `<img src/data-src>` URLs (`_IMG_SRC` / `_SKIP` regexes unchanged; local / non-global-IP image hosts dropped) |
 | `app/review_finder.py` | The moved `find_bike_review` (TODO-037, the backend's former `bike_review_finder`): prompt → CLI (`WebSearch,WebFetch`, JSON schema `{score, explanation, per_source[], ref[]}`) → `build_review()`: URLs failing `is_safe_review_url()` (http/https + host, ≤ 2048 chars, not on `BANNED_REVIEW_DOMAINS`) dropped before aggregation, `explanation` capped at 4000 chars, then the old post-processing unchanged: weights `pro_numeric` 3 / `pro_qualitative` 2 / `community` 1, non-zero `rating` only with ≥ 1 pro source, `DISAGREEMENT_THRESHOLD` 3.0 anchoring to the pro/numeric (else pro/qualitative) mean + the Polish disagreement sentence, `ref` sorted Tier 1 → 2 → 3, `<cite>` stripped, score clamped 0–10. The SDK finder's balanced-brace scan and no-tool repair pass are gone — `--json-schema` returns a validated object or the run fails (502). No Playwright |
 | `app/config.py` | Env vars (see below), loads `searcher/.env`; `DATABASE_URL` is required — no SQLite fallback |
-| `app/claude_cli.py` | `run_structured(system_prompt, user_message, schema, tools=TOOLS)` — the `claude -p` subprocess wrapper (argv list, `stdin=DEVNULL`, timeout, sanitised errors; `tools` defaults to `WebSearch,WebFetch` for the offer routes, the photo search passes `WebSearch`); `cli_version()` |
+| `app/claude_cli.py` | `run_structured(system_prompt, user_message, schema, tools=TOOLS)` — the `claude -p` subprocess wrapper (argv list, `stdin=DEVNULL`, timeout, sanitised errors — `ClaudeCliLimitError` when the subscription limit is used up (TODO-038, `limit_message`); `tools` defaults to `WebSearch,WebFetch` for the offer routes, the photo search passes `WebSearch`); `cli_version()` |
 | `app/olx_finder.py` | The moved `find_used_bikes`: prompt → CLI → ≤ 5 offers (`is_new=false`, `source=olx.pl`) → photo scrape. Also home of `SearcherError`, the `{info, offers[]}` CLI schema and the `bike_offer` column widths the Decathlon and Allegro finders reuse |
 | `app/decathlon_finder.py` | The moved `find_decathlon_offers` (TODO-032): prompt → CLI → ≤ 3 offers (`url` on `https://www.decathlon.pl/`, `is_new` from the page — default true, `source=decathlon.pl`, `photos=[]`, `city=null`). No Playwright |
 | `app/allegro_finder.py` | The moved `find_allegro_offers` (TODO-033, the backend's former `bike_offer_finder`): prompt → CLI → ≤ 3 offers (`url` must be an `allegro.pl/oferta/…` or `allegro.pl/produkt/…` page — a search/category page is dropped, `is_new` from the result title/snippet, `price` may be `""` when no snippet showed one, `source=allegro.pl`, `photos=[]`, `city=null`). No Playwright — the photo scrape was dropped because allegro.pl answers 403 to Chromium too |
@@ -132,6 +132,15 @@ curl -s -X POST http://localhost:8100/v1/search/olx \
   `offers: []` — and the bike's previously stored rows are **kept** (an OLX hiccup must not wipe paid-for data)
 - `401` missing/wrong `X-Searcher-Key` (also when `SEARCHER_API_KEY` is unset)
 - `422` empty `company`/`model` (after strip) or longer than 255 characters
+- `400` `{"detail": "<the CLI's notice>"}` when the `claude -p` run was refused because the **Claude subscription limit
+  is used up** (TODO-038) — e.g. `"You've hit your session limit · resets 1am (Europe/Warsaw)"`. Rule
+  (`claude_cli.limit_message`): the CLI's JSON result has `is_error: true` **and** either its `result` text carries the
+  CLI's limit wording (`You've hit/reached your … limit`, `usage/session/weekly/daily/5-hour/opus/sonnet limit reached`)
+  — relayed whitespace-collapsed, `sk-ant-…` redacted, ≤ 300 chars — or `api_error_status` is `429` (then the fixed
+  `"Claude subscription usage limit reached"`). `run_structured` raises `ClaudeCliLimitError`, the finder
+  `SearcherLimitError`, and `main._search_failed` maps it to 400 on **every** CLI-backed route. Validation errors are
+  422, so a searcher 400 means only this; the backend relays it as its own 400 (same shape as its Anthropic
+  credit-balance 400)
 - `502` `{"detail": "claude CLI failed: exit 1" | "claude CLI timed out after 300 s" | "claude CLI returned no
   structured output" | …}` — a short summary; the CLI's stderr tail is only in the server log
 - `503` `{"detail": "searcher busy"}` straight away when `SEARCHER_MAX_CONCURRENT` searches are already running —
@@ -181,7 +190,7 @@ curl -s -X POST http://localhost:8100/v1/search/decathlon \
   refurbished item), `photos: []` and `city: null`. At most 3 offers. `offers` are exactly the rows now stored under
   this bike for `source = 'decathlon.pl'` (`saved == len(offers)`); nothing found is a 200 with `offers: []` and the
   bike's previously stored Decathlon rows are **kept**
-- `401` / `422` / `502` / `500` exactly as for `/v1/search/olx`
+- `400` / `401` / `422` / `502` / `500` exactly as for `/v1/search/olx`
 - `503` `{"detail": "searcher busy"}` — the `SEARCHER_MAX_CONCURRENT` slots (default 10) are **shared** with
   `/v1/search/olx`, `/v1/search/allegro` and `/v1/search/photos` whatever the source, so a Decathlon search is refused
   while every slot is taken (nothing queues)
@@ -235,7 +244,7 @@ curl -s -X POST http://localhost:8100/v1/search/allegro \
   3 offers. `offers` are exactly the rows now stored under this bike for `source = 'allegro.pl'`
   (`saved == len(offers)`); nothing found is a 200 with `offers: []` and the bike's previously stored Allegro rows
   are **kept**
-- `401` / `422` / `502` / `500` exactly as for `/v1/search/olx`
+- `400` / `401` / `422` / `502` / `500` exactly as for `/v1/search/olx`
 - `503` `{"detail": "searcher busy"}` — the `SEARCHER_MAX_CONCURRENT` slots (default 10) are **shared** with
   `/v1/search/olx`, `/v1/search/decathlon` and `/v1/search/photos`: a search of any source is refused while every
   slot is taken (nothing queues)
@@ -294,7 +303,7 @@ scrape 17 s → 6 photos, **36 s** end to end; the repeat request answered from 
   returned with `saved: 0` and nothing is written. A search that finds nothing is a 200 with `photos: []`, `saved: 0`
   and writes **nothing** — not even a bike row, so `bike_id` is `null` for a bike the DB does not know. Photos are never
   deleted or replaced
-- `401` / `422` exactly as for `/v1/search/olx`
+- `400` (subscription limit) / `401` / `422` exactly as for `/v1/search/olx`
 - `502` `{"detail": "claude CLI failed: exit 1" | …}` when the product-page CLI run fails (the backend's old finder
   swallowed this into `photos: []`; here it is an error so the UI's button becomes clickable again). No product page
   found, a rejected URL or a failed scrape is **not** an error — a 200 with `photos: []`
@@ -377,7 +386,7 @@ curl -s -X POST http://localhost:8100/v1/search/review   -H "Content-Type: appli
   replaces the bike's stored review and its sources → `saved: 1`, `review` = what was stored. Anything less writes and
   deletes **nothing** (not even a bike row) → `saved: 0`, `review` = what this run found (score 0 / `ref: []` /
   `sources_used: 0` — "no review"; `bike_id` then `null` for a bike the DB does not know)
-- `401` / `422` exactly as for `/v1/search/olx`
+- `400` (subscription limit) / `401` / `422` exactly as for `/v1/search/olx`
 - `502` `{"detail": "claude CLI failed: exit 1" | …}` when the CLI run fails (the backend's old finder swallowed a
   missing JSON into the fallback review; here the CLI either returns the schema-validated object or fails)
 - `503` `{"detail": "searcher busy"}` — the `SEARCHER_MAX_CONCURRENT` slots (default 10) are **shared** with the

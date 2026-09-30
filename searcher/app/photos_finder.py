@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 from . import config
 from .browser_config import BROWSER_SLOTS, playwright_headless
 from .claude_cli import ClaudeCliError, run_structured
-from .olx_finder import URL_MAX_LEN, SearcherError
+from .olx_finder import URL_MAX_LEN, searcher_error
 
 logger = logging.getLogger("searcher.photos")
 
@@ -155,7 +155,7 @@ async def _find_product_url(company: str, model: str) -> str:
         # Blocking subprocess → worker thread, so /health keeps answering meanwhile.
         data = await asyncio.to_thread(run_structured, system_prompt, user_message, URL_SCHEMA, CLI_TOOLS)
     except ClaudeCliError as exc:
-        raise SearcherError(str(exc)) from exc
+        raise searcher_error(exc) from exc
     url = str(data.get("url", "")).strip()
     if len(url) > URL_MAX_LEN:
         logger.warning("photos: product url longer than %d chars — ignored | url=%r", URL_MAX_LEN, url[:200])

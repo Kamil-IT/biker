@@ -28,7 +28,7 @@ from urllib.parse import urlsplit
 
 from . import config
 from .claude_cli import ClaudeCliError, run_structured
-from .olx_finder import URL_MAX_LEN, SearcherError
+from .olx_finder import URL_MAX_LEN, searcher_error
 from .schemas import BikeReview
 
 logger = logging.getLogger("searcher.review")
@@ -331,7 +331,7 @@ async def find_bike_review(company: str, model: str) -> BikeReview:
         # Blocking subprocess → worker thread, so /health keeps answering meanwhile.
         data = await asyncio.to_thread(run_structured, system_prompt, user_message, REVIEW_SCHEMA)
     except ClaudeCliError as exc:
-        raise SearcherError(str(exc)) from exc
+        raise searcher_error(exc) from exc
     elapsed = time.perf_counter() - t
 
     review = build_review(data)

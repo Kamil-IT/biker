@@ -13,6 +13,7 @@ listings in 34 s.
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 
@@ -23,6 +24,17 @@ logger = logging.getLogger("searcher.cli")
 TOOLS = "WebSearch,WebFetch"
 VERSION_TIMEOUT = 30.0  # `claude --version` is quick; anything longer is a broken install
 TAIL_CHARS = 500        # how much of stderr/stdout goes into an ERROR log line
+LIMIT_MESSAGE_MAX_LEN = 300  # the limit notice is relayed to the browser — keep it short
+LIMIT_FALLBACK_MESSAGE = "Claude subscription usage limit reached"
+# The CLI's own wording when the subscription is used up, e.g. "You've hit your
+# session limit · resets 1am (Europe/Warsaw)" / "You've hit your weekly limit"
+# (older builds: "Claude AI usage limit reached|<epoch>", "5-hour limit reached").
+_LIMIT_TEXT = re.compile(
+    r"\byou(?:'|\u2019)?ve (?:hit|reached) your\b[^.\n]{0,40}?\blimit\b"
+    r"|\b(?:usage|session|weekly|daily|5-hour|opus|sonnet) limit reached\b",
+    re.IGNORECASE,
+)
+_SECRET = re.compile(r"sk-ant-[\w-]+")
 
 
 class ClaudeCliError(RuntimeError):
@@ -31,6 +43,34 @@ class ClaudeCliError(RuntimeError):
     str(exc) is a short, sanitised summary ("claude CLI failed: exit 1") that
     is safe to relay to HTTP callers — raw stderr only ever goes to the log.
     """
+
+
+class ClaudeCliLimitError(ClaudeCliError):
+    """The run was refused because the Claude subscription limit is used up (TODO-038).
+
+    str(exc) is the CLI's own notice ("You've hit your session limit · resets
+    1am (Europe/Warsaw)"), whitespace-collapsed and cut to
+    LIMIT_MESSAGE_MAX_LEN — the searcher relays it as a 400, like the
+    backend's Anthropic credit-balance 400.
+    """
+
+
+def limit_message(data: dict | None) -> str | None:
+    """The limit notice when the CLI result says the subscription limit is used up, else None.
+
+    Rule: the result is an error (`is_error` true) AND either its `result`
+    text carries the CLI's limit wording (_LIMIT_TEXT) or `api_error_status`
+    is 429. Any other failure — another API status, a timeout, a missing
+    structured output — is not a limit and stays a plain ClaudeCliError.
+    """
+    if not isinstance(data, dict) or not data.get("is_error"):
+        return None
+    text = " ".join(str(data.get("result") or "").split())
+    if _LIMIT_TEXT.search(text):
+        return _SECRET.sub("[redacted]", text)[:LIMIT_MESSAGE_MAX_LEN]
+    if data.get("api_error_status") == 429:
+        return LIMIT_FALLBACK_MESSAGE
+    return None
 
 
 def _tail(text) -> str:
@@ -102,7 +142,9 @@ def run_structured(system_prompt: str, user_message: str, schema: dict, tools: s
     element — never a shell string. Raises ClaudeCliError with a sanitised
     summary on a missing binary, non-zero exit, timeout, unparseable output
     or a result without `structured_output`; the stderr tail is logged at
-    ERROR in every one of those cases.
+    ERROR in every one of those cases. A run refused because the Claude
+    subscription limit is used up raises ClaudeCliLimitError instead (see
+    limit_message).
     """
     binary = config.claude_binary()
     if not binary:
@@ -143,6 +185,17 @@ def run_structured(system_prompt: str, user_message: str, schema: dict, tools: s
         logger.error("claude CLI could not be started | binary=%s error=%s", binary, exc)
         raise ClaudeCliError("claude CLI could not be started") from exc
     elapsed = time.perf_counter() - t0
+
+    # A used-up subscription ends with exit 1 AND a JSON result (is_error,
+    # api_error_status 429, the "You've hit your … limit" text) — check it
+    # before the generic exit-code / is_error failures below.
+    limit = limit_message(_parse_stdout(proc.stdout))
+    if limit is not None:
+        logger.error(
+            "claude CLI refused: subscription limit | returncode=%d elapsed=%.2fs message=%r stderr_tail=%r",
+            proc.returncode, elapsed, limit, _tail(proc.stderr),
+        )
+        raise ClaudeCliLimitError(limit)
 
     if proc.returncode != 0:
         logger.error(

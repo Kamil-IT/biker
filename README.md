@@ -96,7 +96,9 @@ curl -X POST http://localhost:8100/v1/search/photos -H "X-Searcher-Key: dev-loca
 In docker compose one searcher container gets all 10 slots (browsers stay capped at 2 per process, so RAM is the limit — lower `SEARCHER_MAX_CONCURRENT` in `searcher/.env` if needed).
 The five routes share `SEARCHER_MAX_CONCURRENT` busy slots (default 10, was 2 — the New card fires Decathlon and Allegro
 together and a details page can add OLX and photos); an eleventh concurrent call answers 503 `searcher busy` while the
-others run, nothing queues. Browser launches are capped separately (`BROWSER_MAX_CONCURRENCY`, default 2 per process).
+others run, nothing queues. When the Claude subscription limit is used up, every search route answers **400**
+`{"detail": "<the CLI's notice, e.g. You've hit your session limit · resets …>"}` and the backend's `/v1/bike/*/search`
+relays it as the same 400 — the shape of the Anthropic credit-balance 400 (TODO-038). Browser launches are capped separately (`BROWSER_MAX_CONCURRENCY`, default 2 per process).
 Only OLX and the photo search use Playwright (OLX listing photos, the manufacturer page for bike photos); the Decathlon and
 Allegro searches store no photos. A photos request for a bike that already has photos is answered from the database
 without a CLI run, and stored photos are never replaced. Allegro answers 403 to every

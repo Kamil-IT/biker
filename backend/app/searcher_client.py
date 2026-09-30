@@ -111,6 +111,19 @@ class SearcherBusy(SearcherError):
     """SEARCHER_MAX_INFLIGHT other searches are running, or the searcher's URL answered 503 busy / 429 (503)."""
 
 
+class SearcherLimitReached(SearcherError):
+    """The searcher's CLI run was refused: the Claude subscription limit is used up (TODO-038).
+
+    The searcher answers 400 {"detail": <the CLI's notice>} for this and only
+    this (its validation errors are 422). The route relays it as a 400 with
+    the same detail — the shape the Anthropic credit-balance 400 has.
+    """
+
+    def __init__(self, detail: str):
+        super().__init__(f"searcher limit reached: {detail}")
+        self.detail = detail
+
+
 class SearcherFailed(SearcherError):
     """The searcher answered, but not with a usable 200 (502, detail passed through)."""
 
@@ -194,6 +207,10 @@ async def _post_search(path: str, company: str, model: str, response_model: type
             source, resp.status_code, _error_detail(resp, source), elapsed,
         )
         raise SearcherBusy(f"searcher busy (HTTP {resp.status_code})")
+    if resp.status_code == 400:
+        detail = _error_detail(resp, source)
+        logger.error("searcher %s limit reached | detail=%r elapsed=%.2fs", source, detail, elapsed)
+        raise SearcherLimitReached(detail)
     if resp.status_code != 200:
         detail = _error_detail(resp, source)
         logger.error(
@@ -242,7 +259,7 @@ async def _search(path: str, company: str, model: str, response_model: type[Resp
     """Run (or join) the search for one bike on one source and return its result.
 
     Raises SearcherNotConfigured / SearcherUnavailable / SearcherBusy /
-    SearcherFailed; never returns a partial result. The searcher's extra
+    SearcherLimitReached / SearcherFailed (a joined caller gets the same one); never returns a partial result. The searcher's extra
     `bike_id` / `saved` fields are dropped — the backend's contract is the
     plain {offers, info} (or {photos}, or {review}) model. The underlying task is shielded, so a caller
     that disconnects mid-search does not cancel it for the others (or waste
