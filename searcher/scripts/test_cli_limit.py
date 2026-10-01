@@ -129,8 +129,6 @@ def client(monkeypatch):
     monkeypatch.setattr(config, "SEARCHER_API_KEY", "secret-key")
     monkeypatch.setattr(searcher_main, "_semaphore", asyncio.Semaphore(10))
     monkeypatch.setattr(searcher_main, "_photo_searches", {})
-    monkeypatch.setattr(searcher_main, "get_stored_photos", lambda company, model: (None, []))
-    monkeypatch.setattr(searcher_main, "get_stored_review", lambda company, model: (None, None))
     return TestClient(searcher_main.app)   # no `with`: the lifespan (DB, CLI version) is not run
 
 
@@ -139,11 +137,13 @@ def _fail_with(monkeypatch, exc: Exception):
         raise exc
 
     for name in ("find_used_bikes", "find_decathlon_offers", "find_allegro_offers",
-                 "find_bike_photos", "find_bike_review"):
+                 "find_bike_photos", "find_bike_review", "find_bike_details"):
         monkeypatch.setattr(searcher_main, name, finder)
 
 
-ROUTES = ["/v1/search/olx", "/v1/search/decathlon", "/v1/search/allegro", "/v1/search/photos", "/v1/search/review"]
+# No route reads the DB before its search, so none needs a stubbed repository here.
+ROUTES = ["/v1/search/olx", "/v1/search/decathlon", "/v1/search/allegro", "/v1/search/photos",
+          "/v1/search/review", "/v1/search/details"]
 
 
 @pytest.mark.parametrize("path", ROUTES)

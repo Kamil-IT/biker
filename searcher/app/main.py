@@ -34,15 +34,12 @@ from . import config
 from .allegro_finder import ALLEGRO_SOURCE, find_allegro_offers
 from .claude_cli import cli_version
 from .decathlon_finder import DECATHLON_SOURCE, find_decathlon_offers
-from .details_finder import empty_details, find_bike_details, has_components
+from .details_finder import empty_details, find_bike_details
 from .models import dispose_engine, get_engine, init_db
 from .olx_finder import OLX_SOURCE, SearcherError, SearcherLimitError, find_used_bikes
 from .photos_finder import find_bike_photos
 from .repository import (
     get_stored_details,
-    get_stored_photos,
-    get_stored_review,
-    is_usable_review,
     save_details,
     save_offers,
     save_photos,
@@ -238,16 +235,6 @@ async def _photo_search(company: str, model: str) -> PhotosResponse:
     assert _semaphore is not None
     t_start = time.perf_counter()
     try:
-        # Re-check inside the slot: a search for this bike that finished between the
-        # route's read and here (another process / instance) already paid for its photos.
-        try:
-            bike_id, stored = await asyncio.to_thread(get_stored_photos, company, model)
-        except Exception as exc:  # noqa: BLE001 — a read failure must not start a paid run
-            logger.error("photos read failed | company=%r model=%r | %s", company, model, exc)
-            raise HTTPException(status_code=500, detail="database read failed") from exc
-        if stored:
-            logger.info("photos stored meanwhile — no search | bike_id=%s count=%d", bike_id, len(stored))
-            return PhotosResponse(photos=stored, bike_id=bike_id, saved=0)
         try:
             photos, product_url = await find_bike_photos(company, model)
         except SearcherError as exc:
@@ -268,27 +255,20 @@ async def _photo_search(company: str, model: str) -> PhotosResponse:
 
 @app.post("/v1/search/photos", response_model=PhotosResponse, dependencies=[Depends(require_api_key)])
 async def search_photos(req: SearchRequest) -> PhotosResponse:
-    """Photos of the bike: the stored ones, or — only when it has none — a new search.
+    """Search the bike's photos and store them when it has none; return its photos as stored.
 
-    A bike with photo rows gets them back straight from bike_detail_photos
-    (display order), with no CLI run and no busy check. Otherwise: the CLI finds
-    the manufacturer product page → Playwright scrapes ≤ 8 photos → stored
-    with display_order 0..n-1 under the bike (created if missing). Photos are
-    never deleted or replaced; a search that finds nothing writes nothing and
-    is a 200 with photos: []. An identical request arriving while that search
-    runs joins it (one paid run). Same 400 / 401 / 422 / 502 / 503 / 500 mapping as
-    the offer routes, and the SAME SEARCHER_MAX_CONCURRENT slots.
+    Always runs a search — like the offer routes, no DB read first (whether a
+    search is worth paying for is the caller's decision). The CLI finds the
+    manufacturer product page → Playwright scrapes ≤ 8 photos → stored with
+    display_order 0..n-1 under the bike (created if missing) — only when it
+    has none (save_photos checks under a row lock). Photos are never deleted
+    or replaced: for a bike that already has photos the stored ones come back
+    with saved 0; a search that finds nothing writes nothing and is a 200 with
+    photos: []. An identical request arriving while that search runs joins it
+    (one paid run). Same 400 / 401 / 422 / 502 / 503 / 500 mapping as the
+    offer routes, and the SAME SEARCHER_MAX_CONCURRENT slots.
     """
     logger.info("photos search request | company=%r model=%r", req.company, req.model)
-    try:
-        bike_id, stored = await asyncio.to_thread(get_stored_photos, req.company, req.model)
-    except Exception as exc:  # noqa: BLE001 — a read failure must not start a paid run
-        logger.error("photos read failed | company=%r model=%r | %s", req.company, req.model, exc)
-        raise HTTPException(status_code=500, detail="database read failed") from exc
-    if stored:
-        logger.info("photos already stored — no search | bike_id=%s count=%d", bike_id, len(stored))
-        return PhotosResponse(photos=stored, bike_id=bike_id, saved=0)
-
     key = (req.company.strip().lower(), req.model.strip().lower())
     task = _photo_searches.get(key)
     if task is not None:
@@ -313,26 +293,13 @@ async def search_photos(req: SearchRequest) -> PhotosResponse:
     return await asyncio.shield(task)
 
 
-async def _usable_stored_review(company: str, model: str) -> ReviewResponse | None:
-    """The bike's stored review as a saved-0 response when it is usable, else None. 500 on a read failure."""
-    try:
-        bike_id, stored = await asyncio.to_thread(get_stored_review, company, model)
-    except Exception as exc:  # noqa: BLE001 — a read failure must not start a paid run
-        logger.error("review read failed | company=%r model=%r | %s", company, model, exc)
-        raise HTTPException(status_code=500, detail="database read failed") from exc
-    if stored is None or not is_usable_review(stored):
-        return None
-    return ReviewResponse(review=stored, bike_id=bike_id, saved=0)
-
-
 @app.post("/v1/search/review", response_model=ReviewResponse, dependencies=[Depends(require_api_key)])
 async def search_review(req: SearchRequest) -> ReviewResponse:
-    """The bike's expert review: the stored one, or — only when it has none — a new search.
+    """Search the bike's expert review, store it when usable, return what this run found.
 
-    A bike with a usable stored review (non-empty `ref`, sources_used >= 1)
-    gets it back from bike_review / bike_review_source with saved 0 — no CLI
-    run and no busy check (like /v1/search/photos), so repeated calls cannot
-    burn subscription runs. Otherwise one CLI search (no Playwright); a usable
+    Always runs a search — like the offer routes, no DB read first (the
+    backend answers a usable stored review itself and calls this route only
+    when there is none). One CLI search (no Playwright); a usable
     result replaces the bike's stored review and its sources (bike row
     created if missing) and comes back with saved 1. Anything less writes and
     deletes nothing (saved 0) and the response carries what this run found
@@ -341,22 +308,12 @@ async def search_review(req: SearchRequest) -> ReviewResponse:
     SEARCHER_MAX_CONCURRENT slots.
     """
     logger.info("review search request | company=%r model=%r", req.company, req.model)
-    stored = await _usable_stored_review(req.company, req.model)
-    if stored is not None:
-        logger.info("review already stored — no search | bike_id=%s", stored.bike_id)
-        return stored
     assert _semaphore is not None  # set in lifespan
     if _semaphore.locked():
         logger.warning("review search refused: busy | company=%r model=%r", req.company, req.model)
         raise HTTPException(status_code=503, detail="searcher busy")
     t_start = time.perf_counter()
     async with _semaphore:
-        # Re-check inside the slot: a search for this bike that finished meanwhile
-        # (another request / instance) already paid for its review.
-        stored = await _usable_stored_review(req.company, req.model)
-        if stored is not None:
-            logger.info("review stored meanwhile — no search | bike_id=%s", stored.bike_id)
-            return stored
         try:
             found = await find_bike_review(req.company, req.model)
         except SearcherError as exc:
@@ -375,25 +332,13 @@ async def search_review(req: SearchRequest) -> ReviewResponse:
     return ReviewResponse(review=found, bike_id=bike_id, saved=int(saved))
 
 
-async def _complete_stored_details(company: str, model: str) -> DetailsResponse | None:
-    """The bike's stored details as a saved-0 response when complete (components AND description text), else None. 500 on a read failure."""
-    try:
-        bike_id, stored = await asyncio.to_thread(get_stored_details, company, model)
-    except Exception as exc:  # noqa: BLE001 - a read failure must not start a paid run
-        logger.error("details read failed | company=%r model=%r | %s", company, model, exc)
-        raise HTTPException(status_code=500, detail="database read failed") from exc
-    if stored is None or not has_components(stored) or not stored.description.text.strip():
-        return None
-    return DetailsResponse(details=stored, bike_id=bike_id, saved=0)
-
-
 @app.post("/v1/search/details", response_model=DetailsResponse, dependencies=[Depends(require_api_key)])
 async def search_details(req: SearchRequest) -> DetailsResponse:
-    """The bike's details (Polish description + short description + 8-category component tree): stored, or a new search.
+    """Search the bike's details (Polish description + short description + 8-category component tree) and store them.
 
-    Complete stored details (components and a description) come back from
-    bike_detail / bike_detail_component with saved 0 - no CLI run and no busy
-    check. Otherwise one CLI search (WebSearch + WebFetch, no Playwright); a
+    Always runs a search - like the offer routes, no DB read first (the
+    backend answers complete stored details itself and calls this route only
+    when they are incomplete). One CLI search (WebSearch + WebFetch, no Playwright); a
     usable result (components or description) is stored - bike row created if
     missing, bike_detail updated in place, components replaced, photos
     untouched - and comes back with saved 1. Anything less writes and deletes
@@ -402,20 +347,12 @@ async def search_details(req: SearchRequest) -> DetailsResponse:
     SAME SEARCHER_MAX_CONCURRENT slots.
     """
     logger.info("details search request | company=%r model=%r", req.company, req.model)
-    stored = await _complete_stored_details(req.company, req.model)
-    if stored is not None:
-        logger.info("details already stored - no search | bike_id=%s", stored.bike_id)
-        return stored
     assert _semaphore is not None  # set in lifespan
     if _semaphore.locked():
         logger.warning("details search refused: busy | company=%r model=%r", req.company, req.model)
         raise HTTPException(status_code=503, detail="searcher busy")
     t_start = time.perf_counter()
     async with _semaphore:
-        stored = await _complete_stored_details(req.company, req.model)
-        if stored is not None:
-            logger.info("details stored meanwhile - no search | bike_id=%s", stored.bike_id)
-            return stored
         try:
             found = await find_bike_details(req.company, req.model)
         except SearcherError as exc:
