@@ -151,11 +151,12 @@ order. Production gets the same rows only when the user decides to run it there.
 
 `backend/Dockerfile` is the image docker compose and Cloud Run both use: Python 3.14 slim, `patchright install --with-deps chromium`,
 non-root user, `uvicorn` on `$PORT` (default 8000). `.env`/`cache.db` are excluded by `.dockerignore` — `ANTHROPIC_API_KEY`
-and `DATABASE_URL` come from the environment; under compose the Cloud SQL password arrives as the mounted pgpass file (`PGPASSFILE`). `PLAYWRIGHT_HEADLESS=true` (read by `app/browser_config.py`) runs the equipment
-photo scraper without a display; unset keeps the visible browser for local debugging (the OLX image scraper moved to
-`searcher/` in TODO-031, the Allegro one was deleted in TODO-033 without a replacement — allegro.pl answers 403 to Chromium,
-so Allegro offers carry no photos — and the backend launches no marketplace browser any more). See the root
-`README.md` § Run with Docker.
+and `DATABASE_URL` come from the environment; under compose the Cloud SQL password arrives as the mounted pgpass file (`PGPASSFILE`). The backend app launches **no browser any more**: the last scraper, the equipment photo finder,
+moved to the searcher in TODO-042 (the OLX image scraper in TODO-031, the bike photo scraper in TODO-035; the Allegro one
+was deleted in TODO-033 — allegro.pl answers 403 to Chromium), and `app/browser_config.py` (`PLAYWRIGHT_HEADLESS`,
+`BROWSER_SLOTS`) went with it. The image still installs Chromium and `PLAYWRIGHT_HEADLESS=true` — now unused by `app/`
+(only the hand-run UI scripts `scripts/shot_offers.py` / `scripts/test_e2e_ui_db.py` use patchright); trimming the
+Dockerfile is a separate change. See the root `README.md` § Run with Docker.
 
 On Cloud Run (`scripts/deploy.ps1`, service `biker-backend`) the same image gets
 `DATABASE_URL=postgresql+psycopg://biker@/biker?host=/cloudsql/biker-engine-prod:europe-central2:biker-pg` — the unix socket
@@ -163,11 +164,8 @@ mounted by `--add-cloudsql-instances`, still no password — plus `PGPASSWORD` a
 references (`db-password`, `anthropic-api-key`). libpq picks `PGPASSWORD` up exactly like the pgpass file, so nothing in
 `app/` changes between compose and Cloud Run. See the root `README.md` § Deploy to GCP.
 
-Browser launches are capped per process by `BROWSER_MAX_CONCURRENCY` (default 2, `app/browser_config.py` `BROWSER_SLOTS`):
-every scraper left in the backend (only the equipment photo finder since TODO-035 — the bike photo scraper moved to the searcher) holds one slot around `sync_playwright()` + `chromium.launch()`.
-One launch costs 0.5–0.9 GiB (node driver + Chromium tree, and Cloud Run's `/tmp` is memory-backed), so two fit in the
-2 GiB instance next to the app; a third request waits for a slot instead of getting the instance OOM-killed. Raise it only
-together with `--memory` in `scripts/deploy.ps1`.
+`BROWSER_MAX_CONCURRENCY` no longer applies to the backend (TODO-042: no scraper left); the searcher caps its own
+browser launches with the same variable.
 
 ## Unit tests
 
@@ -176,11 +174,12 @@ cd backend
 pytest -m "not llm"
 ```
 
-`pytest.ini` scopes default collection to `scripts/test_browser_slots.py`, `scripts/test_searcher_client_photos.py`,
-`scripts/test_searcher_client_review.py`, `scripts/test_reviews_repository.py`, `scripts/test_searcher_client_details.py` and `scripts/test_details_repository.py`, so a bare `pytest` run covers the stored-review read and the cache-copy script (temp SQLite), the details repository helpers, `migrate_short_description` and `purge_details_cache` (temp SQLite),
-the searcher client's photo, review and details routes (mocked httpx: request, single-flight, busy mapping, in-flight cap 10, body validation)
-and the browser-launch cap (a fake Playwright proves no scraper exceeds `BROWSER_MAX_CONCURRENCY`
-launches and always returns its slot). The rest of `scripts/`
+`pytest.ini` scopes default collection to `scripts/test_searcher_client_photos.py`,
+`scripts/test_searcher_client_review.py`, `scripts/test_searcher_client_limit.py`, `scripts/test_reviews_repository.py`, `scripts/test_searcher_client_details.py`, `scripts/test_searcher_client_equipment.py`, `scripts/test_details_repository.py`, `scripts/test_equipment_repository.py` and `scripts/test_migrate_equipment_tables.py`, so a bare `pytest` run covers the stored-review read and the cache-copy script (temp SQLite), the details repository helpers, `migrate_short_description` and `purge_details_cache` (temp SQLite),
+the equipment repository and its migration (temp SQLite), and
+the searcher client's photo, review, details and equipment routes (mocked httpx: request, single-flight, busy mapping, in-flight cap 10, body validation;
+for equipment also the 404 guards and status mapping of `/v1/equipment/*/search`). (`scripts/test_browser_slots.py` was removed in TODO-042
+with `app/browser_config.py`.) The rest of `scripts/`
 stays excluded — those are standalone smoke scripts that hit a live server at import
 time and must not be auto-run. (The category-scoring eval `scripts/test_scoring.py`
 was removed with the category pipeline in TODO-024.)
@@ -883,31 +882,108 @@ Content-Type: application/json
 
 ### `POST /v1/equipment/details`
 
-Return an overview, component-tree spec sheet, and photos for a piece of cycling equipment (helmet, light/electronics, lock/security, or apparel/bags/accessories). The gear counterpart to `/v1/bike/details`. **No shopping/offer links** are ever included.
+Return the details **stored in the database** for a piece of cycling equipment (helmet, light, lock, apparel/bags/accessories, or a bike part — five categories, `parts` is the default for an unmatched name) — a pure read of `equipment` + `equipment_detail` + `equipment_detail_component` through `app/equipment_repository.py` `get_equipment_details` (TODO-042). **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/equipment/details/search`](#post-v1equipmentdetailssearch)). The old in-backend pipeline (three Anthropic calls in one `asyncio.gather` — `equipment_details_finder.py`, `equipment_description_finder.py`, `equipment_photos_finder.py` with Playwright — plus `equipment_categories.py` and their prompts) is gone; its generic-cache rows under `'/v1/equipment/details'` are dead (nothing reads them). The gear counterpart to `/v1/bike/details`; **no shopping/offer links** are ever included.
 
 ```http
 POST http://localhost:8000/v1/equipment/details
 Content-Type: application/json
 
 {
-  "company": "POC",
-  "model": "Octal MIPS",
+  "company": "",
+  "model": "Abus Hyban 2.0",
+  "equipment_id": 7
+}
+```
+
+- Resolved by `equipment_id` when given (an unknown id is a miss), otherwise by the Python-normalised `(company, model)` — **ignoring** `category`, oldest row first. The frontend sends the spec-tree element's `equipment_id` when it has one, else `{company: "", model: <element name>}`.
+- `company` optional (default `""`, ≤ 255), `model` required, non-empty, ≤ 512 (the element-name column width), `category` optional (≤ 32), `equipment_id` optional (1 … 2147483647) — 422 otherwise.
+
+**Response:** `company`, `model`, `category` (the stored row's values), `description` (`{text, segments, citations}` — Polish overview), `components` (same category → subcategory → element → spec tree as bikes), `short_description` (two Polish sentences, `""` when none) and `equipment_id`. **No `photos`** — they come from [`POST /v1/equipment/photos`](#post-v1equipmentphotos).
+
+- Unknown equipment, nothing stored or a DB error (also an ERROR log) → **200** with the empty response `{"company": …, "model": …, "category": …, "description": {"text": "", "segments": [], "citations": []}, "components": [], "short_description": "", "equipment_id": null}`; equipment that has photos but no details row answers the empty details **with** its `equipment_id`. The frontend reads "description text empty **and** no components" as "no data" and shows **Poproś o dane** in the Opis and Komponenty sections.
+
+**Flow:** none — no outbound HTTP calls; one DB read of `equipment` + `equipment_detail` + `equipment_detail_component`.
+
+**Tests:** `scripts/test_search.py` `case_equipment_details` — fixture equipment stored through `equipment_repository.save_equipment_details` → the stored values by id **and** by name (other casing), no `photos` key, no generic-cache row, under 5 s; an unknown id and an unknown name → a fast empty 200. `scripts/test_equipment_repository.py` (pytest) covers the repository.
+
+---
+
+### `POST /v1/equipment/photos`
+
+Return the photos **stored in the database** for a piece of equipment (TODO-042) — a pure read of `equipment_detail_photos` through `equipment_repository.get_equipment_photos`, ordered by `display_order, id`. **No AI call, no generic cache, no TTL.** Same request and lookup as `/v1/equipment/details` (by `equipment_id`, else by name, category ignored).
+
+```http
+POST http://localhost:8000/v1/equipment/photos
+Content-Type: application/json
+
+{
+  "company": "",
+  "model": "Abus Hyban 2.0"
+}
+```
+
+**Response:** `{ "photos": ["https://...jpg", ...], "equipment_id": 7 }` — unknown equipment, nothing stored or a DB error is a **200** `{ "photos": [], "equipment_id": null }` (equipment that exists without photos answers `photos: []` with its id). The frontend then shows **Poproś o dane** in the gallery slot. The app never replaces or deletes a photo.
+
+**Flow:** none — no outbound HTTP calls; one DB read of `equipment` + `equipment_detail_photos`.
+
+**Tests:** `scripts/test_search.py` `case_equipment_photos` — two photos stored through `equipment_repository.save_equipment_photos` and re-ordered so `display_order` differs from insertion order → exactly that order by id and by name, under 5 s; an unknown id and an unknown name → a fast `{photos: [], equipment_id: null}`.
+
+---
+
+### `POST /v1/equipment/details/search`
+
+Run the equipment details search **on demand** through the separate searcher service (`searcher/`, TODO-042) and wait for it. The request names the **bike** and the element of its spec tree that was clicked; the searcher runs the Claude Code CLI once (subscription OAuth token, `WebSearch` + `WebFetch`, the category's `equipment_details_{slug}.md` prompt — category inferred when not given — no browser), stores the result **only when usable** (non-empty components or description): `equipment` row created if missing, `equipment_detail` updated in place, components replaced, and `equipment_id` set on **that bike's** `bike_detail_component` rows with that element name (never globally). An empty result writes nothing. Triggered by the equipment view's **Poproś o dane** button in the Opis / Komponenty sections (one shared run fills both); also usable from `curl`. Never cached.
+
+```http
+POST http://localhost:8000/v1/equipment/details/search
+Content-Type: application/json
+
+{
+  "bike_company": "Canyon",
+  "bike_model": "Grizl CF 7 ESC",
+  "element_name": "Abus Hyban 2.0",
   "category": "helmets"
 }
 ```
 
-- `company` is optional (defaults to `""`), `model` is required, `category` is optional — one of `helmets`, `lights`, `locks`, `apparel`. If `category` is omitted it is **inferred** from the item name (keyword match; falls back to `apparel`).
+**Response:** the same shape as `/v1/equipment/details` — the details now stored, **including `equipment_id`** (the frontend links the spec-tree element with it); the searcher's wrapper `equipment_id` / `saved` are dropped. A search that found nothing usable is a **200** with the empty response.
 
-**Response includes:** `category` (resolved slug), `description` (4–5 sentence cited overview), `components` (same category → subcategory → element → spec tree as bikes), `photos` (up to 8 manufacturer product image URLs). No offer/buy links.
+- `bike_company`, `bike_model`, `element_name` non-empty, ≤ 255; `category` optional, ≤ 32 (422 otherwise).
+- Order of checks, all **before** any searcher call: **404** `"Bike not found"` when the bike is not in `bike` (`offers_repository.bike_exists`), then **404** `"Component not found"` when that bike has no `bike_detail_component` row whose element name matches (Python-normalised; `equipment_repository.bike_component_name`) — anonymous traffic cannot spend subscription runs on arbitrary strings. The searcher receives the element name **as stored on the bike**, not the caller's casing or whitespace, so a caller cannot choose the equipment row's name or the prompt text. Stored equipment data is **not** read first; the UI offers the button only while nothing is stored.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Equipment details searcher is not configured"`), the searcher is unreachable / does not answer within `SEARCHER_TIMEOUT` (`"Equipment details searcher unavailable"`), or no search slot is free (`"Equipment details searcher is busy — try again in a moment"`; the in-flight cap `SEARCHER_MAX_INFLIGHT` and the searcher's slots are shared with **all eight** searcher routes, Cloud Run's 429 maps to the same 503) — nothing queues. Identical concurrent requests for the same bike + element share one search (single-flight key: path, bike company, bike model, element name — normalised; the category is not part of it).
+- **400** `{"detail": "<the CLI's notice>"}` when the Claude subscription limit is used up (TODO-038, the app-wide `searcher_limit_reached` handler).
+- **502** with the searcher's `detail` (≤ 300 chars) when it fails or answers with a malformed body.
 
-**Flow (all three run in parallel via `asyncio.gather`):**
-1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku, one focused search using the resolved category's `equipment_details_{slug}.md` prompt, returns the component tree (web_search currently disabled behind a `TODO` flag, mirroring `/v1/bike/details`)
-2. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool + prompt caching, generates a 4–5 sentence equipment overview
-3. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool finds the official manufacturer product page URL, then Playwright (`PLAYWRIGHT_HEADLESS`; unset = visible browser) scrapes up to 8 product `<img>` URLs from the rendered page
+**Flow:**
+1. DB reads of `bike` (404 when missing) and of that bike's `bike_detail` + `bike_detail_component` element names (404 when the element is missing).
+2. `POST {SEARCHER_URL}/v1/search/equipment/details` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{bike_company, bike_model, element_name, category?}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once and writes the equipment tables + the bike link. The backend itself makes no Anthropic call.
 
-**Parsing:** the shared `app/json_extract.py` `extract_json()` lifts the first parseable fenced block or balanced `{...}` out of surrounding narration; a response with no JSON is logged and skipped — never a 502.
+**Tests:** `scripts/test_search.py` `case_equipment_details_search` — an unknown bike and a known bike with an unknown element are **404** before any searcher call (no paid run); `scripts/test_searcher_client_equipment.py` (pytest) covers the client and both search routes with a mocked transport (request, unwrapping, single-flight, busy 503/429, shared cap, 502, 400, 404 guards, 422).
 
-**Cache:** keyed on `{company, model, category}`; always cached (empty is a valid result).
+---
+
+### `POST /v1/equipment/photos/search`
+
+Run the equipment photo search **on demand** through the searcher service (TODO-042). Same request, validation, 404 guards, single-flight and error mapping as `/v1/equipment/details/search` (503 details `"Equipment photos searcher is not configured"` / `"Equipment photos searcher unavailable"` / `"Equipment photos searcher is busy — try again in a moment"`). The searcher runs the CLI once with `WebSearch` only to find the manufacturer product page, checks it is a public http(s) address, opens it with Playwright once behind the same route guard as the bike photo search and takes up to 8 `<img>` URLs, then inserts them **only for equipment that has none** (never replacing) and links that bike's element rows; a search that finds nothing writes nothing. Triggered by the equipment view's gallery **Poproś o dane** button. Never cached.
+
+```http
+POST http://localhost:8000/v1/equipment/photos/search
+Content-Type: application/json
+
+{
+  "bike_company": "Canyon",
+  "bike_model": "Grizl CF 7 ESC",
+  "element_name": "Abus Hyban 2.0"
+}
+```
+
+**Response:** `{ "photos": [...], "equipment_id": 7 }` — the equipment's photos as now stored, in display order (`saved` dropped); nothing found → **200** `{ "photos": [], "equipment_id": null }`.
+
+**Flow:**
+1. DB reads of `bike` and of that bike's component element names (the two 404 guards).
+2. `POST {SEARCHER_URL}/v1/search/equipment/photos` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{bike_company, bike_model, element_name, category?}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once (`WebSearch` only), opens the manufacturer page with Playwright once and writes `equipment_detail_photos` + the bike link. The backend makes no Anthropic call and launches no browser.
+
+**Tests:** `scripts/test_search.py` `case_equipment_photos_search` — the same two 404s, no paid run; `scripts/test_searcher_client_equipment.py` (pytest).
 
 ---
 

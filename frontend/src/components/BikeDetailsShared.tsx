@@ -286,7 +286,7 @@ export function CategorySection({
   onElementSelect,
 }: {
   category: BikeCategory
-  onElementSelect?: (name: string) => void
+  onElementSelect?: (element: ComponentElement) => void
 }) {
   return (
     <section aria-labelledby={`cat-${category.category}`}>
@@ -314,7 +314,7 @@ function SubcategorySection({
   onElementSelect,
 }: {
   sub: BikeSubcategory
-  onElementSelect?: (name: string) => void
+  onElementSelect?: (element: ComponentElement) => void
 }) {
   return (
     <div className="px-5 py-4 md:px-6 md:py-5">
@@ -335,7 +335,7 @@ function ElementItem({
   onElementSelect,
 }: {
   element: ComponentElement
-  onElementSelect?: (name: string) => void
+  onElementSelect?: (element: ComponentElement) => void
 }) {
   const { name, description, specs } = element
   const linkable = !!onElementSelect && !!name
@@ -344,7 +344,7 @@ function ElementItem({
       {linkable ? (
         <button
           type="button"
-          onClick={() => onElementSelect!(name)}
+          onClick={() => onElementSelect!(element)}
           className="group inline-flex items-baseline gap-1 text-left max-w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/40 focus-visible:rounded"
           aria-label={`Zobacz szczegóły wyposażenia: ${name}`}
         >

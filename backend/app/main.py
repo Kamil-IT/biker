@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -16,16 +15,12 @@ from .schemas import (  # noqa: E402
     BikeOfferRequest, BikeOfferResponse,
     UsedBikeRequest, UsedBikeResponse,
     BikePhotosRequest, BikePhotosResponse,
-    EquipmentDetailsRequest, EquipmentDetailsResponse,
     EquipmentReviewRequest, EquipmentReviewResponse,
     ParseRequest, ParseResponse,
     MissingDataRequest, MissingDataResponse, PopularBikesResponse,
 )
 from .bike_finder import find_bikes  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
-from .equipment_details_finder import find_equipment_details  # noqa: E402
-from .equipment_description_finder import find_equipment_description  # noqa: E402
-from .equipment_photos_finder import find_equipment_photos  # noqa: E402
 from .equipment_review_finder import find_equipment_review  # noqa: E402
 from .bike_parser import parse_free_text  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
@@ -44,10 +39,13 @@ from .offers_repository import (  # noqa: E402
 from .popular_repository import get_popular_bikes  # noqa: E402
 from .photos_repository import get_bike_photos  # noqa: E402
 from .reviews_repository import get_review  # noqa: E402
+# Equipment details / photos (DB reads) and their on-demand searches, TODO-042.
+from .equipment_routes import router as equipment_router  # noqa: E402
 # The OLX used-bike search (TODO-031), the Decathlon search (TODO-032), the
 # Allegro search (TODO-033), the bike photo search and the bike review search
-# (TODO-037) live in the separate searcher service; the backend reads the DB and
-# proxies the on-demand searches to it.
+# (TODO-037), the bike details search (TODO-041) and the equipment details / photo
+# searches (TODO-042, routes in equipment_routes.py) live in the separate searcher
+# service; the backend reads the DB and proxies the on-demand searches to it.
 from .searcher_client import (  # noqa: E402
     search_olx, search_decathlon, search_allegro, search_photos, search_review, search_details,
     SearcherNotConfigured, SearcherUnavailable, SearcherBusy, SearcherFailed, SearcherLimitReached,
@@ -73,6 +71,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Biker API", version="1.0.0", lifespan=lifespan)
+app.include_router(equipment_router)
 
 
 @app.exception_handler(anthropic.BadRequestError)
@@ -505,41 +504,6 @@ async def bike_decathlon_search(req: BikeOfferRequest) -> BikeOfferResponse:
     elapsed = time.perf_counter() - t_start
     logger.info("decathlon search complete | offers=%d elapsed=%.2fs", len(result.offers), elapsed)
     return result
-
-
-@app.post("/v1/equipment/details", response_model=EquipmentDetailsResponse)
-async def equipment_details(req: EquipmentDetailsRequest) -> EquipmentDetailsResponse:
-    logger.info(
-        "equipment details request | company=%r model=%r category=%r",
-        req.company, req.model, req.category,
-    )
-    _fields = {"company": req.company, "model": req.model, "category": req.category or ""}
-    cached = get_cached("/v1/equipment/details", _fields, EquipmentDetailsResponse)
-    if cached is not None:
-        return cached
-
-    t_start = time.perf_counter()
-    (category_components, description, photos) = await asyncio.gather(
-        find_equipment_details(req.company, req.model, req.category),
-        find_equipment_description(req.company, req.model),
-        find_equipment_photos(req.company, req.model),
-    )
-    category_slug, components = category_components
-    elapsed = time.perf_counter() - t_start
-    logger.info(
-        "equipment details complete | category=%r categories=%d photos=%d elapsed=%.2fs",
-        category_slug, len(components), len(photos), elapsed,
-    )
-    response = EquipmentDetailsResponse(
-        company=req.company,
-        model=req.model,
-        category=category_slug,
-        description=description,
-        components=components,
-        photos=photos,
-    )
-    set_cached("/v1/equipment/details", _fields, response)
-    return response
 
 
 @app.post("/v1/equipment/review", response_model=EquipmentReviewResponse)

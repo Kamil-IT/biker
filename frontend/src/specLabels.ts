@@ -21,6 +21,7 @@ const LABELS: Record<string, string> = {
   'lights & electronics': 'Oświetlenie i elektronika',
   'locks & security': 'Zapięcia i zabezpieczenia',
   'apparel, bags & accessories': 'Odzież, torby i akcesoria',
+  'bike parts & components': 'Części rowerowe',
 
   // Subcategories — frame & suspension
   'fork': 'Widelec',
@@ -546,6 +547,13 @@ const LABELS: Record<string, string> = {
   'controls': 'Sterowanie',
 
   // Spec keys — lighting & equipment
+  'key type': 'Rodzaj klucza',
+  'security level': 'Poziom zabezpieczenia',
+  'lumens': 'Lumeny',
+  'runtime': 'Czas pracy',
+  'ventilation': 'Wentylacja',
+  'fit system': 'System dopasowania',
+  'mounting standard': 'Standard mocowania',
   'brightness': 'Jasność',
   'max brightness': 'Maks. jasność',
   'run time': 'Czas pracy',

@@ -6,7 +6,9 @@ type RequestStatus = 'idle' | 'sending' | 'searching' | 'requested' | 'empty'
 interface RequestDataButtonProps {
   company: string
   model: string
-  missingType: MissingType
+  // Section recorded by POST /v1/bike/missing on click. Omit it for a section that has no
+  // counter (equipment, TODO-042): the click then sends nothing and only runs `onRequested`.
+  missingType?: MissingType
   // Section label shown above the line, matching the eyebrow of the section it stands in for.
   title?: string
   // 'card' stands alone in the page flow; 'inline' sits inside an existing card (offer Used / New).
@@ -61,19 +63,21 @@ export default function RequestDataButton({
 
   const request = async () => {
     setStatus('sending')
-    try {
-      const body: MissingDataRequest = { company, model, missing_type: missingType }
-      const res = await fetch('/v1/bike/missing', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      })
-      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
-    } catch {
-      // Let the user try again — unless a search follows, then the counter is secondary.
-      if (!onRequested) {
-        setStatus('idle')
-        return
+    if (missingType) {
+      try {
+        const body: MissingDataRequest = { company, model, missing_type: missingType }
+        const res = await fetch('/v1/bike/missing', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(body),
+        })
+        if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
+      } catch {
+        // Let the user try again — unless a search follows, then the counter is secondary.
+        if (!onRequested) {
+          setStatus('idle')
+          return
+        }
       }
     }
 

@@ -93,6 +93,7 @@ class ComponentElement(BaseModel):
     name: str
     description: str = ""
     specs: list[SpecItem] = []
+    equipment_id: int | None = None  # TODO-042: the equipment row this bike element opens (bike trees only)
 
 
 class BikeSubcategory(BaseModel):
@@ -136,6 +137,55 @@ class DetailsResponse(BaseModel):
     details: BikeDetails        # the details now stored for the bike (or what this run found when nothing was stored)
     bike_id: int | None = None  # the bike row the details belong to (null: unknown bike, nothing stored)
     saved: int = 0              # 1 when this call wrote the details, else 0
+
+
+class EquipmentSearchRequest(BaseModel):
+    """TODO-042: an equipment item opened from a bike's spec tree. `bike_company` / `bike_model`
+    name the bike (context in the prompt + whose bike_detail_component rows get linked),
+    `element_name` is the element as it stands in that tree, `category` an optional slug or
+    display name (inferred from the element name when absent or unknown)."""
+
+    bike_company: str = Field(min_length=1, max_length=255)
+    bike_model: str = Field(min_length=1, max_length=255)
+    element_name: str = Field(min_length=1, max_length=255)
+    category: str | None = Field(default=None, max_length=32)
+
+    @field_validator("bike_company", "bike_model", "element_name", mode="before")
+    @classmethod
+    def strip_whitespace(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def blank_category_is_none(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            return v or None
+        return v
+
+
+class EquipmentDetails(BaseModel):
+    """The backend's EquipmentDetailsResponse shape (TODO-042): no photos, plus short_description and equipment_id."""
+
+    company: str = ""
+    model: str
+    category: str               # the category slug (helmets / lights / locks / apparel)
+    description: BikeDescription = BikeDescription()
+    components: list[BikeCategory] = []
+    short_description: str = ""
+    equipment_id: int | None = None
+
+
+class EquipmentDetailsSearchResponse(BaseModel):
+    details: EquipmentDetails        # what is stored for the item now, or what this run found when nothing was stored
+    equipment_id: int | None = None  # the equipment row (null: nothing usable found and nothing stored)
+    saved: int = 0                   # 1 when this call wrote the details, else 0
+
+
+class EquipmentPhotosSearchResponse(BaseModel):
+    photos: list[str]                # the item's photo URLs in display order — stored ones or the new ones
+    equipment_id: int | None = None  # the equipment row (null: nothing found and nothing stored)
+    saved: int = 0                   # equipment_detail_photos rows written by this call
 
 
 class HealthResponse(BaseModel):

@@ -4,7 +4,8 @@
 
 Reads SEARCHER_URL (default http://localhost:8100) and SEARCHER_API_KEY from the
 environment or searcher/.env. Every case here is free: health, auth (401) and
-validation (422) on all six search routes (olx, decathlon, allegro, photos, review, details)
+validation (422) on all eight search routes (olx, decathlon, allegro, photos, review, details,
+equipment/details, equipment/photos)
 — no `claude -p` run is ever started, so the suite costs nothing and finishes in
 seconds. (TC-11, a photos request for a bike with stored photos answered from the
 DB, is gone: the searcher no longer reads the DB before a search, so it would
@@ -33,6 +34,8 @@ ALLEGRO_URL = f"{BASE_URL}/v1/search/allegro"
 PHOTOS_URL = f"{BASE_URL}/v1/search/photos"
 REVIEW_URL = f"{BASE_URL}/v1/search/review"
 DETAILS_URL = f"{BASE_URL}/v1/search/details"
+EQUIPMENT_DETAILS_URL = f"{BASE_URL}/v1/search/equipment/details"
+EQUIPMENT_PHOTOS_URL = f"{BASE_URL}/v1/search/equipment/photos"
 
 assert API_KEY, "SEARCHER_API_KEY must be set (env or searcher/.env)"
 
@@ -151,6 +154,21 @@ resp = httpx.post(DETAILS_URL, json=bad_body, headers={"X-Searcher-Key": API_KEY
 _show("[TC-15] details: blank model", bad_body, resp)
 assert resp.status_code == 422, f"Expected 422 for a blank model, got {resp.status_code}"
 print("OK -- 422 for a blank model on /v1/search/details")
+
+# ── [TC-16..19] equipment routes (TODO-042): 401 without a key, 422 for a bad body (no CLI run) ──
+eq_body = {"bike_company": "Canyon", "bike_model": "Grizl CF 7 ESC", "element_name": "Abus Hyban 2.0", "category": "helmets"}
+for n, url in ((16, EQUIPMENT_DETAILS_URL), (18, EQUIPMENT_PHOTOS_URL)):
+    name = url.rsplit("/v1/search/", 1)[1]
+    resp = httpx.post(url, json=eq_body, timeout=30)
+    _show(f"[TC-{n}] {name}: no key", eq_body, resp)
+    assert resp.status_code == 401, f"Expected 401 without a key, got {resp.status_code}"
+    print(f"OK -- 401 without X-Searcher-Key on /v1/search/{name}")
+    for bad in ({**eq_body, "element_name": "   "}, {**eq_body, "element_name": "x" * 256},
+                {**eq_body, "category": "c" * 33}, {k: v for k, v in eq_body.items() if k != "bike_model"}):
+        resp = httpx.post(url, json=bad, headers={"X-Searcher-Key": API_KEY}, timeout=30)
+        assert resp.status_code == 422, f"Expected 422 for {bad}, got {resp.status_code}"
+    print(f"OK -- [TC-{n + 1}] 422 for a blank / 256-char element_name, a 33-char category and a missing "
+          f"bike_model on /v1/search/{name}")
 
 print("\nALL OK")
 sys.exit(0)

@@ -343,6 +343,52 @@ python scripts/migrate_short_description.py --url postgresql+psycopg://biker:bik
 - `scripts/purge_details_cache.py` (`--dry-run`, `--db`, `--url`) deletes the dead `endpoint_req_to_body_cache` rows of
   `'/v1/bike/details'` — local only; Cloud SQL on an explicit go.
 
+## Equipment tables (TODO-042)
+
+TODO-042 gives equipment (helmets, lights, locks, apparel) a DB identity, so `POST /v1/equipment/details` and
+`POST /v1/equipment/photos` become pure DB reads and the searcher writes what it finds. Models in
+`app/equipment_models.py` (imported at the bottom of `app/models.py`, so `create_all()` builds them):
+
+| Table | Columns |
+|---|---|
+| `equipment` | `id`, `category` (slug ≤ 32), `company` (≤ 255, may be `""`), `model` (≤ 512 — the bike tree's element name), `company_norm`, `model_norm` (Python `strip().lower()` via `@validates`), `created_at`; `UNIQUE(category, company_norm, model_norm)` = `uq_equipment_identity` |
+| `equipment_detail` | `id`, `equipment_id` (FK → `equipment.id` `ON DELETE CASCADE`, UNIQUE), `description` (JSON `BikeDescription`), `short_description` (`TEXT NOT NULL DEFAULT ''`), `created_at`, `updated_at` |
+| `equipment_detail_component` | the flat shape of `bike_detail_component` (no `equipment_id`), `equipment_detail_id` FK → `equipment_detail.id` `ON DELETE CASCADE` |
+| `equipment_detail_photos` | `id`, `equipment_id` (FK → `equipment.id` `ON DELETE CASCADE`, `NOT NULL`, indexed), `url` (≤ 2048), `display_order` |
+| `bike_detail_component` | **+** `equipment_id` (nullable, FK → `equipment.id` `ON DELETE SET NULL`, index `ix_bike_detail_component_equipment_id`) |
+
+`bike_detail_component.equipment_id` links one bike's element to the equipment row it was searched as — only that bike's
+rows with that element name, never globally. `repository.save_bike_details` deletes and re-inserts a bike's component rows,
+so it snapshots `element_name → equipment_id` (Python-normalised) first and puts the link back on the new rows with the same
+name; an `equipment_id` arriving in the saved data is ignored (it may be another database's id, e.g. `copy_to_db.py`).
+`get_bike_details` returns each element's `equipment_id` (from its first row).
+
+**Run `scripts/migrate_equipment_tables.py` on every pre-existing database BEFORE the new backend or searcher runs on it.**
+`init_db()` creates the four missing tables on startup but never adds the column, so on an unmigrated database every ORM read
+or write of `bike_detail_component` fails (`no such column` / `UndefinedColumn`): `POST /v1/bike/details` answers 500 (the read
+raises), the DB-first search logs a WARNING and falls back to AI, `save_bike_details` rolls back with a WARNING. The searcher refuses to start without the column. The OLD backend
+keeps working on a migrated database (nullable column, new tables ignored), so the window between migrating and deploying is
+safe. Production order: Cloud SQL on-demand backup → migrate Cloud SQL through the proxy → deploy backend + searcher together →
+deploy the frontend — only on the user's explicit go.
+
+```bash
+cd backend
+python scripts/migrate_equipment_tables.py --dry-run          # $DATABASE_URL (backend/.env), else backend/cache.db
+python scripts/migrate_equipment_tables.py
+python scripts/migrate_equipment_tables.py --db path/to/copy.db
+python scripts/migrate_equipment_tables.py --url postgresql+psycopg://biker:biker@localhost:5432/<db>
+```
+
+- One transaction: `create_all(checkfirst=True)` on just the four equipment tables, then — only when missing — SQLite
+  `ALTER TABLE bike_detail_component ADD COLUMN equipment_id INTEGER REFERENCES equipment (id) ON DELETE SET NULL`;
+  PostgreSQL `ADD COLUMN` → `ADD CONSTRAINT bike_detail_component_equipment_id_fkey … ON DELETE SET NULL` under
+  `LOCK TABLE bike_detail_component IN SHARE ROW EXCLUSIVE MODE`; then `CREATE INDEX IF NOT EXISTS ix_bike_detail_component_equipment_id`.
+  The `bike_detail_component` row count is compared before and after and every new `equipment_id` must be NULL; a mismatch rolls back (exit code 1).
+- Idempotent: everything present → `already-migrated`; a missing index (or, on PostgreSQL, FK) is repaired on its own; no
+  `bike_detail_component` table → `absent` (left to `init_db()`). Importable `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict`
+  (`status`, `rows_before`, `rows_after`, `tables_created`, `column_added`, `verified`, `error`).
+- Verified 2026-10-01: on a scratch copy of `cache.db` (31 826 component rows, 2 bikes with equipment) — dry run wrote nothing, the real run created the four tables and the column with its FK and index, kept every row, second run `already-migrated`; on the local PostgreSQL `biker-pg` (32 972 rows) — dry run clean, the real run created everything and kept every row, second run `already-migrated`. Cloud SQL migration pending user's explicit go.
+
 ## Benefits
 
 ✅ **Data Integrity** — Foreign keys, unique constraints, cascading deletes

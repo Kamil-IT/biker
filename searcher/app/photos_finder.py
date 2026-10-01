@@ -147,10 +147,9 @@ def is_safe_image_url(url: str) -> bool:
     return literal is None or _is_public_ip(literal)
 
 
-async def _find_product_url(company: str, model: str) -> str:
+async def _find_product_url(prompt_file, user_message: str) -> str:
     """The manufacturer product page the model found, "" when none. Raises SearcherError when the CLI fails."""
-    system_prompt = PROMPT_FILE.read_text(encoding="utf-8")
-    user_message = f"Find the official product page URL for the {company} {model} bicycle on the manufacturer's website."
+    system_prompt = prompt_file.read_text(encoding="utf-8")
     try:
         # Blocking subprocess → worker thread, so /health keeps answering meanwhile.
         data = await asyncio.to_thread(run_structured, system_prompt, user_message, URL_SCHEMA, CLI_TOOLS)
@@ -253,15 +252,16 @@ def _scrape_images_sync(url: str) -> list[str]:
     return result
 
 
-async def find_bike_photos(company: str, model: str) -> tuple[list[str], str]:
-    """(photo URLs in page order, product page URL). Raises SearcherError when the CLI run fails;
-    no product page / a failed scrape is ([], url) — not an error."""
+async def find_product_photos(prompt_file, user_message: str, label: str) -> tuple[list[str], str]:
+    """(photo URLs in page order, product page URL) for any product: one WebSearch-only CLI run under
+    `prompt_file` for the manufacturer page, then the guarded scrape. Shared by the bike and the
+    equipment photo searches (TODO-042); `label` only names the item in the log. Raises SearcherError
+    when the CLI run fails; no product page / a failed scrape is ([], url) — not an error."""
     t = time.perf_counter()
-    product_url = await _find_product_url(company, model)
-    logger.info("photos: product url | company=%r model=%r url=%r elapsed=%.2fs",
-                company, model, product_url, time.perf_counter() - t)
+    product_url = await _find_product_url(prompt_file, user_message)
+    logger.info("photos: product url | item=%s url=%r elapsed=%.2fs", label, product_url, time.perf_counter() - t)
     if not product_url:
-        logger.info("photos: no product URL found for %r %r", company, model)
+        logger.info("photos: no product URL found for %s", label)
         return [], ""
 
     logger.info("photos: scraping %r", product_url)
@@ -272,3 +272,9 @@ async def find_bike_photos(company: str, model: str) -> tuple[list[str], str]:
         return [], product_url
 
     return photos, product_url
+
+
+async def find_bike_photos(company: str, model: str) -> tuple[list[str], str]:
+    """(photo URLs in page order, product page URL) for a bike — see find_product_photos."""
+    user_message = f"Find the official product page URL for the {company} {model} bicycle on the manufacturer's website."
+    return await find_product_photos(PROMPT_FILE, user_message, f"{company!r} {model!r}")

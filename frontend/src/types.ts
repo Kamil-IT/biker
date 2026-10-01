@@ -14,6 +14,9 @@ export interface ComponentElement {
   name: string
   description: string
   specs: SpecItem[]
+  // TODO-042: id of the stored equipment row this element was linked to by a search;
+  // null / absent until then (the equipment view then reads by name).
+  equipment_id?: number | null
 }
 
 export interface BikeSubcategory {
@@ -91,13 +94,23 @@ export interface UsedBikeResponse {
   info: string
 }
 
+// Returned by POST /v1/equipment/details (DB read) and POST /v1/equipment/details/search
+// (on-demand equipment searcher, TODO-042). Photos come from their own call; empty
+// description text and no components = no data (not an error).
 export interface EquipmentDetailsResponse {
   company: string
   model: string
   category: string
   description: BikeDescription
   components: BikeCategory[]
+  short_description: string
+  equipment_id: number | null
+}
+
+// Returned by POST /v1/equipment/photos (DB read) and POST /v1/equipment/photos/search.
+export interface EquipmentPhotosResponse {
   photos: string[]
+  equipment_id: number | null
 }
 
 export interface EquipmentReviewResponse {
@@ -106,10 +119,30 @@ export interface EquipmentReviewResponse {
   ref: string[]
 }
 
+// Body of the equipment DB reads (details and photos): by `equipment_id` when the bike's
+// element carries one, else by name (`company: ''`, `model` = element name).
 export interface EquipmentDetailsPayload {
   company?: string
   model: string
   category?: string
+  equipment_id?: number
+}
+
+// Body of the on-demand equipment searches: the bike the element was clicked on, the
+// element name and — when already known — the equipment category.
+export interface EquipmentSearchPayload {
+  bike_company: string
+  bike_model: string
+  element_name: string
+  category?: string
+}
+
+// What the equipment view was opened for: a component element of one bike's spec tree.
+export interface EquipmentSelection {
+  name: string
+  equipmentId: number | null
+  bikeCompany: string
+  bikeModel: string
 }
 
 export interface EquipmentReviewPayload {

@@ -135,13 +135,19 @@ def _sources(raw) -> list[DescriptionCitation]:
 
 
 def _components(raw) -> list[BikeCategory]:
-    """The model's tree -> the 8 category shells in fixed order, strings capped to the column widths.
+    """The model's tree -> the 8 category shells in fixed order (see parse_categories)."""
+    return parse_categories(raw, CATEGORIES)
 
-    A category the model repeats is merged; one it invents (not among the 8) is
-    appended after them; an element without a name is dropped (nothing to
-    store); a spec without a key is dropped.
+
+def parse_categories(raw, shells: tuple[str, ...] = ()) -> list[BikeCategory]:
+    """The model's tree -> categories, `shells` first in their order, strings capped to the column widths.
+
+    A category the model repeats is merged; one it invents (not among the
+    shells) is appended after them; an element without a name is dropped
+    (nothing to store); a spec without a key is dropped. Shared with the
+    equipment details search (no shells there).
     """
-    by_name: dict[str, BikeCategory] = {name: BikeCategory(category=name) for name in CATEGORIES}
+    by_name: dict[str, BikeCategory] = {name: BikeCategory(category=name) for name in shells}
     for cat in _list(raw):
         if not isinstance(cat, dict):
             continue
@@ -188,6 +194,16 @@ def empty_details(company: str, model: str) -> BikeDetails:
     return BikeDetails(company=company, model=model)
 
 
+def build_description(raw_text, sources: list[DescriptionCitation]) -> BikeDescription:
+    """Description text (capped) + one segment carrying every source; empty text -> empty description."""
+    text = _text(raw_text, DESCRIPTION_MAX)
+    return BikeDescription(
+        text=text,
+        segments=[TextSegment(text=text, citations=list(sources))] if text else [],
+        citations=sources if text else [],
+    )
+
+
 def build_details(company: str, model: str, data) -> BikeDetails:
     """The structured CLI answer -> BikeDetails (the backend's BikeDetailsResponse shape). Pure."""
     if not isinstance(data, dict):
@@ -198,17 +214,10 @@ def build_details(company: str, model: str, data) -> BikeDetails:
         # another model) is not data.
         logger.warning("model reports the bike was not found | company=%r model=%r", company, model)
         return empty_details(company, model)
-    text = _text(data.get("description"), DESCRIPTION_MAX)
-    sources = _sources(data.get("sources"))
-    description = BikeDescription(
-        text=text,
-        segments=[TextSegment(text=text, citations=list(sources))] if text else [],
-        citations=sources if text else [],
-    )
     return BikeDetails(
         company=company,
         model=model,
-        description=description,
+        description=build_description(data.get("description"), _sources(data.get("sources"))),
         components=_components(data.get("components")),
         short_description=_text(data.get("short_description"), SHORT_DESCRIPTION_MAX),
     )

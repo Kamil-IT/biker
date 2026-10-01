@@ -1,6 +1,6 @@
 # Biker Searcher
 
-The on-demand marketplace, photo and review search (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro, bike photos, TODO-037 expert reviews, TODO-041 bike details). A small FastAPI service that
+The on-demand marketplace, photo and review search (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro, bike photos, TODO-037 expert reviews, TODO-041 bike details, TODO-042 equipment). A small FastAPI service that
 runs **only when asked**: `POST /v1/search/olx` searches olx.pl for a bike, scrapes each listing's photos with Playwright
 and writes the result into the shared bike database (`bike_offer` + `bike_offer_photos`, `source = 'olx.pl'`);
 `POST /v1/search/decathlon` searches decathlon.pl the same way (one CLI run, no Playwright) and writes `bike_offer` rows
@@ -21,7 +21,11 @@ a 2-sentence Polish `short_description` and the 8-category component tree (one C
 Playwright) with structured output (`found` boolean: `false` when the model could not identify the bike, then nothing is
 stored and empty details are returned). Stores a usable result in `bike_detail` + `bike_detail_component` (updated in place, photos untouched); the
 backend's `POST /v1/bike/details` is the DB read and `POST /v1/bike/details/search` proxies here from the Opis / Komponenty
-sections' **Poproś o dane** button. The six searches share `SEARCHER_MAX_CONCURRENT` busy
+sections' **Poproś o dane** button. `POST /v1/search/equipment/details` and `POST /v1/search/equipment/photos` (TODO-042)
+do the same for an equipment item (bike part, helmet, light, lock, apparel/bag/accessory) opened from a bike's spec tree: one CLI run
+for the Polish description + `short_description` + spec tree into `equipment` / `equipment_detail` /
+`equipment_detail_component`, or the photo search (same hardened scrape) into `equipment_detail_photos`; a successful save
+links the element on that bike (`bike_detail_component.equipment_id`). The eight searches share `SEARCHER_MAX_CONCURRENT` busy
 slots (default **10**); one more concurrent search is refused with 503, never queued.
 
 ## Why the Claude Code CLI
@@ -58,19 +62,24 @@ launches no browser.
 
 | File | Responsibility |
 |------|----------------|
-| `app/main.py` | FastAPI app: `GET /health` (open) · `POST /v1/search/olx` · `POST /v1/search/decathlon` · `POST /v1/search/allegro` · `POST /v1/search/photos` · `POST /v1/search/review` · `POST /v1/search/details` (all six `X-Searcher-Key`); one `asyncio.Semaphore(SEARCHER_MAX_CONCURRENT)` (default 10) shared by the six routes around the whole search (`_run_search` is the offers' common body; `locked()` is true only when every slot is taken, so the busy check holds for any slot count); no route reads the DB before its search (neither does the backend's search proxy: the caller decides whether a paid run is needed); the photo route single-flights identical searches (`_photo_searches`); the default thread pool is sized `SEARCHER_MAX_CONCURRENT + 8` so every slot gets a worker thread |
+| `app/main.py` | FastAPI app: `GET /health` (open) · `POST /v1/search/olx` · `POST /v1/search/decathlon` · `POST /v1/search/allegro` · `POST /v1/search/photos` · `POST /v1/search/review` · `POST /v1/search/details` · `POST /v1/search/equipment/details` · `POST /v1/search/equipment/photos` (all eight `X-Searcher-Key`); one `asyncio.Semaphore(SEARCHER_MAX_CONCURRENT)` (default 10) shared by the eight routes around the whole search (`_run_search` is the offers' common body; `locked()` is true only when every slot is taken, so the busy check holds for any slot count); no route reads the DB before its search (neither does the backend's search proxy: the caller decides whether a paid run is needed); the photo route single-flights identical searches (`_photo_searches`); the default thread pool is sized `SEARCHER_MAX_CONCURRENT + 8` so every slot gets a worker thread |
 | `app/photos_finder.py` | The moved `find_bike_photos` (the backend's former `bike_photos_finder`): CLI (`WebSearch` only) → `{url}` of the official manufacturer product page → URL validated (http/https, public addresses only) → patchright opens it once (`domcontentloaded`, 60 s, + 4 s) with every browser request passing a route guard (`_RouteGuard`: http/https to public hosts only) → ≤ 8 `<img src/data-src>` URLs (`_IMG_SRC` / `_SKIP` regexes unchanged; local / non-global-IP image hosts dropped) |
 | `app/review_finder.py` | The moved `find_bike_review` (TODO-037, the backend's former `bike_review_finder`): prompt → CLI (`WebSearch,WebFetch`, JSON schema `{score, explanation, per_source[], ref[]}`) → `build_review()`: URLs failing `is_safe_review_url()` (http/https + host, ≤ 2048 chars, not on `BANNED_REVIEW_DOMAINS`) dropped before aggregation, `explanation` capped at 4000 chars, then the old post-processing unchanged: weights `pro_numeric` 3 / `pro_qualitative` 2 / `community` 1, non-zero `rating` only with ≥ 1 pro source, `DISAGREEMENT_THRESHOLD` 3.0 anchoring to the pro/numeric (else pro/qualitative) mean + the Polish disagreement sentence, `ref` sorted Tier 1 → 2 → 3, `<cite>` stripped, score clamped 0–10. The SDK finder's balanced-brace scan and no-tool repair pass are gone — `--json-schema` returns a validated object or the run fails (502). No Playwright |
 | `app/details_finder.py` | TODO-041 `find_bike_details`: prompt `bike_details.md` → CLI (`WebSearch,WebFetch`, `DETAILS_SCHEMA` = `description`, `short_description`, `sources[{url,title}]`, `components[8 categories → subcategories → elements → specs]`, all required) → pure `build_details()` (`BikeDescription` built from `sources`, the 8 category shells kept, strings capped to the column widths, `MAX_SOURCES` 8); `is_usable_details` / `has_components` / `empty_details`; `ClaudeCliError` → `SearcherError` (a limit error keeps the 400 path). No Playwright |
+| `app/equipment_details_finder.py` · `app/equipment_categories.py` | TODO-042 `find_equipment_details(bike_company, bike_model, element_name, category)`: category = the given slug/name or inferred from the element name (`resolve_category`; the backend's registry `helmets` / `lights` / `locks` / `apparel` plus `parts` = "Bike parts & components" — derailleurs, brakes, wheels, tyres, cockpit, saddle, pedals, suspension — which is the default when no keyword matches; keywords match at a word start and, when several match, the latest one in the name — the head noun — wins, e.g. "Abus T82 Battery Lock" → `locks`; a bare "battery" is a part; `apparel` only on a keyword hit); system prompt = `prompts/equipment_details.md` (Polish description rules, `found`, no shop sources) + `prompts/equipment_details_{slug}.md`; CLI (`WebSearch,WebFetch`, the bike `DETAILS_SCHEMA`) → pure `build_equipment_details()`: company `""`, model = element name, every subcategory under ONE category named after the slug's display name (`[]` when empty), shop / marketplace sources dropped, the bike helpers for description and caps. No Playwright |
+| `app/shop_filter.py` | TODO-042 `is_shop_source(url, item_name)`: the code-side shop / marketplace filter for equipment sources (marketplace labels, `SHOP_HOST_TOKENS`, shop-listing paths skipped on the brand's own host). Not applied to bike details, whose prompt uses shop spec pages on purpose |
+| `app/equipment_photos_finder.py` | TODO-042 `find_equipment_photos`: `photos_finder.find_product_photos` (the bike photo search's CLI step + guarded scrape, unchanged) with `prompts/equipment_photos.md` |
+| `app/equipment_repository.py` | TODO-042 `save_equipment_details` (usable result only: equipment row created if missing, `equipment_detail` updated in place, components replaced for the half produced, one transaction), `save_equipment_photos` (insert-only under `SELECT … FOR UPDATE` on the equipment row), `get_equipment_details` / `get_equipment_photos`, `link_bike_components` (sets `equipment_id` on THIS bike's `bike_detail_component` rows with that element name, Python-normalised; never global; bike missing → stored, not linked, WARNING) |
 | `app/config.py` | Env vars (see below), loads `searcher/.env`; `DATABASE_URL` is required — no SQLite fallback |
 | `app/claude_cli.py` | `run_structured(system_prompt, user_message, schema, tools=TOOLS)` — the `claude -p` subprocess wrapper (argv list, `stdin=DEVNULL`, timeout, sanitised errors — `ClaudeCliLimitError` when the subscription limit is used up (TODO-038, `limit_message`); `tools` defaults to `WebSearch,WebFetch` for the offer routes, the photo search passes `WebSearch`); `cli_version()` |
 | `app/olx_finder.py` | The moved `find_used_bikes`: prompt → CLI → ≤ 5 offers (`is_new=false`, `source=olx.pl`) → photo scrape. Also home of `SearcherError`, the `{info, offers[]}` CLI schema and the `bike_offer` column widths the Decathlon and Allegro finders reuse |
 | `app/decathlon_finder.py` | The moved `find_decathlon_offers` (TODO-032): prompt → CLI → ≤ 3 offers (`url` on `https://www.decathlon.pl/`, `is_new` from the page — default true, `source=decathlon.pl`, `photos=[]`, `city=null`). No Playwright |
 | `app/allegro_finder.py` | The moved `find_allegro_offers` (TODO-033, the backend's former `bike_offer_finder`): prompt → CLI → ≤ 3 offers (`url` must be an `allegro.pl/oferta/…` or `allegro.pl/produkt/…` page — a search/category page is dropped, `is_new` from the result title/snippet, `price` may be `""` when no snippet showed one, `source=allegro.pl`, `photos=[]`, `city=null`). No Playwright — the photo scrape was dropped because allegro.pl answers 403 to Chromium too |
 | `app/olx_image_fetcher.py` · `app/browser_config.py` | Playwright scrape of ≤ 4 `apollo.olxcdn.com` images per listing (copied from the backend); `BROWSER_SLOTS` caps browser launches per process (`BROWSER_MAX_CONCURRENCY`, default 2) for the OLX and photo scrapes alike |
-| `app/models.py` · `app/repository.py` | SQLAlchemy over `bike` / `bike_offer` / `bike_offer_photos` / `bike_detail_photos` / `bike_review` / `bike_review_source` / `bike_detail` / `bike_detail_component` (DDL identical to `backend/app/models.py`; `init_db()` only checks they exist, that `bike_detail_photos` has `bike_id` and — TODO-041 — that `bike_detail` has `short_description`, else it **refuses to start** naming `backend/scripts/migrate_photos_bike_id.py` / `migrate_short_description.py`); `save_details(company, model, details)` (only a usable result: bike row created if missing, `bike_detail` updated in place, components replaced, one transaction) and `get_stored_details` read and write the bike's details; `save_offers(company, model, offers, source)` upserts on `url` within this bike **and** source, takes `is_new` from each offer, never re-parents a listing, deletes the bike's stale rows of that source only when something new was stored; `save_photos` writes the bike's photos — insert-only, only when it has none, under a `SELECT … FOR UPDATE` on the bike row; `save_review` upserts the bike's review — written only when `ref` is non-empty and `sources_used >= 1`, replacing the previous review and its sources (`created_at` kept) |
-| `app/prompts/bike_offer_olx.md` · `app/prompts/bike_offer_decathlon.md` · `app/prompts/bike_offer_allegro.md` · `app/prompts/bike_photos.md` · `app/prompts/bike_review.md` · `app/prompts/bike_details.md` | The system prompts — OLX and Decathlon byte-for-byte the backend's former prompts; the Allegro one is a CLI-tuned rewrite (WebSearch only, allegro.pl answers 403 to every fetch — see "Why the Claude Code CLI"); the photos one is the backend's with two CLI edits (`WebSearch` for `web_search` — the only tool it gets — and a `{"url": …}` JSON object for the bare URL line); the review one is the backend's former `bike_review.md` |
-| `scripts/test_searcher.py` | Smoke test, free: health, 401 ×2 + 422 on `/v1/search/olx` (TC-1–4), 401 + 422 on `/v1/search/decathlon` (TC-5–6), 401 + 422 on `/v1/search/allegro` (TC-7–8), 401 + 422 on `/v1/search/photos` (TC-9–10), 401 + 422 on `/v1/search/review` (TC-12–13), 401 + 422 on `/v1/search/details` (TC-14–15) (TC-11 — stored photos answered from the DB — was removed: the searcher no longer reads the DB before a search, so it would start a paid run). No `claude -p` run — the one paid live search of the test set is `backend/scripts/test_search.py` `case_decathlon_search` |
+| `app/models.py` · `app/repository.py` | SQLAlchemy over `bike` / `bike_offer` / `bike_offer_photos` / `bike_detail_photos` / `bike_review` / `bike_review_source` / `bike_detail` / `bike_detail_component` + (TODO-042) `equipment` / `equipment_detail` / `equipment_detail_component` / `equipment_detail_photos` (DDL identical to `backend/app/models.py`; `init_db()` only checks they exist, that `bike_detail_photos` has `bike_id`, that `bike_detail` has `short_description` (TODO-041) and that `bike_detail_component` has `equipment_id` (TODO-042), else it **refuses to start** naming `backend/scripts/migrate_photos_bike_id.py` / `migrate_short_description.py` / `migrate_equipment_tables.py`); `save_details(company, model, details)` (only a usable result: bike row created if missing, `bike_detail` updated in place, components replaced — each element keeps its `equipment_id` link — one transaction) and `get_stored_details` read and write the bike's details; `save_offers(company, model, offers, source)` upserts on `url` within this bike **and** source, takes `is_new` from each offer, never re-parents a listing, deletes the bike's stale rows of that source only when something new was stored; `save_photos` writes the bike's photos — insert-only, only when it has none, under a `SELECT … FOR UPDATE` on the bike row; `save_review` upserts the bike's review — written only when `ref` is non-empty and `sources_used >= 1`, replacing the previous review and its sources (`created_at` kept) |
+| `app/prompts/bike_offer_olx.md` · `app/prompts/bike_offer_decathlon.md` · `app/prompts/bike_offer_allegro.md` · `app/prompts/bike_photos.md` · `app/prompts/bike_review.md` · `app/prompts/bike_details.md` | The system prompts — OLX and Decathlon byte-for-byte the backend's former prompts; the Allegro one is a CLI-tuned rewrite (WebSearch only, allegro.pl answers 403 to every fetch — see "Why the Claude Code CLI"); the photos one is the backend's with two CLI edits (`WebSearch` for `web_search` — the only tool it gets — and a `{"url": …}` JSON object for the bare URL line); the review one is the backend's former `bike_review.md`; TODO-042 `equipment_details.md` (the shared frame: role, budget, `found`, the backend's `equipment_description.md` rules turned Polish, no shop sources) + `equipment_details_{helmets,lights,locks,apparel}.md` (the backend's category prompts, component lists intact, JSON-only output section replaced by a schema-shaped example) and `equipment_photos.md` (the backend's with the photos prompt's two CLI edits) |
+| `scripts/test_equipment_searcher.py` · `scripts/test_cli_limit.py` | pytest, no CLI / network, throwaway SQLite (`python -m pytest scripts -q --ignore=scripts/test_searcher.py`): the equipment builder, saves, links (only this bike, kept across a bike details re-save), insert-only photos, the `equipment_id` start-up check, both routes with stubbed finders (401 / 422 / 503); the limit 400 / 502 mapping on all eight routes |
+| `scripts/test_searcher.py` | Smoke test, free: health, 401 ×2 + 422 on `/v1/search/olx` (TC-1–4), 401 + 422 on `/v1/search/decathlon` (TC-5–6), 401 + 422 on `/v1/search/allegro` (TC-7–8), 401 + 422 on `/v1/search/photos` (TC-9–10), 401 + 422 on `/v1/search/review` (TC-12–13), 401 + 422 on `/v1/search/details` (TC-14–15), 401 + 422 on `/v1/search/equipment/details` and `/v1/search/equipment/photos` (TC-16–19) (TC-11 — stored photos answered from the DB — was removed: the searcher no longer reads the DB before a search, so it would start a paid run). No `claude -p` run — the one paid live search of the test set is `backend/scripts/test_search.py` `case_decathlon_search` |
 
 ## Run locally
 
@@ -465,7 +474,7 @@ curl -s -X POST http://localhost:8100/v1/search/details   -H "Content-Type: appl
 - `400` (subscription limit) / `401` / `422` exactly as for `/v1/search/olx`
 - `502` `{"detail": "claude CLI failed: exit 1" | …}` when the CLI run fails
 - `503` `{"detail": "searcher busy"}` — the `SEARCHER_MAX_CONCURRENT` slots (default 10) are **shared** with the
-  other five routes (nothing queues)
+  other seven routes (nothing queues)
 - `500` `{"detail": "database write failed"}`
 
 **Flow**: (1) busy check, slot taken (no DB read before the search) →
@@ -481,8 +490,91 @@ missing (a placeholder casing equal to its normalised form is upgraded), the `bi
 (stable id; `description` JSON and `short_description` replaced) or inserted, the `bike_detail_component` rows replaced
 with the flattened tree (one row per spec, an element without specs gets one row with NULL spec columns). Only the half
 this run produced is replaced: a description-only result keeps the stored components, a components-only result keeps the
-stored description. Photos hang off `bike` and are never touched. Probed 2026-09-30 (`claude` 2.1.286, Haiku): KROSS Esker
+stored description. Photos hang off `bike` and are never touched. TODO-042: a replaced row's `equipment_id` link is
+carried to the new row whose Python-normalised element name matches (first link wins), and every element in `details`
+carries its `equipment_id` (`null` when not linked). Probed 2026-09-30 (`claude` 2.1.286, Haiku): KROSS Esker
 Eco 53 s / $0.12, Trek Marlin 5 142 s / $0.18, 8 of 8 categories both times (Lighting is often empty).
+
+### `POST /v1/search/equipment/details`
+
+```http
+POST http://localhost:8100/v1/search/equipment/details
+Content-Type: application/json
+X-Searcher-Key: dev-local-searcher-key
+
+{"bike_company": "Canyon", "bike_model": "Grizl CF 7 ESC", "element_name": "Abus Hyban 2.0", "category": "helmets"}
+```
+
+```json
+{
+  "details": {
+    "company": "", "model": "Abus Hyban 2.0", "category": "helmets",
+    "description": {"text": "Abus Hyban 2.0 to kask miejski…", "segments": [{"text": "Abus Hyban 2.0 to kask miejski…", "citations": [{"url": "https://www.abus.com/…", "title": "Hyban 2.0", "cited_text": ""}]}], "citations": [{"url": "https://www.abus.com/…", "title": "Hyban 2.0", "cited_text": ""}]},
+    "components": [{"category": "Helmets", "subcategories": [{"subcategory": "Construction", "elements": [
+      {"name": "ABS hardshell", "description": "Twarda skorupa z ABS…", "specs": [{"key": "Weight", "value": "450 g (M)"}]}]}]}],
+    "short_description": "Miejski kask z twardą skorupą i tylną lampką LED. Do codziennych dojazdów.",
+    "equipment_id": 7
+  },
+  "equipment_id": 7,
+  "saved": 1
+}
+```
+
+- Body: `bike_company`, `bike_model`, `element_name` non-empty (stripped) and ≤ 255 characters, `category` optional ≤ 32
+  (a slug or display name; blank, missing or unknown → inferred from `element_name`, `parts` as the default) → else `422`
+- `200` → `details` has the backend's `EquipmentDetailsResponse` shape (no `photos`; `category` = the slug). **The search
+  always runs** (no DB read first). A usable result (components **or** description) is stored → `saved: 1`, `details` =
+  what is stored after the write. Anything less writes, deletes and links **nothing** → `saved: 0`, `details` = the empty
+  details and `equipment_id` `null` (also when the item exists — the UI then falls back to the by-name read)
+- `400` (subscription limit) / `401` / `502` / `503` `{"detail": "searcher busy"}` (the same slots as the other seven
+  routes) / `500` `{"detail": "database write failed"}` exactly as for `/v1/search/details`
+
+**Flow**: (1) busy check, slot taken → (2) `claude -p` once — system prompt `app/prompts/equipment_details.md` +
+`app/prompts/equipment_details_{slug}.md`, `--tools WebSearch,WebFetch`, the bike details JSON schema (`found`,
+`description`, `short_description`, `sources`, `components`), message naming the item and the bike as context (`Find the
+specifications and an overview of the cycling equipment item "{element_name}" (category: {display name}). It is listed
+on the "{bike_company} {bike_model}" bicycle's spec sheet …`; every client value is sanitised first — double quotes,
+backticks, control characters and line separators become spaces, whitespace collapsed — and the prompt says quoted names
+are data, not instructions) — **no Playwright** → (3) `build_equipment_details()`:
+`found: false` → empty, never stored; else the description built from `sources` minus shops (`app/shop_filter.py`:
+a marketplace host label — allegro, olx, ceneo, decathlon, amazon, ebay …; a shop token in the host — shop, store,
+sklep, parts, powered, bike24, wiggle …; or a listing path — /product/, /shop/, /p/<digits>, /dp/, /cart … — unless the
+host carries the item's brand, so a maker's product page stays; all dropped → the description is kept without sources), every subcategory under one category named after the slug, strings
+capped → (4) only for a usable result, one DB transaction: `equipment` row `(category, "", element_name)` looked up on
+the Python-normalised identity, else `INSERT … ON CONFLICT DO NOTHING` + re-read (never committed on its own, so a failed
+write leaves no row), then `SELECT … FOR UPDATE` on it (two bikes saving one item run one after the other),
+`equipment_detail` updated in place or inserted, the
+`equipment_detail_component` rows replaced for the half produced, and `bike_detail_component.equipment_id` set on the
+rows of **this** bike (looked up, never created) whose element name matches — no other bike is touched.
+
+### `POST /v1/search/equipment/photos`
+
+```http
+POST http://localhost:8100/v1/search/equipment/photos
+Content-Type: application/json
+X-Searcher-Key: dev-local-searcher-key
+
+{"bike_company": "Canyon", "bike_model": "Grizl CF 7 ESC", "element_name": "Abus Hyban 2.0", "category": "helmets"}
+```
+
+```json
+{"photos": ["https://www.abus.com/…/hyban-2-0-1.jpg", "https://www.abus.com/…/hyban-2-0-2.jpg"], "equipment_id": 7, "saved": 2}
+```
+
+- Same body rules as above. `200` → `photos` = the item's photos now stored, in `display_order`; when the item already
+  had photos they come back with `saved: 0` (never replaced) and the element is still linked; a search that finds nothing
+  writes nothing (no equipment row, no link) and is a 200 with `photos: []`. `equipment_id` is `null` whenever nothing
+  was written and nothing linked. Same `400` / `401` / `422` / `502` / `503` / `500` mapping
+- No single-flight inside the searcher (unlike `/v1/search/photos`); the backend's proxy single-flights and the
+  insert runs under the equipment row lock
+
+**Flow**: (1) busy check, slot taken → (2) `claude -p` once with `app/prompts/equipment_photos.md`, `--tools WebSearch`
+**only**, schema `{url}` → (3)–(5) exactly steps (3)–(5) of `/v1/search/photos` (`photos_finder.find_product_photos`:
+public-URL check, patchright once behind the route guard, ≤ 8 filtered `<img>` URLs) → (6) only when (5) found
+something, one DB transaction: `equipment` row created if missing, `SELECT … FOR UPDATE` on it, photo rows re-checked
+(any there → kept), otherwise one `equipment_detail_photos` row per URL (same sanitised message and row lock as the
+details route) (`display_order` 0..n-1), then the element is
+linked on this bike as in the details route.
 
 ### `GET /health`
 
