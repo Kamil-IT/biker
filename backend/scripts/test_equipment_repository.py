@@ -64,9 +64,8 @@ def _equip(text="Kask miejski.", components=EQUIP_TREE, short="Krótko."):
 
 def _links(bike_id):
     with models.get_session() as s:
-        detail_id = s.query(models.BikeDetails.id).filter_by(bike_id=bike_id).scalar()
         return sorted({(r.element_name, r.equipment_id) for r in s.query(models.BikeDetailComponent)
-                       .filter_by(bike_detail_id=detail_id)})
+                       .filter_by(bike_id=bike_id)})
 
 
 def _count(model):

@@ -19,7 +19,7 @@ from typing import Optional
 
 from .component_tree import flatten_components, has_components, rebuild_components
 from .equipment_models import Equipment, EquipmentDetail, EquipmentDetailComponent, EquipmentDetailPhoto
-from .models import BikeDetailComponent, BikeDetails, get_session, norm
+from .models import BikeDetailComponent, get_session, norm
 from .repository import _find_bike_id
 from .schemas import (
     BikeDescription,
@@ -73,8 +73,7 @@ def bike_component_name(company: str, model: str, element_name: str) -> Optional
         wanted = norm(element_name)
         names = (
             session.query(BikeDetailComponent.element_name)
-            .join(BikeDetails, BikeDetails.id == BikeDetailComponent.bike_detail_id)
-            .filter(BikeDetails.bike_id == bike_id)
+            .filter(BikeDetailComponent.bike_id == bike_id)
             .order_by(BikeDetailComponent.id)
         )
         return next((name for (name,) in names if name and norm(name) == wanted), None)
@@ -188,13 +187,10 @@ def _get_or_create_equipment(session, company: str, model: str, category: str, l
 
 def _link_bike_components(session, bike_id: int, element_name: str, equipment_id: int) -> int:
     """Set equipment_id on THIS bike's component rows whose element name matches (normalised); rows updated."""
-    detail_id = session.query(BikeDetails.id).filter(BikeDetails.bike_id == bike_id).scalar()
-    if detail_id is None:
-        return 0
     wanted = norm(element_name)
     ids = [
         row_id for row_id, name in session.query(BikeDetailComponent.id, BikeDetailComponent.element_name)
-        .filter(BikeDetailComponent.bike_detail_id == detail_id)
+        .filter(BikeDetailComponent.bike_id == bike_id)
         if norm(name) == wanted
     ]
     if ids:

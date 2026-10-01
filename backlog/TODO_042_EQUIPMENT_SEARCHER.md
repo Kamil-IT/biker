@@ -181,10 +181,8 @@ dzielony przez osiem tras).
 - `POST /v1/equipment/review` (zostaje na SDK i generycznym cache — osobne, późniejsze TODO); globalne linkowanie po nazwie na wszystkich rowerach; zmiany
   funkcjonalne w `/v1/bike/*`; ewentualne `/v1/equipment/*` w `bike_missing_request`; Ceneo; rate limit na anonimowe wyzwalacze; wdrożenie bez „go”; kasowanie
   starych wierszy `/v1/equipment/details` z generycznego cache (martwe, nic ich nie czyta — osobny skrypt purge, jeśli kiedyś zajdzie potrzeba).
-- **Współbieżny worktree `refactor/remove-bike-detail`** (drop `bike_detail`, re-key `bike_detail_component` do `bike_id`) branżuje się z `main` 
-  w tym samym commit co TODO-042. Rebase risk przy backportu poprawek między gałęziami. Migracja TODO-042 tworzy `bike_detail_component.equipment_id`, 
-  a refactor usuwa `bike_detail` jako kolumnę, ale zachowuje FK — obie mogą pracować na tym samym schema bez konfliktów (testem jest QA042 na 
-  `biker_qa042`, nie na dzielonej `biker`).
+- **`refactor/remove-bike-detail` (PR #137) i TODO-043 (PR #136)** weszły do `main` po bazie TODO-042 i zostały zmergowane do tej
+  gałęzi 2026-10-01 (szczegóły w „Wynik” i w `docs/EQUIPMENT_SEARCHER_MIGRATION.md` § 8).
 
 ## Kryteria akceptacji
 
@@ -204,4 +202,10 @@ dzielony przez osiem tras).
 - **Zakres rozszerzony w trakcie:** piąta kategoria `parts` (domyślna, własny prompt), reguła rzeczownika głównego przy wnioskowaniu kategorii (`locks` przed `lights`), filtr źródeł sklepowych `searcher/app/shop_filter.py`, sześć nowych etykiet w `frontend/src/specLabels.ts`.
 - **Płatne runy (4):** Trek Marlin 5 / Shimano Altus RD-M315 (szczegóły 40,1 s `found:false`, zdjęcia 46,0 s bez URL); Kona El Kahuna / Abus T82 Battery Lock (szczegóły 54,4 s, 0,17 USD, zapisane jako `equipment` id 4; zdjęcia 106,5 s, 0,36 USD, URL na nieistniejący host odrzucony przez strażnika).
 - **Migracja** uruchomiona naprawdę na lokalnym `biker-pg` 2026-10-01 (`migrated`, 32972 wiersze zachowane, ponowny run `already-migrated`).
-- **Zostaje:** merge PR (dopiero wtedy przeniesienie do `backlog/done/`); wdrożenie GCP wyłącznie na wyraźne „go” (backup → migracja na Cloud SQL przez proxy → backend + searcher razem → frontend); ryzyko rebase względem `refactor/remove-bike-detail` i `feature/043-drop-search-cache-tables`. Opis całości: `docs/EQUIPMENT_SEARCHER_MIGRATION.md`.
+- **Zostaje:** merge PR (dopiero wtedy przeniesienie do `backlog/done/`); wdrożenie GCP wyłącznie na wyraźne „go” (backup → migracja na Cloud SQL przez proxy → backend + searcher razem → frontend); Opis całości: `docs/EQUIPMENT_SEARCHER_MIGRATION.md`.
+- **Merge `origin/main` (2026-10-01):** PR #137 (`bike_detail` usunięte, opis na `bike`, `bike_detail_component` kluczowane `bike_id`) i PR #136
+  (TODO-043). `equipment_id` zostaje na przekluczonej tabeli; migawka linków przy re-zapisie roweru (backend i searcher), linkowanie i strażnik
+  „Component not found” czytają wiersze po `bike_id`. Kolejność migracji: `migrate_drop_bike_detail.py` → `migrate_equipment_tables.py` (nasz
+  skrypt odmawia tabeli z `bike_detail_id`, bo przebudowa SQLite w migracji z `main` gubi dodatkowe kolumny). Testy po merge'u: backend 162,
+  searcher 169, webscraper 187, build frontendu ok, smoke 18 / 4 pominięte.
+- **Możliwy follow-up (spójność):** spłaszczyć `equipment_detail` do kolumn na `equipment`, tak jak rower po PR #137 — celowo nie w tym merge'u.

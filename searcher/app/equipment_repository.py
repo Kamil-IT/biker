@@ -23,7 +23,6 @@ from typing import Optional
 from .details_finder import has_components, is_usable_details
 from .models import (
     BikeDetailComponent,
-    BikeDetails as BikeDetailsRow,
     Equipment,
     EquipmentDetail,
     EquipmentDetailComponent,
@@ -88,15 +87,12 @@ def link_bike_components(session, bike_id: int, element_name: str, equipment_id:
     """Set equipment_id on this bike's bike_detail_component rows whose element name matches; returns rows linked.
 
     The match is Python-normalised (strip().lower()), scoped to the one bike's
-    bike_detail row — never global. Runs in the caller's transaction (no commit).
+    component rows — never global. Runs in the caller's transaction (no commit).
     """
-    detail_id = session.query(BikeDetailsRow.id).filter(BikeDetailsRow.bike_id == bike_id).scalar()
-    if detail_id is None:
-        return 0
     wanted = norm(element_name)
     ids = [
         r.id for r in session.query(BikeDetailComponent.id, BikeDetailComponent.element_name)
-        .filter(BikeDetailComponent.bike_detail_id == detail_id)
+        .filter(BikeDetailComponent.bike_id == bike_id)
         if norm(r.element_name) == wanted
     ]
     if ids:

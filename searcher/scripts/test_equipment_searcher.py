@@ -161,8 +161,7 @@ def _bike(company="Canyon", model="Grizl", element="Abus Hyban 2.0"):
 
 
 def _links(bike_id):
-    return _q("SELECT c.element_name, c.equipment_id FROM bike_detail_component c JOIN bike_detail d "
-              "ON d.id = c.bike_detail_id WHERE d.bike_id = :b ORDER BY c.id", b=bike_id)
+    return _q("SELECT element_name, equipment_id FROM bike_detail_component WHERE bike_id = :b ORDER BY id", b=bike_id)
 
 
 def test_save_creates_equipment_and_links_only_this_bike(db):
@@ -239,7 +238,7 @@ def test_init_db_refuses_without_equipment_id(tmp_path, monkeypatch):
         models.Base.metadata.create_all(engine, tables=[
             t for t in models.Base.metadata.sorted_tables if t.name != "bike_detail_component"])
         with engine.begin() as conn:
-            conn.execute(text("CREATE TABLE bike_detail_component (id INTEGER PRIMARY KEY, bike_detail_id INTEGER, "
+            conn.execute(text("CREATE TABLE bike_detail_component (id INTEGER PRIMARY KEY, bike_id INTEGER, "
                               "element_name VARCHAR(512))"))
         with pytest.raises(RuntimeError, match="migrate_equipment_tables.py"):
             models.init_db()

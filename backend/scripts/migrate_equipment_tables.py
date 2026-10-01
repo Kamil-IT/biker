@@ -25,6 +25,14 @@ and its index `ix_bike_detail_component_equipment_id` is created when missing.
 The `bike_detail_component` row count is compared before and after (and every
 new `equipment_id` must be NULL); a mismatch rolls back.
 
+Order: run `scripts/migrate_drop_bike_detail.py` FIRST. This script refuses
+("failed", exit 1, nothing written) a `bike_detail_component` still keyed on
+`bike_detail_id` — on SQLite that migration rebuilds the table from a fixed
+column list, so an `equipment_id` added before it would be dropped again
+(PostgreSQL alters in place and keeps it). Should that have happened anyway,
+running this script again re-adds the column and its index (the links are
+gone; they come back with the next equipment search).
+
 Idempotent: everything present = "already-migrated"; a missing piece (index,
 PostgreSQL FK) is repaired on its own. No `bike_detail_component` table =
 "absent" (init_db() creates everything). Also importable:
@@ -139,6 +147,9 @@ def migrate(url_or_path=None, dry_run: bool = False, verbose: bool = True) -> di
             report["status"], report["verified"] = "absent", True
             say(f"{TABLE} does not exist — nothing to migrate; init_db() creates every table")
             return report
+        if "bike_detail_id" in {c["name"] for c in insp.get_columns(TABLE)}:
+            raise RuntimeError(
+                f"{TABLE} is still keyed on bike_detail_id — run scripts/migrate_drop_bike_detail.py first")
         with engine.connect() as conn:
             count = conn.execute(text(f"SELECT COUNT(*) FROM {TABLE}")).scalar_one()
         report["rows_before"] = report["rows_after"] = count

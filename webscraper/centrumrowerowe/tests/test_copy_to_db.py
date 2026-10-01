@@ -182,7 +182,7 @@ def test_target_done_row_not_downgraded_pending_promoted(dbs):
 
 def test_failed_bike_write_copies_row_as_pending(dbs, monkeypatch):
     seed_source(dbs)
-    monkeypatch.setattr(repository, "save_bike_details", lambda *a, **k: None)  # swallowed failure
+    monkeypatch.setattr(repository, "save_bike_details", lambda *a, **k: False)  # swallowed failure
     counts = copy(dbs)
     assert (counts["bikes failed"], counts["rows inserted"]) == (1, 5)
     use(dbs["tgt"])
@@ -194,7 +194,7 @@ def test_old_source_details_are_copied_no_ttl(dbs):
     seed_source(dbs)
     use(dbs["src"])
     with tx() as s:
-        s.query(models.BikeDetails).update({models.BikeDetails.updated_at: utcnow() - timedelta(days=400)})
+        s.query(models.Bike).update({models.Bike.updated_at: utcnow() - timedelta(days=400)})
     assert copy(dbs)["bikes written"] == 1
 
 

@@ -1,7 +1,7 @@
-"""SQLAlchemy engine helpers and the twelve tables the searcher touches.
+"""SQLAlchemy engine helpers and the eleven tables the searcher touches.
 
 The DDL below is a verbatim copy of `bike`, `bike_offer`, `bike_offer_photos`,
-`bike_detail_photos`, `bike_review`, `bike_review_source`, `bike_detail`,
+`bike_detail_photos`, `bike_review`, `bike_review_source`,
 `bike_detail_component` and (TODO-042) `equipment`, `equipment_detail`,
 `equipment_detail_component`, `equipment_detail_photos` in
 backend/app/models.py — same names, columns, constraints and index names —
@@ -88,7 +88,7 @@ def get_session():
 
 REQUIRED_TABLES = (
     "bike", "bike_offer", "bike_offer_photos", "bike_detail_photos", "bike_review", "bike_review_source",
-    "bike_detail", "bike_detail_component",
+    "bike_detail_component",
     "equipment", "equipment_detail", "equipment_detail_component", "equipment_detail_photos",
 )
 
@@ -121,18 +121,24 @@ def init_db():
             "bike_detail_photos has no bike_id column — run backend/scripts/migrate_photos_bike_id.py "
             "on this database first"
         )
-    # TODO-041: bike_detail gained short_description; create_all() never ALTERs, so an older
-    # table lacks it and every details write would fail.
-    detail_columns = {c["name"] for c in inspector.get_columns("bike_detail")}
-    if "short_description" not in detail_columns:
+    # Details moved onto `bike` (description / short_description) and bike_detail_component was
+    # re-keyed to bike_id; create_all() never ALTERs, so an older database lacks both and every
+    # details write would fail.
+    bike_columns = {c["name"] for c in inspector.get_columns("bike")}
+    comp_columns = {c["name"] for c in inspector.get_columns("bike_detail_component")}
+    if (
+        not {"description", "short_description"} <= bike_columns
+        or "bike_id" not in comp_columns
+        or inspector.has_table("bike_detail")
+    ):
         raise RuntimeError(
-            "bike_detail has no short_description column — run backend/scripts/migrate_short_description.py "
+            "the database still has the bike_detail table / bike_detail_component.bike_detail_id (bike has no "
+            "description / short_description) — run backend/scripts/migrate_drop_bike_detail.py "
             "on this database first"
         )
     # TODO-042: bike_detail_component gained equipment_id (the link to an equipment row); the
     # bike details save re-applies it and the equipment save sets it, so both would fail without it.
-    component_columns = {c["name"] for c in inspector.get_columns("bike_detail_component")}
-    if "equipment_id" not in component_columns:
+    if "equipment_id" not in comp_columns:
         raise RuntimeError(
             "bike_detail_component has no equipment_id column — run backend/scripts/migrate_equipment_tables.py "
             "on this database first"
@@ -155,8 +161,22 @@ class Bike(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
+    # Details live on the bike itself: description = JSON BikeDescription (NULL = no details),
+    # short_description = two-sentence Polish summary ('' = none).
+    description = Column(Text, nullable=True)
+    short_description = Column(Text, nullable=False, default="", server_default="")
+
     # Relationships
-    details = relationship("BikeDetails", back_populates="bike", cascade="all, delete-orphan", uselist=False)
+    components = relationship(
+        "BikeDetailComponent",
+        back_populates="bike",
+        cascade="all, delete-orphan",
+        order_by=(
+            "BikeDetailComponent.component_order, "
+            "BikeDetailComponent.element_order, "
+            "BikeDetailComponent.spec_order"
+        ),
+    )
     offers = relationship("BikeOffer", back_populates="bike", cascade="all, delete-orphan")
     photos = relationship(
         "BikeDetailPhoto", back_populates="bike", cascade="all, delete-orphan",
@@ -207,7 +227,7 @@ class BikeDetailPhoto(Base):
     """Photos of a bike, keyed on the bike itself (not on its details row).
 
     Photos are written by the searcher's photo search and are independent of
-    `bike_detail`: a details re-save or delete leaves them alone. The table
+    the bike's details: a details re-save or delete leaves them alone. The table
     kept its old name; `bike_id` replaced `bike_detail_id`
     (scripts/migrate_photos_bike_id.py migrates an existing database).
     """
@@ -263,39 +283,13 @@ class BikeReviewSource(Base):
     review = relationship("BikeReview", back_populates="sources")
 
 
-class BikeDetails(Base):
-    """Full bike specifications and details (TODO-041: written by the searcher's details search)."""
-
-    __tablename__ = "bike_detail"
-
-    id = Column(Integer, primary_key=True)
-    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
-    description = Column(Text, nullable=False)  # JSON serialized BikeDescription
-    short_description = Column(Text, nullable=False, default="", server_default="")
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-    # Relationships
-    bike = relationship("Bike", back_populates="details")
-    components = relationship(
-        "BikeDetailComponent",
-        back_populates="details",
-        cascade="all, delete-orphan",
-        order_by=(
-            "BikeDetailComponent.component_order, "
-            "BikeDetailComponent.element_order, "
-            "BikeDetailComponent.spec_order"
-        ),
-    )
-
-
 class BikeDetailComponent(Base):
     """One spec row, with its whole ancestry denormalised onto it (see backend/app/models.py)."""
 
     __tablename__ = "bike_detail_component"
 
     id = Column(Integer, primary_key=True)
-    bike_detail_id = Column(Integer, ForeignKey("bike_detail.id", ondelete="CASCADE"), nullable=False, index=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
 
     category = Column(String(255), nullable=False, index=True)
     subcategory = Column(String(255), nullable=False, index=True)
@@ -313,7 +307,7 @@ class BikeDetailComponent(Base):
     equipment_id = Column(Integer, ForeignKey("equipment.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Relationships
-    details = relationship("BikeDetails", back_populates="components")
+    bike = relationship("Bike", back_populates="components")
 
 
 class Equipment(Base):

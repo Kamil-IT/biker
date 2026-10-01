@@ -1,5 +1,6 @@
 """Unit tests for scripts/migrate_equipment_tables.py (TODO-042) on temp SQLite databases
-in the pre-TODO-042 layout — no server, no network.
+in the pre-TODO-042 layout (already through migrate_drop_bike_detail.py: details on `bike`,
+bike_detail_component keyed on bike_id) — no server, no network.
 Run: cd backend && pytest   (collected via pytest.ini)"""
 import sqlite3
 import sys
@@ -15,12 +16,13 @@ from app.schemas import (  # noqa: E402
     BikeCategory, BikeDescription, BikeDetailsResponse, BikeSubcategory, ComponentElement,
     EquipmentDetailsResponse,
 )
+from migrate_drop_bike_detail import migrate as migrate_drop_bike_detail  # noqa: E402
 from migrate_equipment_tables import NEW_TABLES, migrate  # noqa: E402
 
 OLD_COMPONENT_DDL = """
 CREATE TABLE bike_detail_component (
     id INTEGER PRIMARY KEY,
-    bike_detail_id INTEGER NOT NULL REFERENCES bike_detail (id) ON DELETE CASCADE,
+    bike_id INTEGER NOT NULL REFERENCES bike (id) ON DELETE CASCADE,
     category VARCHAR(255) NOT NULL, subcategory VARCHAR(255) NOT NULL, component_order INTEGER NOT NULL,
     element_name VARCHAR(512) NOT NULL, element_description TEXT NOT NULL, element_order INTEGER NOT NULL,
     spec_key VARCHAR(255), spec_value VARCHAR(1024), spec_order INTEGER
@@ -28,19 +30,18 @@ CREATE TABLE bike_detail_component (
 
 
 def _old_db(path: Path, rows: int = 3) -> Path:
-    """Every pre-TODO-042 table: bike_detail_component without equipment_id, no equipment tables."""
+    """Every pre-TODO-042 table (bike_detail layout already dropped): bike_detail_component without equipment_id."""
     skip = {"bike_detail_component", *NEW_TABLES}
     engine = create_engine(f"sqlite:///{path}")
     models.Base.metadata.create_all(engine, tables=[t for n, t in models.Base.metadata.tables.items() if n not in skip])
     engine.dispose()
     conn = sqlite3.connect(path)
     conn.execute(OLD_COMPONENT_DDL)
-    conn.execute("INSERT INTO bike (id, brand, model) VALUES (1, 'Canyon', 'Grizl')")
-    conn.execute("INSERT INTO bike_detail (id, bike_id, description, short_description) VALUES (1, 1, ?, '')",
+    conn.execute("INSERT INTO bike (id, brand, model, description, short_description) VALUES (1, 'Canyon', 'Grizl', ?, '')",
                  ('{"text": "Rower.", "segments": [], "citations": []}',))
     for i in range(rows):
         conn.execute(
-            "INSERT INTO bike_detail_component (bike_detail_id, category, subcategory, component_order, element_name,"
+            "INSERT INTO bike_detail_component (bike_id, category, subcategory, component_order, element_name,"
             " element_description, element_order) VALUES (1, 'Accessories', 'Helmet', 0, ?, '', ?)",
             (f"Helmet {i}", i))
     conn.commit()
@@ -136,3 +137,48 @@ def test_migrated_database_works_with_the_orm(tmp_path, monkeypatch):
     finally:
         models.dispose_engine()
         models._db_url = None
+
+
+def _pre_drop_db(path: Path) -> Path:
+    """The layout before migrate_drop_bike_detail.py: bike_detail + components keyed on bike_detail_id."""
+    conn = sqlite3.connect(path)
+    conn.executescript("""
+        CREATE TABLE bike (id INTEGER PRIMARY KEY, brand VARCHAR(255) NOT NULL, model VARCHAR(255) NOT NULL,
+            created_at DATETIME, updated_at DATETIME);
+        CREATE TABLE bike_detail (id INTEGER PRIMARY KEY, bike_id INTEGER NOT NULL UNIQUE REFERENCES bike (id),
+            description TEXT NOT NULL, short_description TEXT NOT NULL DEFAULT '', created_at DATETIME,
+            updated_at DATETIME);
+        CREATE TABLE bike_detail_component (id INTEGER PRIMARY KEY,
+            bike_detail_id INTEGER NOT NULL REFERENCES bike_detail (id) ON DELETE CASCADE,
+            category VARCHAR(255) NOT NULL, subcategory VARCHAR(255) NOT NULL, component_order INTEGER NOT NULL,
+            element_name VARCHAR(512) NOT NULL, element_description TEXT NOT NULL, element_order INTEGER NOT NULL,
+            spec_key VARCHAR(255), spec_value VARCHAR(1024), spec_order INTEGER);
+        CREATE TABLE bike_detail_photos (id INTEGER PRIMARY KEY, bike_id INTEGER NOT NULL REFERENCES bike (id),
+            url VARCHAR(2048) NOT NULL, display_order INTEGER);
+        INSERT INTO bike (id, brand, model) VALUES (1, 'Canyon', 'Grizl');
+        INSERT INTO bike_detail (id, bike_id, description) VALUES (7, 1, '{"text": "R.", "segments": [], "citations": []}');
+        INSERT INTO bike_detail_component (bike_detail_id, category, subcategory, component_order, element_name,
+            element_description, element_order) VALUES (7, 'Accessories', 'Helmet', 0, 'Helmet 0', '', 0);
+    """)
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_refuses_before_the_bike_detail_migration_then_runs_after_it(tmp_path):
+    """Production order: migrate_drop_bike_detail.py first, then this script."""
+    path = _pre_drop_db(tmp_path / "pre.db")
+    for dry_run in (True, False):
+        report = migrate(path, dry_run=dry_run, verbose=False)
+        assert report["status"] == "failed" and "migrate_drop_bike_detail.py" in report["error"]
+    columns, tables, _ = _schema(path)
+    assert "equipment_id" not in columns and not set(NEW_TABLES) & set(tables), "a refusal writes nothing"
+
+    assert migrate_drop_bike_detail(path, verbose=False)["status"] == "migrated"
+    report = migrate(path, verbose=False)
+    assert report["status"] == "migrated" and report["column_added"] and report["rows_after"] == 1
+    columns, tables, indexes = _schema(path)
+    assert {"bike_id", "equipment_id"} <= set(columns) and set(NEW_TABLES) <= set(tables)
+    assert "ix_bike_detail_component_equipment_id" in indexes
+    assert migrate_drop_bike_detail(path, verbose=False)["status"] == "already-migrated", "extra column is fine"
+    assert migrate(path, verbose=False)["status"] == "already-migrated"

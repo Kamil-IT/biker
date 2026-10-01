@@ -1,6 +1,6 @@
 """Biker Searcher — FastAPI entry point (TODO-031, TODO-032, TODO-033, photos, TODO-037, TODO-041, TODO-042).
 
-Nine routes (POST /v1/search/details, TODO-041: bike details through the CLI into bike_detail + bike_detail_component;
+Nine routes (POST /v1/search/details, TODO-041: bike details through the CLI onto the bike row + bike_detail_component;
 POST /v1/search/equipment/details and /v1/search/equipment/photos, TODO-042: an equipment item opened from a
 bike's spec tree, into the equipment tables, linked on that bike's bike_detail_component rows): POST /v1/search/olx (X-Searcher-Key required) runs the OLX
 search through the Claude Code CLI, scrapes listing photos with Playwright and
@@ -348,7 +348,7 @@ async def search_details(req: SearchRequest) -> DetailsResponse:
     backend answers complete stored details itself and calls this route only
     when they are incomplete). One CLI search (WebSearch + WebFetch, no Playwright); a
     usable result (components or description) is stored - bike row created if
-    missing, bike_detail updated in place, components replaced, photos
+    missing, the bike row's description updated in place, components replaced, photos
     untouched - and comes back with saved 1. Anything less writes and deletes
     nothing (saved 0) and the response is what is stored or the empty details.
     Same 400 / 401 / 422 / 502 / 503 / 500 mapping as the other routes and the

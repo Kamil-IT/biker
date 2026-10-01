@@ -15,11 +15,11 @@ Bike reviews (/v1/search/review, TODO-037) go into bike_review (one row per
 bike) + bike_review_source (its `ref` URLs in order): save_review below. A
 review is replaced only by a usable one.
 
-Bike details (/v1/search/details, TODO-041) go into bike_detail (one row per
-bike, updated in place) + bike_detail_component (the flattened tree): a port
-of the backend's repository.save_bike_details / get_bike_details, plus the
-new short_description column. get_stored_details / save_details below. A
-re-save keeps each element's equipment_id link (TODO-042). Equipment
+Bike details (/v1/search/details, TODO-041) go onto the bike row itself
+(`description` / `short_description`, updated in place) + bike_detail_component
+(the flattened tree, keyed on bike_id): a port of the backend's
+repository.save_bike_details / get_bike_details. get_stored_details / save_details below.
+A re-save keeps each element's equipment_id link (TODO-042). Equipment
 persistence lives in equipment_repository.py.
 """
 import logging
@@ -36,7 +36,6 @@ from .models import (
     BikeReview as BikeReviewRow,  # aliased: schemas.BikeReview is the response shape
     BikeReviewSource,
     BikeDetailComponent,
-    BikeDetails as BikeDetailsRow,  # aliased: schemas.BikeDetails is the response shape
     dialect_insert,
     norm,
     get_session,
@@ -349,8 +348,8 @@ def flatten_components(components: list[BikeCategory]):
 
 
 def _stored_details(session, bike_id: int, company: str, model: str) -> Optional[BikeDetails]:
-    row = session.query(BikeDetailsRow).filter(BikeDetailsRow.bike_id == bike_id).one_or_none()
-    if row is None:
+    row = session.get(Bike, bike_id)
+    if row is None or row.description is None:
         return None
     try:
         description = BikeDescription.model_validate_json(row.description)
@@ -397,11 +396,11 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
 
     Usable = a non-empty component tree or a non-empty description. Then, in
     one transaction: the bike row is created if missing (caller's casing; an
-    existing placeholder casing is upgraded), its bike_detail row is updated
-    IN PLACE (id stable; description JSON and short_description replaced) or
-    inserted, and its bike_detail_component rows are replaced with the
-    flattened tree (flatten_components). A replaced row's equipment_id link
-    (TODO-042) is carried over to the new row with the same element_name.
+    existing placeholder casing is upgraded), its details columns are updated
+    IN PLACE (description JSON and short_description replaced), and its
+    bike_detail_component rows are replaced with the flattened tree
+    (flatten_components). A replaced row's equipment_id link (TODO-042) is
+    carried over to the new row with the same element_name.
     Photos hang off `bike` and are never touched. An unusable result writes and
     deletes nothing - not even a bike row - so a bad run never wipes stored
     details. Raises on a DB error after rolling back.
@@ -415,46 +414,40 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
         bike_id = _get_or_create_bike(session, company, model)
         _upgrade_casing(session, bike_id, company, model)
         now = datetime.now(timezone.utc)
-        row = session.query(BikeDetailsRow).filter_by(bike_id=bike_id).first()
+        row = session.get(Bike, bike_id)
         has_desc = bool(details.description.text.strip())
         has_comps = has_components(details)
         links: dict[str, int] = {}
-        if row is not None:
-            # Only the half this run produced is replaced; the other half stays as stored.
-            if has_comps:
-                # TODO-042: the replaced rows may carry equipment links; the new row of the same element keeps its
-                # link. Keyed on the Python-normalised name like every link UPDATE; the first link (row order) wins.
-                for r in (
-                    session.query(BikeDetailComponent.element_name, BikeDetailComponent.equipment_id)
-                    .filter(BikeDetailComponent.bike_detail_id == row.id, BikeDetailComponent.equipment_id.isnot(None))
-                    .order_by(BikeDetailComponent.id)
-                ):
-                    links.setdefault(norm(r.element_name), r.equipment_id)
-            if has_desc:
-                row.description = details.description.model_dump_json()
-                row.short_description = details.short_description
-            row.updated_at = now
-            if has_comps:
-                session.query(BikeDetailComponent).filter_by(bike_detail_id=row.id).delete(synchronize_session=False)
-                session.expire(row, ["components"])
-        else:
-            row = BikeDetailsRow(
-                bike_id=bike_id, description=details.description.model_dump_json(),
-                short_description=details.short_description,
-            )
-            session.add(row)
+        # Only the half this run produced is replaced; the other half stays as stored.
+        # A bike without stored details (description NULL) gets the run's description JSON
+        # even when empty, so "has details" (description IS NOT NULL) holds afterwards.
+        if has_desc or row.description is None:
+            row.description = details.description.model_dump_json()
+            row.short_description = details.short_description
+        row.updated_at = now
+        if has_comps:
+            # TODO-042: the replaced rows may carry equipment links; the new row of the same element keeps its
+            # link. Keyed on the Python-normalised name like every link UPDATE; the first link (row order) wins.
+            for r in (
+                session.query(BikeDetailComponent.element_name, BikeDetailComponent.equipment_id)
+                .filter(BikeDetailComponent.bike_id == bike_id, BikeDetailComponent.equipment_id.isnot(None))
+                .order_by(BikeDetailComponent.id)
+            ):
+                links.setdefault(norm(r.element_name), r.equipment_id)
+            session.query(BikeDetailComponent).filter_by(bike_id=bike_id).delete(synchronize_session=False)
+            session.expire(row, ["components"])
         session.flush()
 
         rows = 0
         for values in flatten_components(details.components if has_comps else []):
             session.add(BikeDetailComponent(
-                bike_detail_id=row.id, equipment_id=links.get(norm(values["element_name"])), **values,
+                bike_id=bike_id, equipment_id=links.get(norm(values["element_name"])), **values,
             ))
             rows += 1
         session.commit()
         logger.info(
-            "details stored | company=%r model=%r bike_id=%d detail_id=%d component_rows=%d",
-            company, model, bike_id, row.id, rows,
+            "details stored | company=%r model=%r bike_id=%d component_rows=%d",
+            company, model, bike_id, rows,
         )
         return bike_id, True
     except Exception as exc:

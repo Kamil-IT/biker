@@ -10,7 +10,7 @@ Before the first search the home page shows **Najpopularniejsze rowery** — the
 2. The backend first searches its own bike database: every structured filter it can check (brand, model, wheel size, frame size, electric) is matched against stored bike specs. All matching bikes are returned (no cap) with no AI call. Search answers are never served from a response cache, so they always reflect the current database
 3. Only when the database has no match, a single Claude Haiku call recommends every real bike that fits (at least 1 — the closest match when nothing meets every filter)
 4. Click a result to open the details page — the description, component specs, photos, review, Allegro offers, Decathlon offers and used OLX listings are all read from the database only (they get there through the on-demand searches below — opening a bike never runs a details, marketplace, photo or review search). The result cards' text is read from the database too: the explanation is the bike's stored two-sentence `short_description` and the chips are drivetrain / brakes / frame-material names from its stored components (both hidden for a bike without stored details). Any section (photos, overview, specs, review, Used / New offers) still without data after 5 s — or with an empty/failed response — shows a **Request data** button instead of its spinner; clicking it records the request via `POST /v1/bike/missing`. Data that arrives later replaces the button
-5. In the **Opis** and **Komponenty** sections the button starts the on-demand details search (`POST /v1/bike/details/search` → the `searcher/` service runs the Claude Code CLI once — `WebSearch` + `WebFetch` — for the Polish description, a Polish two-sentence short description and the 8-category component tree, and stores a usable result in `bike_detail` / `bike_detail_component`, updated in place, photos untouched); one click fills both sections, it reads "Szukam danych roweru…" while it runs, then the data replaces it — or "Nie znaleziono danych".
+5. In the **Opis** and **Komponenty** sections the button starts the on-demand details search (`POST /v1/bike/details/search` → the `searcher/` service runs the Claude Code CLI once — `WebSearch` + `WebFetch` — for the Polish description, a Polish two-sentence short description and the 8-category component tree, and stores a usable result in the bike row's `description` / `short_description` and `bike_detail_component`, updated in place, photos untouched); one click fills both sections, it reads "Szukam danych roweru…" while it runs, then the data replaces it — or "Nie znaleziono danych".
    In the **Recenzja eksperta** section the button also starts the on-demand review search (`POST /v1/bike/review/search` → the same `searcher/` service runs the Claude Code CLI once over the curated review sites, computes the weighted rating and stores it in `bike_review` / `bike_review_source` — only when it found at least one professional source; a stored review is never wiped by a bad run); it reads "Szukam recenzji…" while it runs, then the review replaces it — or "Nie znaleziono recenzji".
    In the photo gallery slot the button also starts the on-demand photo search (`POST /v1/bike/photos/search` → the same `searcher/` service finds the manufacturer's product page with the Claude Code CLI, scrapes up to 8 photos from it with Playwright and stores them in `bike_detail_photos` — only for a bike that has none, stored photos are never replaced); it reads "Szukam zdjęć…" while it runs, then the gallery replaces it — or "Nie znaleziono zdjęć". In the **Used** offers card that same button also starts the on-demand OLX search (`POST /v1/bike/used/search` → the `searcher/` service, which runs the Claude Code CLI on your subscription and stores what it finds in `bike_offer`). The button reads "Szukam na OLX…" while it runs, then the real listings with photos replace it — or "Nie znaleziono ofert" when there are none. In the **New** card it fires **two** searches at once — Decathlon (`POST /v1/bike/decathlon/search`) and Allegro (`POST /v1/bike/allegro/search`) — through the same searcher; neither stores photos (Allegro blocks every automated fetch with 403, so its photo scrape was dropped); the button reads "Szukam na Allegro i Decathlon…" and rows from either source replace it as they arrive ("Nie znaleziono ofert" only when both came back empty; clickable again when a search failed and neither brought rows). Allegro is searched for every brand, and a used Allegro listing lands in the **Used** card by its `is_new` flag; Decathlon only for its house brands (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt; `backend/app/decathlon_brands.py`) — any other brand gets an instant empty Decathlon answer with no search spent (closes `TODO_ISSUE_010`)
 6. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel, and bike parts — the default category when the name matches no keyword). Equipment is informational only — no shopping/offer links
@@ -46,11 +46,13 @@ pip install -U anthropic        # existing venv: keep the SDK as new as the Dock
 copy .env.example .env          # edit .env and set your ANTHROPIC_API_KEY
 python scripts/migrate_photos_bike_id.py --dry-run   # once per existing database: report what would change ...
 python scripts/migrate_photos_bike_id.py             # ... then re-key bike_detail_photos to bike_id (idempotent)
-python scripts/migrate_drop_search_rating.py --dry-run   # once per existing database (TODO-040) ...
-python scripts/migrate_drop_search_rating.py             # ... then drop search_bike_rating_cache.rating (idempotent)
+python scripts/migrate_drop_search_tables.py --dry-run   # once per existing database (TODO-043) ...
+python scripts/migrate_drop_search_tables.py             # ... then drop search_cache + search_bike_rating_cache (idempotent)
 python scripts/migrate_short_description.py --dry-run    # once per existing database (TODO-041) ...
 python scripts/migrate_short_description.py              # ... then add bike_detail.short_description (idempotent)
-python scripts/migrate_equipment_tables.py --dry-run     # once per existing database (TODO-042) ...
+python scripts/migrate_drop_bike_detail.py --dry-run     # once per existing database (after the two above): drop bike_detail, details move onto bike ...
+python scripts/migrate_drop_bike_detail.py               # ... then re-key bike_detail_component to bike_id (idempotent)
+python scripts/migrate_equipment_tables.py --dry-run     # once per existing database (TODO-042, after migrate_drop_bike_detail.py) ...
 python scripts/migrate_equipment_tables.py               # ... then create equipment tables and add bike_detail_component.equipment_id (idempotent)
 python scripts/purge_details_cache.py --dry-run          # once per database (TODO-041): count the dead '/v1/bike/details' generic-cache rows ... (then without --dry-run; production only on an explicit go)
 uvicorn app.main:app --reload --port 8000
@@ -70,11 +72,13 @@ uvicorn app.main:app --reload --port 8000
 > "Request data" button). The searcher refuses to start without the two tables. On production Cloud SQL: backend `init_db()` creates the
 > tables, run the script, then deploy searcher and backend.
 >
-> **Also run `migrate_drop_search_rating.py` once on every existing database** (TODO-040, same options). The search
-> match score is gone from the API, and the script drops its `NOT NULL` column `search_bike_rating_cache.rating`;
-> until then the new backend cannot store search results (rollback + WARNING, the answer itself is unaffected).
->
-> **Also run `migrate_equipment_tables.py` once on every existing database** (TODO-042, same options). Equipment now has its own DB identity (`equipment`, `equipment_detail`, `equipment_detail_component`, `equipment_detail_photos` tables) and `bike_detail_component.equipment_id` links spec-tree elements to equipment rows; `create_all()` never alters a table. The searcher refuses to start without the column. On production Cloud SQL: backup, migrate, then deploy backend + searcher together, then the frontend (the old backend keeps working on the migrated database — the column is nullable, new tables are ignored). Details: `backend/app/DB_MIGRATION.md`.
+> **Also run `migrate_drop_search_tables.py` once on every existing database** (TODO-043, same options). The per-search
+> tables `search_cache` + `search_bike_rating_cache` are gone from the app (nothing read them); a search now only makes sure
+> its bikes exist in `bike`. The new backend runs fine before the drop; the old one logs a WARNING per search after it.
+
+> **Run `migrate_drop_bike_detail.py` once on every existing database** (after the two migrations above; `--dry-run` first, idempotent, `--url` / `--db`). The `bike_detail` table is gone: the description and short description now live on `bike` (`bike.description IS NOT NULL` = the bike has details) and `bike_detail_component` is keyed on `bike_id`. The new searcher refuses to start on an unmigrated database and the **old** backend breaks on a migrated one. Production order: Cloud SQL backup, migration through the proxy (only on the user's explicit go), deploy backend + searcher together; the frontend is unchanged. Details: `backend/app/DB_MIGRATION.md` § bike_detail dropped.
+
+> **Also run `migrate_equipment_tables.py` once on every existing database** (TODO-042, same options; **after** `migrate_drop_bike_detail.py` — it refuses a database still keyed on `bike_detail_id`). Equipment now has its own DB identity (`equipment`, `equipment_detail`, `equipment_detail_component`, `equipment_detail_photos` tables) and `bike_detail_component.equipment_id` links spec-tree elements to equipment rows; `create_all()` never alters a table. The searcher refuses to start without the column. On production Cloud SQL: backup, migrate, then deploy backend + searcher together, then the frontend (the old backend keeps working on the migrated database — the column is nullable, new tables are ignored). Details: `backend/app/DB_MIGRATION.md`.
 
 ### Terminal 2 — Frontend
 
@@ -175,9 +179,9 @@ calls it over the public URL). TODO-035 adds the photo route and TODO-037 the re
 > between steps 1 and 2 in which the old backend's details save fails (it rolls back and logs a warning; no data is lost). The new `save_bike_details` updates
 > the details row in place, so it can never cascade-delete photos through the old foreign key.
 >
-> **TODO-040 (search expert rating):** run `backend/scripts/migrate_drop_search_rating.py` against Cloud SQL first, then deploy the backend, then the
-> frontend. Between the migration and the backend deploy the old backend's `save_search` fails (it still writes the dropped `rating` column):
-> it rolls back and logs a warning, the search answer is still returned, nothing already stored is lost.
+> **TODO-043 (search tables dropped):** deploy the backend first, then run `backend/scripts/migrate_drop_search_tables.py` against Cloud SQL
+> through the proxy (the new backend never touches `search_cache` / `search_bike_rating_cache`, so there is no failing window; dropping them
+> under the old backend would only make its `save_search` log a WARNING per search — nothing stored is lost either way).
 
 Capacity: up to 10 searcher instances and 2 backend instances each hold their own SQLAlchemy pool (default 5 + 10 overflow) against Cloud SQL, whose
 `max_connections` has not been checked (the tier is "smallest shared-core instance" per `TODO_030`; the deploy script sets no tier). There is no per-IP rate limit on the
@@ -220,14 +224,14 @@ thing there is a one-off **copy** of the queue and the parsed bikes, made with `
    listing's name, link, price and `last_seen_at`: it never touches a bike that exists (`status`, `attempts`, `bike_id`,
    `company`, `model`, `bike_type`) and a known listing never changes bike.
 3. **Process** — `process_queue.py` claims a batch, fetches each product page, parses it (JSON-LD, the "Specyfikacja"
-   table, the variant selector, the photo gallery) and stores `bike` + `bike_detail` + components through the backend's
+   table, the variant selector, the photo gallery) and stores `bike` (with its details columns) + components through the backend's
    `repository.save_bike_details` (with `short_description` `""`), so the bike shows up in DB-first search and in `POST /v1/bike/details` (a pure DB read since TODO-041 — no generic-cache write is needed any more) without an Anthropic call. Two more
    things are handled by the shared module `bike_store.py`:
    - **Photos** — `BikeDetailsResponse` has no photos since PR #115. The parsed shop photos (up to 8, http/https) are stored
      per bike through the backend's `photos_repository.save_bike_photos` (table `bike_detail_photos`, keyed by
      `bike_id`), **only when the bike has none**; a failure is a WARNING and the row stays `done`. The details view reads
      them through `POST /v1/bike/photos`. Photos are also stored for a bike whose details were kept (`skipped`) if it has none.
-   - **Never overwrite** — a bike that already has *any* `bike_detail` row is kept as is (upstream has no details TTL any
+   - **Never overwrite** — a bike that already has *any* details (`bike.description` set) is kept as is (upstream has no details TTL any
      more), whoever wrote it.
 
 ```powershell
@@ -264,7 +268,7 @@ stop the same way):
   (`strip().lower()` in Python, `UNIQUE` together as `uq_bike_discovery_identity`), `bike_type`, `bike_id` (FK →
   `bike.id`, `ON DELETE SET NULL`), `status`, `attempts`, `last_error`, `locked_at`, `next_attempt_at`, `created_at`,
   `updated_at`; index `(status, next_attempt_at)`. `bike_id IS NOT NULL` means the bike exists in `bike`;
-  `status = 'done'` means it has full `bike_detail` data.
+  `status = 'done'` means it has full details data.
 - `bike_discovery_listing` = one product in one shop: `id`, `discovery_id` (FK → `bike_discovery.id`, `ON DELETE
   CASCADE`, `NOT NULL`), `source` (`centrumrowerowe.pl`), `source_product_id` (`pd27404`; `UNIQUE` with `source`),
   `raw_name`, `details_link` (URL without `?v_Id=`), `price` (lowest seen among the variants), `first_seen_at`,
@@ -277,9 +281,9 @@ stop the same way):
 |---|---|
 | `pending` | queued by the scraper, not tried yet |
 | `in_progress` | claimed by a processor (`locked_at` set, `attempts` +1); the lease is refreshed when work on each row starts. Lease of **15 min**: an older `in_progress` row is claimable again; one that already used its 3rd attempt becomes `failed` ("lease expired on the last attempt") |
-| `done` | parsed and stored; `bike_id` set, `company`/`model` set to the bike's stored brand/model. A save counts only when the bike's `bike_detail.updated_at` is at or after the save start (`save_bike_details` swallows errors, and an older row would otherwise look like success) |
+| `done` | parsed and stored; `bike_id` set, `company`/`model` set to the bike's stored brand/model. A save counts only when `save_bike_details` returns True (it swallows errors and reports them as False) |
 | `failed` | fetch/parse/save error, `last_error` filled. Retried after a backoff of **1 h, then 6 h** (`next_attempt_at`; the 24 h step is only reached with a higher attempt limit); the **3rd** failure is final until `--retry-failed` |
-| `skipped` | HTTP 404/410 (product gone), or the bike already has a `bike_detail` row (any age) — nothing is overwritten, AI-collected or earlier data wins; its photos are still stored if it has none |
+| `skipped` | HTTP 404/410 (product gone), or the bike already has details (any age) — nothing is overwritten, AI-collected or earlier data wins; its photos are still stored if it has none |
 
 **Listings per bike (processor):** the claim, lease and backoff work per bike. For each claimed bike the listings are
 tried newest `last_seen_at` first, each with the parser registered for its shop (`PARSERS`; only `centrumrowerowe.pl`
@@ -422,7 +426,7 @@ biker/
 │   │   ├── schemas.py                 # Pydantic models
 │   │   ├── repository.py              # ORM data access: bike details + DB-first search (find_bikes_by_details) + missing-data request counter
 │   │   ├── offers_repository.py       # Stored marketplace offers read side: get_used_offers (olx.pl) + get_decathlon_offers (decathlon.pl) + get_allegro_offers (allegro.pl) + bike_exists
-│   │   ├── popular_repository.py      # Popular bikes read side for GET /v1/bike/popular: bike_popular + bike + bike_detail, two-sentence blurb (first_sentences)
+│   │   ├── popular_repository.py      # Popular bikes read side for GET /v1/bike/popular: bike_popular + bike (description), two-sentence blurb (first_sentences)
 │   │   ├── searcher_client.py         # httpx proxy to the searcher (search_olx / search_decathlon / search_allegro / search_photos / search_review), single-flight + shared in-flight cap (10)
 │   │   ├── decathlon_brands.py        # Decathlon house-brand allowlist for /v1/bike/decathlon/search (is_decathlon_brand, not_sold_info; TODO_ISSUE_010)
 │   │   ├── bike_finder.py             # Single Claude call → all matching bikes, min 1 (DB-miss fallback)
@@ -439,9 +443,9 @@ biker/
 │   │       ├── bike_offer_ceneo.md    # Ceneo offer search prompt (the only offer finder still on the API key)
 │   │       └── equipment_review.md    # Equipment review prompt (SDK + generic cache, no offer links)
 │   └── scripts/
-│       ├── migrate_drop_search_rating.py  # One-off, idempotent: drop search_bike_rating_cache.rating (TODO-040); --dry-run, --db, --url
+│       ├── migrate_drop_search_tables.py  # One-off, idempotent: drop search_cache + search_bike_rating_cache (write-only per-search tables, TODO-043); --dry-run, --db, --url
 │       ├── migrate_equipment_tables.py    # One-off, idempotent: create equipment tables and add bike_detail_component.equipment_id (TODO-042); --dry-run, --db, --url
-│       ├── seed_popular_bikes.py      # Fill bike_popular with 3 bikes + details + photos + review; --dry-run, --count, --bike "Brand|Model"
+│       ├── seed_popular_bikes.py      # Fill bike_popular (home page "Najpopularniejsze rowery") with 3 bikes that have details + photos + a stored review; --dry-run, --count, --bike "Brand|Model"
 │       ├── test_search.py             # Smoke tests for all backend endpoints (bike search/details, offers, photos, review; equipment details/photos x2) — one happy path per endpoint, no AI
 │       ├── copy_review_cache_to_table.py  # One-off: generic-cache reviews -> bike_review tables (TODO-037)
 │       ├── test_equipment_repository.py   # pytest: get/save equipment details + photos, link preservation after bike re-save, insert-only photos (TODO-042)
@@ -470,13 +474,13 @@ biker/
 │   │   ├── decathlon_finder.py        # the former backend bike_offer_decathlon_finder (CLI call only, no photos)
 │   │   ├── allegro_finder.py          # the former backend bike_offer_finder (CLI call only, no photos — allegro.pl 403s every automated fetch; ≤ 3 offers)
 │   │   ├── olx_image_fetcher.py       # Playwright: up to 4 OLX CDN photos per listing
-│   │   ├── details_finder.py          # TODO-041: bike details in one CLI run (description + short_description + 8-category component tree, no Playwright) → bike_detail + bike_detail_component
+│   │   ├── details_finder.py          # TODO-041: bike details in one CLI run (description + short_description + 8-category component tree, no Playwright) → bike.description / short_description + bike_detail_component
 │   │   ├── photos_finder.py           # the former backend bike_photos_finder (CLI finds the manufacturer page, Playwright takes ≤ 8 photos)
 │   │   ├── repository.py / models.py  # save_offers: writes bike_offer + bike_offer_photos (replace per bike + source); save_photos: bike_detail_photos, insert-only
 │   │   └── prompts/                   # bike_offer_olx.md + bike_offer_decathlon.md + bike_offer_allegro.md + bike_photos.md — the search prompts (moved from the backend)
 │   ├── scripts/test_searcher.py       # Smoke test (health, auth + validation on all six routes, stored photos — no paid runs)
 │   └── Dockerfile                     # Python 3.14 + Node 24 + claude CLI + Chromium for the OLX and bike photos (Cloud Run image)
-└── webscraper/centrumrowerowe/        # Local bike discovery (TODO-036), no AI: scrape_rowery.py -> bike_discovery queue -> process_queue.py -> bike + bike_detail
+└── webscraper/centrumrowerowe/        # Local bike discovery (TODO-036), no AI: scrape_rowery.py -> bike_discovery queue -> process_queue.py -> bike (with details)
     ├── db.py                          # backend engine/.env + BikeDiscovery model + local-database guard (--allow-remote)
     ├── name_split.py / product_parser.py / spec_mapping.py   # listing name split; product page -> BikeDetailsResponse; Polish label -> English tree
     └── tests/                         # pytest on saved product pages (tests/fixtures/)

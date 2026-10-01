@@ -115,14 +115,31 @@ przeniesienie zadania do `backlog/done/` dopiero po merge'u (merged is the bar).
 Wdrożenie wyłącznie na wyraźne „go” użytkownika, w tej kolejności:
 
 1. Ręczny backup Cloud SQL `biker-pg`.
-2. `migrate_equipment_tables.py` na Cloud SQL przez proxy (przed wszystkim innym).
+2. `migrate_drop_bike_detail.py` z `main` (PR #137), jeśli Cloud SQL jeszcze go nie przeszedł, potem
+   `migrate_equipment_tables.py` — oba na Cloud SQL przez proxy, w tej kolejności, przed wszystkim innym.
 3. Backend i searcher razem (`scripts/deploy.ps1`) — nowy searcher nie wystartuje bez kolumny `equipment_id`.
 4. Frontend.
 
 Okno między krokiem 2 a 3 jest bezpieczne, bo stary backend działa na zmigrowanej bazie (kolumna nullowalna). Zmiana
-`--max-instances` niepotrzebna. **Ryzyko rebase:** równoległe gałęzie `refactor/remove-bike-detail` (drop `bike_detail`,
-re-key `bike_detail_component` do `bike_id`) i `feature/043-drop-search-cache-tables` startowały z tego samego `main`;
-migrację i `save_bike_details` trzeba będzie uzgodnić po merge'u pierwszej z nich.
+`--max-instances` niepotrzebna.
+
+**Merge z `main` (2026-10-01).** Po bazie TODO-042 do `main` weszły PR #137 (tabela `bike_detail` usunięta, opis i krótki
+opis leżą na `bike`, `bike_detail_component` przekluczone na `bike_id`) i PR #136 (TODO-043, usunięte `search_cache` i
+`search_bike_rating_cache`). Gałąź zmergowała `origin/main` i dostosowała się:
+
+- `bike_detail_component.equipment_id` zostaje (nullowalne FK → `equipment.id` `ON DELETE SET NULL`, z indeksem), teraz na
+  tabeli kluczowanej `bike_id`. Migawka linków w `save_bike_details` (backend) i `save_details` (searcher) czyta wiersze po
+  `bike_id` (`norm(element_name)` → `equipment_id`, pierwszy wygrywa); linkowanie i strażnik „Component not found” też.
+- Tabele wyposażenia bez zmian (`equipment`, `equipment_detail`, `equipment_detail_component`, `equipment_detail_photos`).
+- `init_db()` searchera sprawdza po kolei: `bike_detail_photos.bike_id`, nowy układ z PR #137 (nazywa
+  `migrate_drop_bike_detail.py`), potem `equipment_id` (nazywa `migrate_equipment_tables.py`).
+- **Kolejność migracji:** `migrate_drop_bike_detail.py` → `migrate_equipment_tables.py`. Nasz skrypt odmawia (`failed`, kod 1,
+  nic nie zapisuje) tabeli wciąż kluczowanej `bike_detail_id`, bo przebudowa SQLite w migracji z `main` ma stałą listę kolumn
+  i zgubiłaby wcześniej dodane `equipment_id` (PostgreSQL zmienia tabelę w miejscu i kolumnę zachowuje). Ponowny run naszego
+  skryptu dodaje brakującą kolumnę i indeks z powrotem.
+- Sprawdzone: świeża kopia `cache.db` — odmowa, migracja z `main` (566 opisów, 31 826 wierszy), `migrate_drop_search_tables.py`,
+  nasza migracja `migrated` (31 826 wierszy zachowanych), ponownie `already-migrated`; lokalny `biker-pg` — dry run
+  `already-migrated` (32 972 wiersze). Testy: backend 162, searcher 169, webscraper 187, smoke 18 zaliczonych / 4 pominięte.
 
 ## 9. Architektura po zmianie
 
@@ -168,6 +185,8 @@ Migracja przed pierwszym startem na istniejącej bazie: `python scripts/migrate_
 - Brak TTL i odświeżania; stare wiersze `/v1/equipment/details` w generycznym cache są martwe (nic ich nie czyta).
 - Rygor `found:false`: nieistniejący kod części (RD-M315) nie daje zmyślonych danych — to zamierzone.
 - Brak limitu zapytań na anonimowe wyzwalacze searcha (jak w pozostałych trasach `/search`).
+- Wyposażenie zachowuje osobny wiersz `equipment_detail` (opis + krótki opis), choć rower po PR #137 trzyma je na `bike`.
+  Spłaszczenie `equipment_detail` do `equipment` dla spójności to możliwe zadanie na później, celowo nie w tym merge'u.
 
 ## 12. Lekcje
 

@@ -124,11 +124,27 @@ class Bike(Base):
     model = Column(String(255), nullable=False, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    # Details live on the bike itself (the former `bike_detail` table was dropped
+    # by scripts/migrate_drop_bike_detail.py). `description` = JSON-serialised
+    # BikeDescription; NULL = the bike has no details. `short_description` = the
+    # two-sentence Polish summary, "" = none.
+    description = Column(Text, nullable=True)
+    short_description = Column(Text, nullable=False, default="", server_default="")
 
     # Relationships
-    # Search results are no longer their own table — a search's rated bikes live
-    # in search_bike_rating_cache (which FKs to bike). Details and offers below.
-    details = relationship("BikeDetails", back_populates="bike", cascade="all, delete-orphan", uselist=False)
+    # A search stores nothing but the bikes it found (store.save_search → this
+    # table); the search_cache / search_bike_rating_cache tables were dropped in
+    # TODO-043. Components, offers, photos and the review hang off this row.
+    components = relationship(
+        "BikeDetailComponent",
+        back_populates="bike",
+        cascade="all, delete-orphan",
+        order_by=(
+            "BikeDetailComponent.component_order, "
+            "BikeDetailComponent.element_order, "
+            "BikeDetailComponent.spec_order"
+        ),
+    )
     offers = relationship("BikeOffer", back_populates="bike", cascade="all, delete-orphan")
     photos = relationship(
         "BikeDetailPhoto", back_populates="bike", cascade="all, delete-orphan",
@@ -139,39 +155,11 @@ class Bike(Base):
     __table_args__ = (UniqueConstraint("brand", "model", name="uq_bike_brand_model"),)
 
 
-class BikeDetails(Base):
-    """Full bike specifications and details."""
-
-    __tablename__ = "bike_detail"
-
-    id = Column(Integer, primary_key=True)
-    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
-    description = Column(Text, nullable=False)  # JSON serialized BikeDescription
-    # TODO-041: two-sentence Polish summary written by the searcher; "" = none.
-    # scripts/migrate_short_description.py adds it to an existing database.
-    short_description = Column(Text, nullable=False, default="", server_default="")
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-    # Relationships
-    bike = relationship("Bike", back_populates="details")
-    components = relationship(
-        "BikeDetailComponent",
-        back_populates="details",
-        cascade="all, delete-orphan",
-        order_by=(
-            "BikeDetailComponent.component_order, "
-            "BikeDetailComponent.element_order, "
-            "BikeDetailComponent.spec_order"
-        ),
-    )
-
-
 class BikeDetailPhoto(Base):
     """Photos of a bike, keyed on the bike itself (not on its details row).
 
     Photos are written by the searcher's photo search and are independent of
-    `bike_detail`: a details re-save or delete leaves them alone. The table
+    the bike's details: a details re-save or delete leaves them alone. The table
     kept its old name; `bike_id` replaced `bike_detail_id`
     (scripts/migrate_photos_bike_id.py migrates an existing database).
     """
@@ -212,7 +200,7 @@ class BikeDetailComponent(Base):
     __tablename__ = "bike_detail_component"
 
     id = Column(Integer, primary_key=True)
-    bike_detail_id = Column(Integer, ForeignKey("bike_detail.id", ondelete="CASCADE"), nullable=False, index=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
 
     # category / subcategory level — repeat across the rows that share them
     category = Column(String(255), nullable=False, index=True)
@@ -235,7 +223,7 @@ class BikeDetailComponent(Base):
     equipment_id = Column(Integer, ForeignKey("equipment.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Relationships
-    details = relationship("BikeDetails", back_populates="components")
+    bike = relationship("Bike", back_populates="components")
 
 
 class BikeOffer(Base):
@@ -319,59 +307,6 @@ class BikeReviewSource(Base):
 
     # Relationships
     review = relationship("BikeReview", back_populates="sources")
-
-
-# --- Search cache --------------------------------------------------------
-# One cached search query fans out to many rated bikes. `search_cache` holds
-# just the query and when it was stored; each bike it returned is one row in
-# `search_bike_rating_cache`, which FKs to the canonical `bike`. This replaces
-# the earlier design where `search_cache.bikes` was a JSON array of ids.
-
-
-class SearchCache(Base):
-    """One cached search. Its rated bikes live in search_bike_rating_cache.
-
-    Freshness is `time_stored + store.SEARCH_TTL_SECONDS` (24 h), a module
-    constant rather than a per-row column — mirrors how details TTL works.
-    """
-
-    __tablename__ = "search_cache"
-
-    id = Column(Integer, primary_key=True)
-    query = Column(Text, nullable=False, unique=True, index=True)
-    time_stored = Column(String(64), nullable=False)  # ISO-8601 UTC
-
-    # Relationships
-    ratings = relationship(
-        "SearchBikeRating",
-        back_populates="search",
-        cascade="all, delete-orphan",
-        order_by="SearchBikeRating.display_order",
-    )
-
-
-class SearchBikeRating(Base):
-    """One bike returned by one cached search — one row = one bike.
-
-    Carries the per-*search* fields (explanation, accessories, display_order) while
-    the bike identity is a FK to `bike`. accessories is an inline JSON array of
-    strings; brand/model are NOT duplicated here, they come via the `bike` FK.
-    """
-
-    __tablename__ = "search_bike_rating_cache"
-
-    id = Column(Integer, primary_key=True)
-    search_cache_id = Column(
-        Integer, ForeignKey("search_cache.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
-    explanation = Column(Text, nullable=False, default="")
-    accessories = Column(Text, nullable=False, default="[]")  # JSON array of strings
-    display_order = Column(Integer, nullable=False, default=0)
-
-    # Relationships
-    search = relationship("SearchCache", back_populates="ratings")
-    bike = relationship("Bike")
 
 
 # --- Missing-data requests (TODO-026) ------------------------------------
