@@ -10,7 +10,7 @@ hand. The backend code is never modified; the scripts import it.
 
 ```
 listing pages ──scrape_rowery.py──▶ bike_discovery + bike_discovery_listing ──process_queue.py──▶ bike
-                                                                                  bike_detail (+ components)
+                                                                                  bike.description (+ bike_detail_component)
                                                                                   bike_detail_photos
                                     copy_to_db.py: local database ───────────────▶ another database (e.g. Cloud SQL)
 ```
@@ -56,10 +56,10 @@ recorded on the listing (`fetched_at`, `fetch_error`, `NULL` after a success). P
    `app.models`.
 3. **Store** through the backend's own functions (`bike_store.py`): the bike in `bike` (looked up
    by normalised brand + model, reusing the stored casing so no duplicate row is minted), details
-   in `bike_detail` + components (`short_description` stays `""` — the parser writes none) and photos in
-   `bike_detail_photos` (only when the bike has none). `POST /v1/bike/details` reads `bike_detail`
-   directly (TODO-041), so no generic-cache entry is written any more. A save counts only when a
-   `bike_detail` row updated at or after the save start exists.
+   on the bike row (`description`; `short_description` stays `""` — the parser writes none) + `bike_detail_component` rows and photos in
+   `bike_detail_photos` (only when the bike has none). `POST /v1/bike/details` reads the bike row
+   directly (TODO-041), so no generic-cache entry is written any more. A save counts only when
+   `repository.save_bike_details` returns True (it swallows errors and reports them as False).
 4. **Mark** the bike: `done`; `skipped` when the bike already had details (nothing overwritten —
    photos are still added if it had none) or every listing is gone (404/410); `failed` with
    `last_error` and a backoff of 1 h, then 6 h — the third failure is final until `--retry-failed`.
@@ -213,5 +213,5 @@ the database from `backend/.env`.
 - `repository.get_bike_details` now matches brand and model on the normalised columns (TODO-041),
   so a discovered bike is found whatever casing the caller uses; the processor still stores the
   page's casing (or the casing already in `bike`).
-- Until the `bike_detail.short_description` column exists (`backend/scripts/migrate_short_description.py`)
-  the processor's save fails on that database — run the migration first.
+- Until `backend/scripts/migrate_drop_bike_detail.py` has run on a database (details columns on `bike`,
+  `bike_detail_component.bike_id`) the processor's save fails on it — run the migration first.

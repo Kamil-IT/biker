@@ -10,7 +10,7 @@ selects (unset -> SQLite cache.db), exactly as for the server.
     python scripts/seed_popular_bikes.py --bike "Giant|Revolt Advanced Pro" --bike "Trek|Madone SL 6"
     python scripts/seed_popular_bikes.py --db ../cache.db # another database: SQLite path or SQLAlchemy URL
 
-Automatic pick (default): a bike qualifies when its `bike_detail` row has >= 1
+Automatic pick (default): a bike qualifies when its details (`bike.description`) are set and it has >= 1
 photo and >= 20 component rows AND its stored review (`bike_review`, TODO-037)
 has a `rating` > 0 — reviews from before the aggregate rating existed do not
 qualify. Candidates rank by
@@ -47,7 +47,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 load_dotenv(BACKEND_DIR / ".env")  # DATABASE_URL selects the database, as for the server
 
 from app.models import (  # noqa: E402
-    Bike, BikeDetailComponent, BikeDetailPhoto, BikeDetails, BikeOffer, BikePopular, BikeReview,
+    Bike, BikeDetailComponent, BikeDetailPhoto, BikeOffer, BikePopular, BikeReview,
     configure_db, get_engine, get_session, init_db,
 )
 
@@ -114,12 +114,8 @@ def load_ratings(session) -> dict[int, float]:
 
 
 def _count_per_bike(session, child, fk_column) -> dict[int, int]:
-    """bike_id -> number of `child` rows hanging off that bike's details row."""
-    stmt = (
-        select(BikeDetails.bike_id, func.count(child.id))
-        .join(child, fk_column == BikeDetails.id)
-        .group_by(BikeDetails.bike_id)
-    )
+    """bike_id -> number of `child` rows hanging off that bike."""
+    stmt = select(fk_column, func.count(child.id)).group_by(fk_column)
     return {bike_id: n for bike_id, n in session.execute(stmt)}
 
 
@@ -129,13 +125,13 @@ def load_candidates(session) -> list[Candidate]:
     photos = dict(session.execute(
         select(BikeDetailPhoto.bike_id, func.count(BikeDetailPhoto.id)).group_by(BikeDetailPhoto.bike_id)
     ).all())
-    components = _count_per_bike(session, BikeDetailComponent, BikeDetailComponent.bike_detail_id)
+    components = _count_per_bike(session, BikeDetailComponent, BikeDetailComponent.bike_id)
     offers = dict(session.execute(
         select(BikeOffer.bike_id, func.count(BikeOffer.id)).group_by(BikeOffer.bike_id)
     ).all())
     descriptions = {
         bike_id: _description_text(raw)
-        for bike_id, raw in session.execute(select(BikeDetails.bike_id, BikeDetails.description))
+        for bike_id, raw in session.execute(select(Bike.id, Bike.description).where(Bike.description.isnot(None)))
     }
     ratings = load_ratings(session)
     candidates = []

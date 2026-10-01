@@ -12,7 +12,7 @@ This migration moves from JSON serialization in SQLite to a proper relational da
 
 ### New Approach
 - Normalized `bike` table — single source of truth for bike identity
-- Related tables: `bike_detail`, `bike_offer`, `photos` (the per-search tables `search_cache` +
+- Related tables: `bike_detail_component`, `bike_offer`, `photos` (the per-search tables `search_cache` +
   `search_bike_rating_cache` were dropped in TODO-043 — see below)
 - Foreign key constraints (enforced — on SQLite `app/models.py` sets `PRAGMA foreign_keys=ON` on every engine
   connection; PostgreSQL always enforces them)
@@ -215,7 +215,7 @@ save_search(query, old_data)
   AI-found bike exists in `bike` (the readers `get_search_by_query` / `find_bikes_by_brand`, the
   `GET /v1/bike/search-cache` endpoint and then the two per-search tables themselves were removed).
 - Details — `app.repository`: `save_bike_details`, `get_bike_details`
-  (backed by `bike_detail` + `bike_detail_component`; no TTL — stored details are returned whatever their age). Since TODO-041 `POST /v1/bike/details` is a pure read of them (normalised brand/model lookup, `short_description` included) and the live writer is the searcher (`POST /v1/bike/details/search`, `searcher/app/repository.py` `save_details`); helpers `empty_details`, `has_complete_details`, `accessory_chips`, `fill_bike_results`.
+  (backed by `bike.description` / `bike.short_description` + `bike_detail_component`; no TTL — stored details are returned whatever their age). Since TODO-041 `POST /v1/bike/details` is a pure read of them (normalised brand/model lookup, `short_description` included) and the live writer is the searcher (`POST /v1/bike/details/search`, `searcher/app/repository.py` `save_details`); helpers `empty_details`, `has_complete_details`, `accessory_chips`, `fill_bike_results`.
 - Bike photos — `app.photos_repository`: `get_bike_photos` (`POST /v1/bike/photos`) and `save_bike_photos`
   (offline pipeline only); the searcher's photo search is the live writer (backed by `bike_detail_photos`).
 - DB-first search (TODO-024) — `app.repository.find_bikes_by_details`: matches
@@ -299,7 +299,7 @@ python scripts/migrate_drop_search_tables.py --url postgresql+psycopg://biker@12
 - Deploy order: the new backend never touches the tables, so **deploy the backend first, then drop** — no failing window. Dropping
   first only makes the old backend's `save_search` log a WARNING per AI search (the answer is still returned, nothing stored is lost).
 - Run 2026-10-01: local PostgreSQL `biker-pg` (`search_bike_rating_cache` 199 + `search_cache` 46 rows, `bike` 723 kept) and
-  `cache.db` (206 + 47, `bike` 674 kept); second run `already-migrated`. Cloud SQL held 210 + 48 rows on 2026-10-01.
+  `cache.db` (206 + 47, `bike` 674 kept) and Cloud SQL (210 + 48, `bike` 728 kept, on-demand backup first); second run `already-migrated`.
 
 ## Short description added (`bike_detail.short_description`)
 
@@ -327,11 +327,27 @@ python scripts/migrate_short_description.py --url postgresql+psycopg://biker:bik
 - `scripts/purge_details_cache.py` (`--dry-run`, `--db`, `--url`) deletes the dead `endpoint_req_to_body_cache` rows of
   `'/v1/bike/details'` — local only; Cloud SQL on an explicit go.
 
+## bike_detail dropped (details moved onto `bike`)
+
+`bike_detail` held one row per bike (`description` JSON, `short_description`, timestamps). It is gone:
+
+- `bike.description` — `TEXT`, **nullable**, the JSON-serialised `BikeDescription`; **NULL = the bike has no details**. "Has details" means `bike.description IS NOT NULL` everywhere (backend, searcher, discovery processor, seed script).
+- `bike.short_description` — `TEXT NOT NULL DEFAULT ''` (`server_default` too).
+- `bike_detail_component.bike_detail_id` → **`bike_id`** (FK → `bike.id` `ON DELETE CASCADE`, `NOT NULL`, indexed `ix_bike_detail_component_bike_id`), same pattern as the photos re-key. The table keeps its name.
+- No details timestamps carry over. `repository.save_bike_details` therefore returns a **bool** (True = committed, False = failed and rolled back) instead of the old "`bike_detail.updated_at` ≥ save start" check the discovery processor used.
+- Re-saving updates the bike row's columns in place and replaces its component rows (the searcher's `save_details` replaces only the half the run produced; a components-only run on a bike without details also writes the empty description JSON so the bike counts as having details).
+
+`scripts/migrate_drop_bike_detail.py` (`--dry-run`, `--db <sqlite file>`, `--url <sqlalchemy url>`, importable `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict`) does it in ONE transaction: add the `bike` columns → copy descriptions (`''` short description when `bike_detail` lacks the column) → re-key the components (SQLite: table rebuild; PostgreSQL: `ADD COLUMN` → `UPDATE … FROM bike_detail` → `NOT NULL` + FK + index → `DROP COLUMN bike_detail_id`, under `LOCK TABLE bike, bike_detail, bike_detail_component IN SHARE ROW EXCLUSIVE MODE`) → `DROP TABLE bike_detail`. Component rows without a detail row or bike go whole into `bike_detail_component_orphans`. Verified before commit; any mismatch rolls back (exit code 1). Idempotent (`already-migrated`; a missing piece is repaired). It refuses to run while `bike_detail_photos` still has `bike_detail_id` — run `migrate_photos_bike_id.py` first (`migrate_short_description.py` is optional).
+
+**Deploy order:** (1) Cloud SQL on-demand backup, (2) run the script on Cloud SQL through the proxy — **only on the user's explicit go** — (3) deploy the backend and the searcher together, (4) the frontend is unchanged (API shapes did not change). The OLD backend breaks on a migrated database (its ORM still queries `bike_detail`), and the NEW searcher refuses to start on an unmigrated one (its `init_db()` names this script; the former `short_description` startup check is replaced by it). The new backend on an unmigrated database fails every details read/write too.
+
+Local `biker-pg` (2026-10-01): 619 details, 32972 component rows, 0 orphans, verified; rerun `already-migrated`.
+
 ## Benefits
 
 ✅ **Data Integrity** — Foreign keys, unique constraints, cascading deletes
 ✅ **Queryability** — Rich ORM queries instead of JSON parsing
-✅ **Relationships** — One-to-many (Bike → BikeOffer), One-to-one (Bike → BikeDetails)
+✅ **Relationships** — One-to-many (Bike → BikeOffer, Bike → BikeDetailComponent, Bike → BikeDetailPhoto)
 ✅ **Photo Management** — Proper ordering and sourcing
 ✅ **Indexed Lookups** — Brand, source, URL indices for fast queries
 ✅ **Future Extensions** — Easy to add new fields, relationships

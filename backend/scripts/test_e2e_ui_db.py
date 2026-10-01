@@ -222,16 +222,17 @@ def case_details(page, rep: Report, top_bike, args) -> None:
         rep.hard("E3.loaded", False, "details returned an error alert, no spec tree")
         return
 
-    # bike_detail row for this bike
+    # details stored on the bike row (bike.description IS NOT NULL)
     bd = rows(
-        "SELECT bd.id FROM bike_detail bd JOIN bike b ON b.id=bd.bike_id "
-        "WHERE LOWER(b.brand)=? AND LOWER(b.model)=?", (norm(brand), norm(model)))
-    if not rep.hard("E3.bike_detail", bool(bd), f"bike_detail row for {brand} {model}"):
+        "SELECT b.id FROM bike b "
+        "WHERE LOWER(b.brand)=? AND LOWER(b.model)=? AND b.description IS NOT NULL",
+        (norm(brand), norm(model)))
+    if not rep.hard("E3.bike_detail", bool(bd), f"bike.description set for {brand} {model}"):
         return
     bdid = bd[0][0]
 
     n_comp = scalar(
-        "SELECT COUNT(*) FROM bike_detail_component WHERE bike_detail_id=?", (bdid,))
+        "SELECT COUNT(*) FROM bike_detail_component WHERE bike_id=?", (bdid,))
     rep.hard("E3.components", (n_comp or 0) > 0,
              f"bike_detail_component rows = {n_comp}")
 
@@ -239,7 +240,7 @@ def case_details(page, rep: Report, top_bike, args) -> None:
     # The category header carries a Tailwind `uppercase` class, so inner_text()
     # comes back upper-cased while the DB keeps title-case — compare case-folded.
     db_cats = {r[0].lower() for r in rows(
-        "SELECT DISTINCT category FROM bike_detail_component WHERE bike_detail_id=?", (bdid,))}
+        "SELECT DISTINCT category FROM bike_detail_component WHERE bike_id=?", (bdid,))}
     ui_cats = [page.locator(SEL_CAT_HEADER).nth(i).inner_text().strip()
                for i in range(page.locator(SEL_CAT_HEADER).count())]
     missing = [c for c in ui_cats if c.lower() not in db_cats]
@@ -247,21 +248,20 @@ def case_details(page, rep: Report, top_bike, args) -> None:
              f"UI categories {ui_cats} all present in DB (missing={missing})")
 
     n_photos = scalar(
-        "SELECT COUNT(*) FROM bike_detail_photos WHERE bike_id="
-        "(SELECT bike_id FROM bike_detail WHERE id=?)", (bdid,)) or 0
+        "SELECT COUNT(*) FROM bike_detail_photos WHERE bike_id=?", (bdid,)) or 0
     rep.soft("E3.photos", True, f"bike_detail_photos rows = {n_photos}")
 
     # E4  round-trip fidelity: rendered spec rows == non-NULL spec rows in DB.
     db_specs = scalar(
         "SELECT COUNT(*) FROM bike_detail_component "
-        "WHERE bike_detail_id=? AND spec_key IS NOT NULL", (bdid,)) or 0
+        "WHERE bike_id=? AND spec_key IS NOT NULL", (bdid,)) or 0
     ui_specs = page.locator(SEL_SPEC_ROW).count()
     rep.hard("E4.spec_roundtrip", db_specs == ui_specs,
              f"DB spec rows={db_specs} == UI spec rows={ui_specs}")
 
     db_elems = scalar(
         "SELECT COUNT(DISTINCT component_order || '-' || element_order) "
-        "FROM bike_detail_component WHERE bike_detail_id=?", (bdid,)) or 0
+        "FROM bike_detail_component WHERE bike_id=?", (bdid,)) or 0
     ui_elems = page.locator(SEL_ELEMENT).count()
     rep.soft("E4.elements", db_elems == ui_elems,
              f"DB elements={db_elems} vs UI element links={ui_elems}")
@@ -361,9 +361,8 @@ def case_cascade(rep: Report, top_bike, args) -> None:
     print(f"  (backed up cache.db* -> {scratch})")
 
     children = {
-        "bike_detail": "SELECT COUNT(*) FROM bike_detail WHERE bike_id=?",
-        "bike_detail_component": "SELECT COUNT(*) FROM bike_detail_component WHERE bike_detail_id "
-                                 "IN (SELECT id FROM bike_detail WHERE bike_id=?)",
+        "bike_description": "SELECT COUNT(*) FROM bike WHERE id=? AND description IS NOT NULL",
+        "bike_detail_component": "SELECT COUNT(*) FROM bike_detail_component WHERE bike_id=?",
         "bike_detail_photos": "SELECT COUNT(*) FROM bike_detail_photos WHERE bike_id=?",
         "bike_offer": "SELECT COUNT(*) FROM bike_offer WHERE bike_id=?",
     }

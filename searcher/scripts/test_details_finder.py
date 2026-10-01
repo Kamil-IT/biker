@@ -173,15 +173,14 @@ def test_resave_updates_in_place_and_keeps_photos(db):
     bike_id, _ = save_details("Canyon", "Grizl", build_details("Canyon", "Grizl", _data()))
     with models.get_engine().begin() as conn:
         conn.execute(text("INSERT INTO bike_detail_photos (bike_id, url, display_order) VALUES (:b, 'https://x/p.jpg', 0)"), {"b": bike_id})
-        detail_id = conn.execute(text("SELECT id FROM bike_detail")).scalar_one()
     second = _data(short_description="Nowy opis.", components=[{"category": "Wheels", "subcategories": [
         {"subcategory": "Tyres", "elements": [{"name": "Schwalbe", "description": "", "specs": []}]}]}])
     _, saved = save_details("Canyon", "Grizl", build_details("Canyon", "Grizl", second))
     assert saved
-    assert _count("bike") == 1 and _count("bike_detail") == 1
+    assert _count("bike") == 1
     with models.get_engine().connect() as conn:
-        assert conn.execute(text("SELECT id FROM bike_detail")).scalar_one() == detail_id  # in place
-        assert conn.execute(text("SELECT short_description FROM bike_detail")).scalar_one() == "Nowy opis."
+        assert conn.execute(text("SELECT id FROM bike")).scalar_one() == bike_id  # in place
+        assert conn.execute(text("SELECT short_description FROM bike")).scalar_one() == "Nowy opis."
     assert _count("bike_detail_component") == 1  # replaced, not appended
     assert _count("bike_detail_photos") == 1  # photos untouched
 
@@ -193,7 +192,7 @@ def test_unusable_result_writes_and_deletes_nothing(db):
     bike_id, _ = save_details("Canyon", "Grizl", build_details("Canyon", "Grizl", _data()))
     rows = _count("bike_detail_component")
     assert save_details("Canyon", "Grizl", empty) == (bike_id, False)
-    assert _count("bike_detail") == 1 and _count("bike_detail_component") == rows  # stored details kept
+    assert _count("bike_detail_component") == rows  # stored details kept
 
 
 def test_description_only_is_stored(db):
@@ -220,7 +219,7 @@ def test_unknown_bike_reads_nothing(db):
     assert _count("bike") == 0
 
 
-def test_init_db_refuses_bike_detail_without_short_description(tmp_path, monkeypatch):
+def test_init_db_refuses_unmigrated_bike_detail_layout(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATABASE_URL", f"sqlite:///{tmp_path / 'old.db'}")
     monkeypatch.delenv("SEARCHER_CREATE_TABLES", raising=False)
     models.dispose_engine()
@@ -228,8 +227,8 @@ def test_init_db_refuses_bike_detail_without_short_description(tmp_path, monkeyp
         assert models.get_engine().dialect.name == "sqlite"
         models.Base.metadata.create_all(models.get_engine())
         with models.get_engine().begin() as conn:
-            conn.execute(text("ALTER TABLE bike_detail DROP COLUMN short_description"))
-        with pytest.raises(RuntimeError, match="short_description"):
+            conn.execute(text("CREATE TABLE bike_detail (id INTEGER PRIMARY KEY, bike_id INTEGER)"))  # old layout left behind
+        with pytest.raises(RuntimeError, match="migrate_drop_bike_detail"):
             models.init_db()
     finally:
         models.dispose_engine()

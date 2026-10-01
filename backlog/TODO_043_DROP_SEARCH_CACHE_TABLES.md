@@ -2,7 +2,7 @@
 
 **Branch:** `feature/043-drop-search-cache-tables`
 **Worktree:** `C:\Users\kamil_wolny\Projects\biker-wt\feature-043-drop-search-cache-tables` (backend 8001, frontend 5174, searcher 8101)
-**Status:** TODO — implemented, waiting for QA + PR
+**Status:** TODO — implemented, QA 11/11, PR #136 open
 
 ## Skąd się wzięło (inwentaryzacja bazy, 2026-10-01)
 
@@ -29,8 +29,9 @@ zniknęło w TODO-040 — zostawał sam link wyszukiwanie → rower, którego ni
    `--db`, `--url`; importowalna `migrate(...) -> dict`. Skrypt `migrate_drop_search_rating.py`
    (TODO-040) usunięty — nie ma już tabeli, którą zmieniał.
 3. **Trzy bazy:** lokalny `biker-pg` ✅ (199 + 46 wierszy, `bike` 723 bez zmian), `cache.db` ✅
-   (206 + 47, `bike` 674), **Cloud SQL — do uruchomienia przez użytkownika** przez proxy po deployu
-   backendu (klasyfikator blokuje Claude'owi dostęp do prod).
+   (206 + 47, `bike` 674), Cloud SQL ✅ (210 + 48, `bike` 728; backup on-demand „before drop search_cache
+   tables (PR 136)” zrobiony wcześniej). Uwaga: backend ze starego kodu odtwarza obie tabele puste przez
+   `create_all()` — na lokalnym `biker-pg` już się to zdarzyło, skrypt trzeba odpalić ponownie po merge'u.
 4. **Testy:** `test_details_repository.py` — `test_save_search_stores_bikes_only` +
    `test_migrate_drop_search_tables`; `test_search.py` i `test_e2e_ui_db.py` bez odwołań do tabel.
 5. **Dokumentacja:** `CLAUDE.md`, `README.md`, `backend/README.md`, `backend/app/DB_MIGRATION.md`

@@ -13,7 +13,7 @@ file under the 500-line limit.
 import logging
 import re
 
-from .models import Bike, BikeDetails, BikePopular, get_session
+from .models import Bike, BikePopular, get_session
 from .schemas import BikeDescription, PopularBike, PopularBikesResponse
 
 logger = logging.getLogger(__name__)
@@ -65,18 +65,17 @@ def get_popular_bikes() -> PopularBikesResponse:
     """The curated home-page bikes in position order — a pure DB read, no AI, no generic cache.
 
     One query: bike_popular joined to bike (brand/model as stored — the single
-    source of display casing) and left-joined to bike_detail, whose stored
-    BikeDescription JSON supplies the blurb; a bike without details gets "".
+    source of display casing) whose stored
+    BikeDescription JSON (`bike.description`) supplies the blurb; a bike without details gets "".
     Ordered by position, then id. An empty table or a DB error both yield an
     empty list — the home page must keep rendering whatever happens here.
     """
     session = get_session()
     try:
         rows = (
-            session.query(Bike.brand, Bike.model, BikeDetails.description)
+            session.query(Bike.brand, Bike.model, Bike.description)
             .select_from(BikePopular)
             .join(Bike, Bike.id == BikePopular.bike_id)
-            .outerjoin(BikeDetails, BikeDetails.bike_id == Bike.id)
             .order_by(BikePopular.position, BikePopular.id)
             .all()
         )

@@ -1,7 +1,7 @@
 """Storing bike data the way the backend reads it (TODO-036), shared by process_queue and copy_to_db.
 
 Two places, two readers:
-- `bike` + `bike_detail` (+ components) — DB-first search, POST /v1/bike/details and GET /v1/bike/details-cache;
+- `bike` (description, short_description) + `bike_detail_component` — DB-first search, POST /v1/bike/details and GET /v1/bike/details-cache;
 - the generic cache under POST /v1/bike/details — the only thing the details view's details call reads;
 - `bike_detail_photos` keyed on `bike_id` — POST /v1/bike/photos (the details view's photo gallery).
 
@@ -54,24 +54,18 @@ def find_bike_id(brand: str, model: str) -> Optional[int]:
 
 
 def bike_state(bike_id: int) -> tuple[str, str, bool]:
-    """(stored brand, stored model, has a bike_detail row) of an existing bike."""
+    """(stored brand, stored model, has details - bike.description is set) of an existing bike."""
     with session() as s:
         bike = s.get(models.Bike, bike_id)
-        has_details = s.query(models.BikeDetails.id).filter_by(bike_id=bike_id).first() is not None
+        has_details = bike.description is not None
         return bike.brand, bike.model, has_details
 
 
-def _saved_bike_id(brand: str, model: str, since: datetime) -> Optional[int]:
-    """Id of the bike save_bike_details wrote to (it matches brand/model exactly), if its details
-    row was written at or after `since` — an older row left by a rolled-back save does not count."""
+def _exact_bike_id(brand: str, model: str) -> Optional[int]:
+    """Id of the bike save_bike_details wrote to (it matches brand/model exactly)."""
     with session() as s:
         bike = s.query(models.Bike).filter_by(brand=brand, model=model).first()
-        if bike is None:
-            return None
-        details = s.query(models.BikeDetails).filter_by(bike_id=bike.id).first()
-        if details is None or details.updated_at is None or aware(details.updated_at) < since:
-            return None
-        return bike.id
+        return bike.id if bike is not None else None
 
 
 def store_details(brand: str, model: str, make_response: Callable[[str, str], BikeDetailsResponse],
@@ -90,12 +84,12 @@ def store_details(brand: str, model: str, make_response: Callable[[str, str], Bi
         if has_details:
             return KEPT, bike_id, brand, model, None
     response = make_response(brand, model)
-    start = utcnow()
-    repository.save_bike_details(brand, model, response)
-    # save_bike_details swallows its own errors (WARNING log) and rolls back, so confirm the write landed.
-    saved = _saved_bike_id(brand, model, start)
-    if saved is None:
+    # save_bike_details swallows its own errors (WARNING log, rollback) and returns False then.
+    if not repository.save_bike_details(brand, model, response):
         raise RuntimeError("save_bike_details stored nothing (see its warning in the log)")
+    saved = _exact_bike_id(brand, model)
+    if saved is None:
+        raise RuntimeError("save_bike_details stored nothing (bike row not found after the save)")
     return WRITTEN, saved, brand, model, response
 
 
