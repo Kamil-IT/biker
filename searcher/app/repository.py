@@ -9,11 +9,11 @@ searches never touch each other's rows — even when two of them run at once
 for the same bike (the UI fires Decathlon + Allegro together).
 
 Bike photos (/v1/search/photos) go into bike_detail_photos keyed on bike_id,
-written once and never replaced: get_stored_photos / save_photos below.
+written once and never replaced: save_photos below.
 
 Bike reviews (/v1/search/review, TODO-037) go into bike_review (one row per
-bike) + bike_review_source (its `ref` URLs in order): get_stored_review /
-save_review below. A review is replaced only by a usable one.
+bike) + bike_review_source (its `ref` URLs in order): save_review below. A
+review is replaced only by a usable one.
 
 Bike details (/v1/search/details, TODO-041) go into bike_detail (one row per
 bike, updated in place) + bike_detail_component (the flattened tree): a port
@@ -198,18 +198,6 @@ def _photo_urls(session, bike_id: int) -> list[str]:
     ]
 
 
-def get_stored_photos(company: str, model: str) -> tuple[Optional[int], list[str]]:
-    """(bike_id, stored photo URLs in display order); (None, []) for an unknown bike. Never creates anything."""
-    session = get_session()
-    try:
-        bike_id = _find_bike_id(session, company, model)
-        if bike_id is None:
-            return None, []
-        return bike_id, _photo_urls(session, bike_id)
-    finally:
-        session.close()
-
-
 def save_photos(company: str, model: str, photos: list[str]) -> tuple[Optional[int], list[str], int]:
     """Store `photos` for a bike that has none; returns (bike_id, the bike's photos now, rows written).
 
@@ -245,33 +233,6 @@ def save_photos(company: str, model: str, photos: list[str]) -> tuple[Optional[i
         session.rollback()
         logger.error("photos store failed | company=%r model=%r | %s", company, model, exc)
         raise
-    finally:
-        session.close()
-
-
-def _stored_review(session, bike_id: int) -> Optional[BikeReview]:
-    row = session.query(BikeReviewRow).filter(BikeReviewRow.bike_id == bike_id).one_or_none()
-    if row is None:
-        return None
-    refs = [
-        r.url for r in session.query(BikeReviewSource.url)
-        .filter(BikeReviewSource.review_id == row.id)
-        .order_by(BikeReviewSource.display_order, BikeReviewSource.id)
-    ]
-    return BikeReview(
-        score=row.score, explanation=row.explanation, ref=refs,
-        rating=row.rating, sources_used=row.sources_used,
-    )
-
-
-def get_stored_review(company: str, model: str) -> tuple[Optional[int], Optional[BikeReview]]:
-    """(bike_id, stored review or None); (None, None) for an unknown bike. Never creates anything."""
-    session = get_session()
-    try:
-        bike_id = _find_bike_id(session, company, model)
-        if bike_id is None:
-            return None, None
-        return bike_id, _stored_review(session, bike_id)
     finally:
         session.close()
 

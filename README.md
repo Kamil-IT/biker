@@ -118,8 +118,8 @@ others run, nothing queues. When the Claude subscription limit is used up, every
 `{"detail": "<the CLI's notice, e.g. You've hit your session limit · resets …>"}` and the backend's `/v1/bike/*/search`
 relays it as the same 400 — the shape of the Anthropic credit-balance 400 (TODO-038). Browser launches are capped separately (`BROWSER_MAX_CONCURRENCY`, default 2 per process).
 Only OLX and the photo search use Playwright (OLX listing photos, the manufacturer page for bike photos); the Decathlon and
-Allegro searches store no photos. A photos request for a bike that already has photos is answered from the database
-without a CLI run, and stored photos are never replaced. Allegro answers 403 to every
+Allegro searches store no photos. The searcher reads nothing from the database before a search (photos, review and details
+included, like OLX / Decathlon / Allegro); stored photos are never replaced. Allegro answers 403 to every
 automated fetch (the CLI's WebFetch and Chromium alike), so its prompt works from web-search results alone (an offer may
 come back with an empty price) — 3 offers in 67–75 s in the 2026-09-26 probes — and the Allegro gallery scrape that
 shipped with the first cut was removed after those probes returned 0 photos from it: nothing to gain, ~10 s and a
