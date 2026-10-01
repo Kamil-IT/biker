@@ -123,9 +123,9 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         "search complete | bikes=%d total_elapsed=%.2fs",
         len(bikes), time.perf_counter() - t_total,
     )
-    # save_search is not a response cache: it stores the found bikes in `bike`
-    # (a later brand/model search finds them in the DB; spec filters also need
-    # their details) and their ratings.
+    # save_search is not a response cache: it only makes sure the found bikes
+    # exist in `bike` (a later brand/model search finds them in the DB and the
+    # details view can open them). Nothing per-search is stored (TODO-043).
     if bikes:
         save_search(enriched, bikes)
         # explanation / accessories come from the bikes' stored details (TODO-041),

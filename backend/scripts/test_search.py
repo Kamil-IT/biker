@@ -91,7 +91,7 @@ class _DB:
         names = iter(range(len(params)))
         bound = re.sub(r"\?", lambda _: f":p{next(names)}", sql)
         values = {f"p{i}": v for i, v in enumerate(params)}
-        insert_with_id = re.match(r"\s*INSERT INTO (bike|search_cache|bike_offer|bike_review)\b", sql, re.I)
+        insert_with_id = re.match(r"\s*INSERT INTO (bike|bike_offer|bike_review)\b", sql, re.I)
         if insert_with_id:
             bound += " RETURNING id"
         result = self._conn.execute(text(bound), values)
@@ -157,7 +157,6 @@ def _delete_bike(brand: str, model: str) -> None:
             f"DELETE FROM bike_offer WHERE bike_id IN {ids}",
             f"DELETE FROM bike_missing_request WHERE bike_id IN {ids}",
             f"DELETE FROM bike_popular WHERE bike_id IN {ids}",
-            f"DELETE FROM search_bike_rating_cache WHERE bike_id IN {ids}",
             f"DELETE FROM bike_detail_photos WHERE bike_id IN {ids}",
             f"DELETE FROM bike_review_source WHERE review_id IN (SELECT id FROM bike_review WHERE bike_id IN {ids})",
             f"DELETE FROM bike_review WHERE bike_id IN {ids}",
@@ -183,15 +182,6 @@ def _insert_bike(brand: str, model: str) -> int:
         conn.close()
 
 
-def _drop_search_row(query: str) -> None:
-    conn = _DB()
-    try:
-        conn.execute("DELETE FROM search_cache WHERE query = ?", (query,))
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def _post(url: str, body: dict, timeout: float = 30) -> httpx.Response:
     print(f"  POST {url}  {json.dumps(body, ensure_ascii=False)}")
     return httpx.post(url, json=body, timeout=timeout)
@@ -209,7 +199,7 @@ def _assert_offers(offers: list[dict], source: str) -> None:
 
 FIX_SEARCH_BRAND, FIX_SEARCH_MODEL = "Smoke Fixture", "Search Bike"
 # The stale generic-cache answer. Namespaced like every fixture: a server still on the
-# old code serves it and save_search() stores its search + bike, which the test removes.
+# old code serves it and save_search() stores its bike, which the test removes.
 FIX_STALE_QUERY, FIX_STALE_MODEL = "smoke fixture: stale generic row", "Stale Cache Row"
 FIX_SEARCH_BARE_MODEL = "Search Bike Without Details"
 FIX_SHORT = "Krótki opis testowy. Drugie zdanie opisu."
@@ -277,8 +267,7 @@ def case_search_db_hit():
         _delete_bike(FIX_SEARCH_BRAND, FIX_SEARCH_BARE_MODEL)
         _cache_row_delete("/v1/bike/search", key)
         _delete_bike(FIX_SEARCH_BRAND, FIX_SEARCH_MODEL)
-        _delete_bike(FIX_SEARCH_BRAND, FIX_STALE_MODEL)  # rating rows first, then the bike
-        _drop_search_row(FIX_STALE_QUERY)
+        _delete_bike(FIX_SEARCH_BRAND, FIX_STALE_MODEL)
 
 
 FIX_DETAILS_BRAND, FIX_DETAILS_MODEL = "Smoke Fixture", "Details Bike"

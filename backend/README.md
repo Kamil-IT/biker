@@ -68,8 +68,8 @@ pip install -U anthropic   # existing venv: -r never upgrades an installed unpin
 copy .env.example .env   # then edit .env with your real ANTHROPIC_API_KEY
 python scripts/migrate_photos_bike_id.py --dry-run   # REQUIRED once on every existing database — see note below
 python scripts/migrate_photos_bike_id.py
-python scripts/migrate_drop_search_rating.py --dry-run   # REQUIRED once on every existing database (TODO-040)
-python scripts/migrate_drop_search_rating.py
+python scripts/migrate_drop_search_tables.py --dry-run   # once on every existing database (TODO-043): drops search_cache + search_bike_rating_cache
+python scripts/migrate_drop_search_tables.py
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -87,12 +87,12 @@ uvicorn app.main:app --reload --port 8000
 > place instead of deleting it, so it can no longer cascade-delete photos through the old `bike_detail_id` foreign key. See [Photos migration](#photos-migration-scriptsmigrate_photos_bike_idpy) below and
 > [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md).
 >
-> **Also run `scripts/migrate_drop_search_rating.py` once on every existing database before starting the new backend**
-> (TODO-040; same `--dry-run` / `--db` / `--url` options). It drops `search_bike_rating_cache.rating`, the column that
-> held the removed search `match_score`. The column is `NOT NULL`, so until it is gone the new backend's `save_search`
-> fails (rollback + WARNING, the AI answer is still returned, just not stored); once it is gone the **old** backend's
-> `save_search` fails the same way. Production order: (1) migrate Cloud SQL, (2) deploy the backend, (3) deploy the frontend.
-> See [Search rating migration](#search-rating-migration-scriptsmigrate_drop_search_ratingpy).
+> **Also run `scripts/migrate_drop_search_tables.py` once on every existing database** (TODO-043; same `--dry-run` /
+> `--db` / `--url` options). It drops the write-only per-search tables `search_cache` + `search_bike_rating_cache`, which
+> nothing has read since TODO-024/025; `store.save_search` now only makes sure the found bikes exist in `bike`. The new
+> backend runs fine before the drop; after it the **old** backend's `save_search` logs a WARNING per AI search (the answer is
+> still returned). Production order: (1) deploy the backend, (2) drop the tables on Cloud SQL.
+> See [Search tables drop](#search-tables-drop-scriptsmigrate_drop_search_tablespy).
 
 `SEARCHER_URL` / `SEARCHER_API_KEY` (TODO-031/032/033/035) point `POST /v1/bike/used/search`, `POST /v1/bike/decathlon/search`,
 `POST /v1/bike/allegro/search`, `POST /v1/bike/photos/search`, `POST /v1/bike/review/search` and `POST /v1/bike/details/search` (TODO-037/041) at the on-demand searcher (top-level `searcher/`, `http://localhost:8100` locally; the key
@@ -207,20 +207,17 @@ wraps this for quick reuse. Use it for ad-hoc prompt iteration.
 
 ## Follow-up cache tables
 
-Two queryable layers (in the same `cache.db`) sit **on top of** the generic response cache (`app/cache.py`). Both are now normalised SQLAlchemy tables written by `app/repository.py`. They let follow-up requests be served without any web/Claude call:
+One queryable layer sits **on top of** the generic response cache (`app/cache.py`): normalised SQLAlchemy tables written by `app/repository.py` (and, live, by the searcher). It lets follow-up requests be served without any web/Claude call:
 
 | Layer | Tables | Key | TTL |
 |-------|--------|-----|-----|
-| Search | `search_cache` + `search_bike_rating_cache` (`display_order`; no score since TODO-040 — `explanation` / `accessories` are kept but written `""` / `"[]"` since TODO-041) | `search_cache.query` — the `norm()`'d enriched query | 24 h |
 | Details | `bike` (`description`, `short_description`) + `bike_detail_component` | `bike.(brand_norm, model_norm)` — `.strip().lower()` of brand+model | none (TODO-035) |
 
-Both reference the shared `bikes` identity row, so a bike found by search and a bike with cached details are the same row.
+A bike found by search and a bike with stored details are the same `bike` row.
 
-- Both are indexed on their key columns and upsert on conflict (a re-run refreshes the entry).
-- Freshness: searches are fresh for 24 h (`store.SEARCH_TTL_SECONDS`, a module constant on `time_stored`; there is no per-row `ttl_seconds` column) and a stale one is treated as a miss (never served). **Details have no TTL** since TODO-035 (`repository.TTL_DETAILS` was removed): a stored details row is served whatever its age.
-- Search results carry an explicit **`display_order`** — the order of the AI answer, which a row set (unlike the old JSON blob) does not preserve for free. Reads order by `display_order`.
-- Search storage is **write-only**: `store.save_search` stores AI-found bikes into `search_cache` + `search_bike_rating_cache`, but nothing reads those two tables any more (the `GET /v1/bike/search-cache` endpoint and the `store.py` readers were removed), so the 24 h freshness above is no longer checked anywhere.
-- Writes are best-effort: a cache-table failure is logged but never breaks the underlying request.
+- Indexed on the key columns, upsert on conflict (a re-run refreshes the entry). **Details have no TTL** since TODO-035 (`repository.TTL_DETAILS` was removed): stored details are served whatever their age.
+- Search storage is **bikes only** (TODO-043): `store.save_search` makes sure every AI-found bike exists in `bike` and stores nothing else. The per-search tables `search_cache` + `search_bike_rating_cache` (and `store.SEARCH_TTL_SECONDS`) were dropped — nothing had read them since the `GET /v1/bike/search-cache` endpoint and the `store.py` readers went; `scripts/migrate_drop_search_tables.py` removes them from an existing database.
+- Writes are best-effort: a store failure is logged but never breaks the underlying request.
 - This layer is **additive** — the generic per-endpoint cache is unchanged.
 
 
@@ -301,29 +298,28 @@ python scripts/migrate_drop_bike_detail.py --url postgresql+psycopg://biker:bike
 
 `POST /v1/bike/details` no longer reads the generic cache, so its old rows (`endpoint_req_to_body_cache.endpoint = '/v1/bike/details'`) are dead. `python scripts/purge_details_cache.py [--dry-run] [--db <sqlite file>] [--url <sqlalchemy url>]` deletes exactly those rows (nothing else — equipment details, Ceneo, … stay) and prints the count; idempotent, importable as `purge(url_or_path=None, dry_run=False, verbose=True) -> dict`. Run it locally; on Cloud SQL only on an explicit go.
 
-#### Search rating migration (`scripts/migrate_drop_search_rating.py`)
+#### Search tables drop (`scripts/migrate_drop_search_tables.py`)
 
-TODO-040 removed the search `match_score` from the API; its storage column `search_bike_rating_cache.rating` goes with it.
-Columns afterwards: `id`, `search_cache_id`, `bike_id`, `explanation`, `accessories`, `display_order` (`display_order` stays —
-it is the AI answer's order, not a score).
+TODO-043 drops `search_cache` + `search_bike_rating_cache`: write-only since the cache-read endpoints went (TODO-024/025), payload
+columns written as `""` / `"[]"` since TODO-041. `store.save_search` now only makes sure the found bikes exist in `bike`.
 
 ```bash
 cd backend
-python scripts/migrate_drop_search_rating.py --dry-run     # report only; database: $DATABASE_URL (backend/.env), else cache.db
-python scripts/migrate_drop_search_rating.py               # migrate
-python scripts/migrate_drop_search_rating.py --db path/to/copy.db
-python scripts/migrate_drop_search_rating.py --url postgresql+psycopg://biker:biker@localhost:5432/<db>
+python scripts/migrate_drop_search_tables.py --dry-run     # report only; database: $DATABASE_URL (backend/.env), else cache.db
+python scripts/migrate_drop_search_tables.py               # drop
+python scripts/migrate_drop_search_tables.py --db path/to/copy.db
+python scripts/migrate_drop_search_tables.py --url postgresql+psycopg://biker@127.0.0.1:6543/<db>   # password from PGPASSFILE / PGPASSWORD
 ```
 
-- `ALTER TABLE search_bike_rating_cache DROP COLUMN rating` on both dialects (SQLite ≥ 3.35), in one transaction; PostgreSQL
-  takes `LOCK TABLE search_bike_rating_cache IN SHARE ROW EXCLUSIVE MODE` first. Every other column of every row is snapshotted
-  before and compared after — any difference rolls back and leaves the database unchanged (exit code 1). Row counts are printed.
-- Idempotent: no `rating` column → `already-migrated`, nothing written; no table → `absent` (`init_db()` creates it without the
-  column). Importable as `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `rows_before`, `rows_after`,
-  `verified`, `error`).
-- **Required on every existing database, BEFORE the new backend runs against it** (production: migrate Cloud SQL → deploy the
-  backend → deploy the frontend). Between the migration and the backend deploy the old backend's `save_search` fails (it still
-  writes `rating`): rollback + WARNING, the search answer itself is unaffected, nothing already stored is lost.
+- `DROP TABLE search_bike_rating_cache` (the child — it FKs to `search_cache` and `bike`) then `DROP TABLE search_cache`, in one
+  transaction on both dialects. The `bike` row count is compared before and after; any difference rolls back (exit code 1).
+  Row counts of the dropped tables are printed.
+- Idempotent: neither table → `already-migrated`; one of them present (half-dropped) → still migrated. Importable as
+  `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `dropped`, `bikes_before`, `bikes_after`, `verified`, `error`).
+- The new backend never touches the tables, so it runs fine on an unmigrated database; the **old** backend's `save_search` fails on a
+  migrated one (rollback + WARNING, the search answer is still returned, nothing stored is lost). Production: deploy the backend, then drop.
+- Run 2026-10-01 on the local PostgreSQL `biker-pg` (199 + 46 rows, `bike` 723 kept), `cache.db` (206 + 47 rows, `bike` 674 kept) and Cloud SQL (210 + 48 rows, `bike` 728 kept, after an on-demand backup); second run a no-op.
+  The TODO-040 `migrate_drop_search_rating.py` is gone with the table.
 
 ## Search Cache
 
@@ -398,7 +394,7 @@ All fields except `search` default to `null` (no constraint). The backend assemb
 0. DB reads only — the DB details search over `bike` + `bike_detail_component` (skipped when no checkable field is set). **A hit returns immediately, making zero outbound HTTP calls.** No generic-cache lookup. See [Search Cache](#search-cache)
 1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns every matching bike as a JSON array (`brand` + `model` only since TODO-041 — min 1: when nothing meets every filter, the closest bike, no longer with an explanation of the missed filter; `max_tokens=8000`, a warning is logged on `stop_reason == "max_tokens"`), parsed with `app/json_extract.extract_json()`; the result is then filled from stored details (`repository.fill_bike_results`, DB only). Runs only on a DB miss
 
-A response with no parseable JSON returns `bikes: []` (never a 502) and nothing is stored; an upstream API error is a 502, except an Anthropic 400, which is a 400 with Anthropic's message. When the AI returns bikes, they are written to `bike` + `search_cache` + `search_bike_rating_cache` (order only; `explanation` / `accessories` columns `""` / `"[]"`) via `store.save_search` — never to the generic cache. A DB-served result is not written anywhere — see [Search Cache](#search-cache).
+A response with no parseable JSON returns `bikes: []` (never a 502) and nothing is stored; an upstream API error is a 502, except an Anthropic 400, which is a 400 with Anthropic's message. When the AI returns bikes, `store.save_search` makes sure each one exists in `bike` (nothing per-search is stored since TODO-043) — never the generic cache. A DB-served result is not written anywhere — see [Search Cache](#search-cache).
 
 ---
 

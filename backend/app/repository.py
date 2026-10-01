@@ -24,8 +24,7 @@ from .schemas import (
 
 logger = logging.getLogger(__name__)
 
-# The search cache (search_cache + search_bike_rating_cache) lives in store.py.
-# This module owns the bike-details helpers and the DB-first search below.
+# store.py puts AI-found bikes into `bike` (save_search). This module owns the bike-details helpers and the DB-first search below.
 
 
 def rebuild_components(rows) -> list[BikeCategory]:

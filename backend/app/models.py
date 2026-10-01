@@ -124,8 +124,9 @@ class Bike(Base):
     short_description = Column(Text, nullable=False, default="", server_default="")
 
     # Relationships
-    # Search results are no longer their own table — a search's rated bikes live
-    # in search_bike_rating_cache (which FKs to bike). Details and offers below.
+    # A search stores nothing but the bikes it found (store.save_search → this
+    # table); the search_cache / search_bike_rating_cache tables were dropped in
+    # TODO-043. Components, offers, photos and the review hang off this row.
     components = relationship(
         "BikeDetailComponent",
         back_populates="bike",
@@ -293,59 +294,6 @@ class BikeReviewSource(Base):
 
     # Relationships
     review = relationship("BikeReview", back_populates="sources")
-
-
-# --- Search cache --------------------------------------------------------
-# One cached search query fans out to many rated bikes. `search_cache` holds
-# just the query and when it was stored; each bike it returned is one row in
-# `search_bike_rating_cache`, which FKs to the canonical `bike`. This replaces
-# the earlier design where `search_cache.bikes` was a JSON array of ids.
-
-
-class SearchCache(Base):
-    """One cached search. Its rated bikes live in search_bike_rating_cache.
-
-    Freshness is `time_stored + store.SEARCH_TTL_SECONDS` (24 h), a module
-    constant rather than a per-row column — mirrors how details TTL works.
-    """
-
-    __tablename__ = "search_cache"
-
-    id = Column(Integer, primary_key=True)
-    query = Column(Text, nullable=False, unique=True, index=True)
-    time_stored = Column(String(64), nullable=False)  # ISO-8601 UTC
-
-    # Relationships
-    ratings = relationship(
-        "SearchBikeRating",
-        back_populates="search",
-        cascade="all, delete-orphan",
-        order_by="SearchBikeRating.display_order",
-    )
-
-
-class SearchBikeRating(Base):
-    """One bike returned by one cached search — one row = one bike.
-
-    Carries the per-*search* fields (explanation, accessories, display_order) while
-    the bike identity is a FK to `bike`. accessories is an inline JSON array of
-    strings; brand/model are NOT duplicated here, they come via the `bike` FK.
-    """
-
-    __tablename__ = "search_bike_rating_cache"
-
-    id = Column(Integer, primary_key=True)
-    search_cache_id = Column(
-        Integer, ForeignKey("search_cache.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
-    explanation = Column(Text, nullable=False, default="")
-    accessories = Column(Text, nullable=False, default="[]")  # JSON array of strings
-    display_order = Column(Integer, nullable=False, default=0)
-
-    # Relationships
-    search = relationship("SearchCache", back_populates="ratings")
-    bike = relationship("Bike")
 
 
 # --- Missing-data requests (TODO-026) ------------------------------------
