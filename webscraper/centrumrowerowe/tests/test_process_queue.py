@@ -187,7 +187,7 @@ def test_photos_of_a_bike_without_details_are_kept(temp_db):
 def test_old_details_are_kept_no_ttl(temp_db):
     repository.save_bike_details("Romet", "Wagant 3", StubParsed().to_details_response("Romet", "Wagant 3"))
     with pq._tx() as s:
-        s.query(models.BikeDetails).update({models.BikeDetails.updated_at: utcnow() - timedelta(days=400)})
+        s.query(models.Bike).update({models.Bike.updated_at: utcnow() - timedelta(days=400)})
     add_row()
     assert claim_and_process(stub_parse()) == [SKIPPED]
     assert len(bike_rows()) == 1
@@ -336,21 +336,21 @@ def test_main_dry_run_cli(temp_db, monkeypatch):
 def test_failed_save_is_failed_and_writes_nothing(temp_db, monkeypatch):
     with pq._tx() as s:
         s.add(models.Bike(brand="Romet", model="Wagant 3"))
-    monkeypatch.setattr(repository, "save_bike_details", lambda *a, **k: None)  # swallowed failure
+    monkeypatch.setattr(repository, "save_bike_details", lambda *a, **k: False)  # swallowed failure
     row_id = add_row()
     assert claim_and_process(stub_parse()) == [FAILED]
     assert "save_bike_details stored nothing" in get_row(row_id).last_error
     with pq.session() as s:
-        assert s.query(models.BikeDetails).count() == 0
+        assert s.query(models.Bike).filter(models.Bike.description.isnot(None)).count() == 0
     assert stored_photos("Romet", "Wagant 3") == []  # nothing half-written: photos come after the details
 
 
-def test_saved_details_must_be_new(temp_db):
-    """A details row older than the save start does not count as written (bike_store._saved_bike_id)."""
+def test_saved_details_are_found_by_exact_identity(temp_db):
+    """After a True save the bike is found by its exact brand/model (bike_store._exact_bike_id)."""
     import bike_store
     repository.save_bike_details("Romet", "Wagant 3", StubParsed().to_details_response("Romet", "Wagant 3"))
-    assert bike_store._saved_bike_id("Romet", "Wagant 3", utcnow() - timedelta(minutes=1)) is not None
-    assert bike_store._saved_bike_id("Romet", "Wagant 3", utcnow() + timedelta(minutes=1)) is None
+    assert bike_store._exact_bike_id("Romet", "Wagant 3") is not None
+    assert bike_store._exact_bike_id("romet", "wagant 3") is None
 
 
 def test_row_taken_over_before_start_is_left_alone(temp_db):

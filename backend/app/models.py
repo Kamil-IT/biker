@@ -116,11 +116,26 @@ class Bike(Base):
     model = Column(String(255), nullable=False, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    # Details live on the bike itself (the former `bike_detail` table was dropped
+    # by scripts/migrate_drop_bike_detail.py). `description` = JSON-serialised
+    # BikeDescription; NULL = the bike has no details. `short_description` = the
+    # two-sentence Polish summary, "" = none.
+    description = Column(Text, nullable=True)
+    short_description = Column(Text, nullable=False, default="", server_default="")
 
     # Relationships
     # Search results are no longer their own table — a search's rated bikes live
     # in search_bike_rating_cache (which FKs to bike). Details and offers below.
-    details = relationship("BikeDetails", back_populates="bike", cascade="all, delete-orphan", uselist=False)
+    components = relationship(
+        "BikeDetailComponent",
+        back_populates="bike",
+        cascade="all, delete-orphan",
+        order_by=(
+            "BikeDetailComponent.component_order, "
+            "BikeDetailComponent.element_order, "
+            "BikeDetailComponent.spec_order"
+        ),
+    )
     offers = relationship("BikeOffer", back_populates="bike", cascade="all, delete-orphan")
     photos = relationship(
         "BikeDetailPhoto", back_populates="bike", cascade="all, delete-orphan",
@@ -131,39 +146,11 @@ class Bike(Base):
     __table_args__ = (UniqueConstraint("brand", "model", name="uq_bike_brand_model"),)
 
 
-class BikeDetails(Base):
-    """Full bike specifications and details."""
-
-    __tablename__ = "bike_detail"
-
-    id = Column(Integer, primary_key=True)
-    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
-    description = Column(Text, nullable=False)  # JSON serialized BikeDescription
-    # TODO-041: two-sentence Polish summary written by the searcher; "" = none.
-    # scripts/migrate_short_description.py adds it to an existing database.
-    short_description = Column(Text, nullable=False, default="", server_default="")
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-    # Relationships
-    bike = relationship("Bike", back_populates="details")
-    components = relationship(
-        "BikeDetailComponent",
-        back_populates="details",
-        cascade="all, delete-orphan",
-        order_by=(
-            "BikeDetailComponent.component_order, "
-            "BikeDetailComponent.element_order, "
-            "BikeDetailComponent.spec_order"
-        ),
-    )
-
-
 class BikeDetailPhoto(Base):
     """Photos of a bike, keyed on the bike itself (not on its details row).
 
     Photos are written by the searcher's photo search and are independent of
-    `bike_detail`: a details re-save or delete leaves them alone. The table
+    the bike's details: a details re-save or delete leaves them alone. The table
     kept its old name; `bike_id` replaced `bike_detail_id`
     (scripts/migrate_photos_bike_id.py migrates an existing database).
     """
@@ -204,7 +191,7 @@ class BikeDetailComponent(Base):
     __tablename__ = "bike_detail_component"
 
     id = Column(Integer, primary_key=True)
-    bike_detail_id = Column(Integer, ForeignKey("bike_detail.id", ondelete="CASCADE"), nullable=False, index=True)
+    bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
 
     # category / subcategory level — repeat across the rows that share them
     category = Column(String(255), nullable=False, index=True)
@@ -222,7 +209,7 @@ class BikeDetailComponent(Base):
     spec_order = Column(Integer, nullable=True)
 
     # Relationships
-    details = relationship("BikeDetails", back_populates="components")
+    bike = relationship("Bike", back_populates="components")
 
 
 class BikeOffer(Base):

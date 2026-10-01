@@ -1,6 +1,6 @@
 """Validator service (port 9104).
 
-Checks that everything needed to save a bike_detail row is present and sane.
+Checks that everything needed to save the bike details is present and sane.
 Returns which side to re-fetch so the coordinator can ask for a targeted
 re-research instead of redoing the whole bike.
 

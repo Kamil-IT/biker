@@ -19,8 +19,8 @@ Defines 8 tables with relationships and constraints:
         │          │                  │
         ↓          ↓                  ↓
 ┌──────────────┐ ┌──────────────┐ ┌──────────────────────────┐
-│ BikeDetails  │ │ BikeOffer    │ │ SearchBikeRating         │
-│ (specs) 1:1  │ │ (listings)   │ │ (per-search rated bike)  │
+│ BikeDetailCo.│ │ BikeOffer    │ │ SearchBikeRating         │
+│ (specs) 1:N  │ │ (listings)   │ │ (per-search rated bike)  │
 │              │ │ 1:N          │ │ FK bike + FK search_cache│
 └──┬───────────┘ └──┬───────────┘ └──────────┬───────────────┘
    │                │                          │
@@ -38,7 +38,7 @@ Defines 8 tables with relationships and constraints:
 - Shared across search ratings, details, and offers
 - Timestamp tracking (created_at, updated_at)
 - One-to-many: bike_offer, search_bike_rating_cache
-- One-to-one: bike_detail, bike_review
+- One-to-one: bike_review; one-to-many: bike_detail_component (details themselves are `bike.description` / `bike.short_description`)
 
 **`SearchCache`** / **`SearchBikeRating`** — the search cache
 - `search_cache`: one row per query (`query`, `time_stored`)
@@ -48,14 +48,13 @@ Defines 8 tables with relationships and constraints:
 - TTL: 24 h from `store.SEARCH_TTL_SECONDS` vs `time_stored`
 - (Replaced the earlier `bike_results` + `accessories` tables, now removed)
 
-**`BikeDetails`** — Full specifications for one bike
-- Unique per Bike (one-to-one)
+**Bike details** — the `bike.description` / `bike.short_description` columns (table `bike_detail` was dropped by `scripts/migrate_drop_bike_detail.py`; NULL description = no details) and `BikeDetailComponent` rows keyed on `bike_id`
 - Stores description as JSON (BikeDescription model)
 - Components are normalised into `bike_details_component` →
   `bike_details_component_element` → `bike_details_component_spec`, not a JSON blob
 - No TTL: stored details are returned whatever their age (`repository.TTL_DETAILS` was removed in TODO-035)
 - Photos are no longer under details — see `BikeDetailPhoto` (keyed on `bike_id`)
-- Timestamps: created_at, updated_at
+- Timestamps: the bike's `updated_at` only
 
 **`BikeDetailPhoto`** — Photo URL of a bike (table `bike_detail_photos`)
 - Belongs to Bike (`bike_id`, `ON DELETE CASCADE`), not to BikeDetails (TODO-035; migration `scripts/migrate_photos_bike_id.py`)

@@ -15,10 +15,10 @@ Bike reviews (/v1/search/review, TODO-037) go into bike_review (one row per
 bike) + bike_review_source (its `ref` URLs in order): save_review below. A
 review is replaced only by a usable one.
 
-Bike details (/v1/search/details, TODO-041) go into bike_detail (one row per
-bike, updated in place) + bike_detail_component (the flattened tree): a port
-of the backend's repository.save_bike_details / get_bike_details, plus the
-new short_description column. get_stored_details / save_details below.
+Bike details (/v1/search/details, TODO-041) go onto the bike row itself
+(`description` / `short_description`, updated in place) + bike_detail_component
+(the flattened tree, keyed on bike_id): a port of the backend's
+repository.save_bike_details / get_bike_details. get_stored_details / save_details below.
 """
 import logging
 from datetime import datetime, timezone
@@ -34,7 +34,6 @@ from .models import (
     BikeReview as BikeReviewRow,  # aliased: schemas.BikeReview is the response shape
     BikeReviewSource,
     BikeDetailComponent,
-    BikeDetails as BikeDetailsRow,  # aliased: schemas.BikeDetails is the response shape
     dialect_insert,
     get_session,
 )
@@ -320,8 +319,8 @@ def _rebuild_components(rows) -> list[BikeCategory]:
 
 
 def _stored_details(session, bike_id: int, company: str, model: str) -> Optional[BikeDetails]:
-    row = session.query(BikeDetailsRow).filter(BikeDetailsRow.bike_id == bike_id).one_or_none()
-    if row is None:
+    row = session.get(Bike, bike_id)
+    if row is None or row.description is None:
         return None
     try:
         description = BikeDescription.model_validate_json(row.description)
@@ -368,9 +367,8 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
 
     Usable = a non-empty component tree or a non-empty description. Then, in
     one transaction: the bike row is created if missing (caller's casing; an
-    existing placeholder casing is upgraded), its bike_detail row is updated
-    IN PLACE (id stable; description JSON and short_description replaced) or
-    inserted, and its bike_detail_component rows are replaced with the
+    existing placeholder casing is upgraded), its details columns are updated
+    IN PLACE (description JSON and short_description replaced), and its bike_detail_component rows are replaced with the
     flattened tree (one row per spec, an element without specs gets one row
     with NULL spec_*; component_order counts subcategories across the tree).
     Photos hang off `bike` and are never touched. An unusable result writes and
@@ -386,24 +384,19 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
         bike_id = _get_or_create_bike(session, company, model)
         _upgrade_casing(session, bike_id, company, model)
         now = datetime.now(timezone.utc)
-        row = session.query(BikeDetailsRow).filter_by(bike_id=bike_id).first()
+        row = session.get(Bike, bike_id)
         has_desc = bool(details.description.text.strip())
         has_comps = has_components(details)
-        if row is not None:
-            # Only the half this run produced is replaced; the other half stays as stored.
-            if has_desc:
-                row.description = details.description.model_dump_json()
-                row.short_description = details.short_description
-            row.updated_at = now
-            if has_comps:
-                session.query(BikeDetailComponent).filter_by(bike_detail_id=row.id).delete(synchronize_session=False)
-                session.expire(row, ["components"])
-        else:
-            row = BikeDetailsRow(
-                bike_id=bike_id, description=details.description.model_dump_json(),
-                short_description=details.short_description,
-            )
-            session.add(row)
+        # Only the half this run produced is replaced; the other half stays as stored.
+        # A bike without stored details (description NULL) gets the run's description JSON
+        # even when empty, so "has details" (description IS NOT NULL) holds afterwards.
+        if has_desc or row.description is None:
+            row.description = details.description.model_dump_json()
+            row.short_description = details.short_description
+        row.updated_at = now
+        if has_comps:
+            session.query(BikeDetailComponent).filter_by(bike_id=bike_id).delete(synchronize_session=False)
+            session.expire(row, ["components"])
         session.flush()
 
         comp_order = 0
@@ -412,7 +405,7 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
             for subcategory in category.subcategories:
                 for e_idx, element in enumerate(subcategory.elements):
                     base = dict(
-                        bike_detail_id=row.id, category=category.category, subcategory=subcategory.subcategory,
+                        bike_id=bike_id, category=category.category, subcategory=subcategory.subcategory,
                         component_order=comp_order, element_name=element.name,
                         element_description=element.description, element_order=e_idx,
                     )
@@ -426,8 +419,8 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
                 comp_order += 1
         session.commit()
         logger.info(
-            "details stored | company=%r model=%r bike_id=%d detail_id=%d component_rows=%d",
-            company, model, bike_id, row.id, rows,
+            "details stored | company=%r model=%r bike_id=%d component_rows=%d",
+            company, model, bike_id, rows,
         )
         return bike_id, True
     except Exception as exc:
