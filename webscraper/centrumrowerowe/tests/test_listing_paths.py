@@ -53,7 +53,7 @@ def test_store_error_fails_at_once_without_trying_the_next_listing(temp_db, monk
         add_listing(s, row_id, "pd2", url=OLD_URL, seen_ago=timedelta(days=3))
     with pq._tx() as s:
         s.add(models.Bike(brand="Romet", model="Wagant 3"))
-    monkeypatch.setattr(repository, "save_bike_details", lambda *a, **k: None)  # swallowed save failure
+    monkeypatch.setattr(repository, "save_bike_details", lambda *a, **k: False)  # swallowed save failure
     fetched = []
     ids = pq.claim_batch(10)
     assert [pq.process_row(i, fetch=lambda u: fetched.append(u) or (200, ""), parse=stub_parse()) for i in ids] \

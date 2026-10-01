@@ -161,8 +161,7 @@ def _delete_bike(brand: str, model: str) -> None:
             f"DELETE FROM bike_detail_photos WHERE bike_id IN {ids}",
             f"DELETE FROM bike_review_source WHERE review_id IN (SELECT id FROM bike_review WHERE bike_id IN {ids})",
             f"DELETE FROM bike_review WHERE bike_id IN {ids}",
-            f"DELETE FROM bike_detail_component WHERE bike_detail_id IN (SELECT id FROM bike_detail WHERE bike_id IN {ids})",
-            f"DELETE FROM bike_detail WHERE bike_id IN {ids}",
+            f"DELETE FROM bike_detail_component WHERE bike_id IN {ids}",
             "DELETE FROM bike WHERE brand = ? AND model = ?",
         ):
             conn.execute(sql, p)

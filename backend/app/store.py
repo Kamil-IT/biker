@@ -113,6 +113,6 @@ def save_search(query: str, bikes: list[BikeResult], ttl: int = SEARCH_TTL_SECON
 # ── bike details ─────────────────────────────────────────────────────────
 # `save_bike_details` / `get_bike_details` used to live here, backed by a
 # `bike_details_cache` blob table. That table has been migrated into
-# `bike_detail` + `bike_detail_component` and dropped; the two helpers now live
+# the bike row + `bike_detail_component` and dropped; the two helpers now live
 # in `repository.py` and `main.py` imports them from there. Nothing in this
 # module recreates the old table — that is deliberate, see TODO-019.

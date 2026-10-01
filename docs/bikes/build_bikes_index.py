@@ -155,7 +155,7 @@ def main() -> int:
         conn = sqlite3.connect(db)
         for brand, model in conn.execute(
             "select b.brand, b.model from bike b "
-            "where exists (select 1 from bike_detail d where d.bike_id = b.id)"
+            "where b.description is not null"
         ):
             nb, nm = norm(brand), norm(model)
             stored_exact.add((nb, nm))

@@ -31,7 +31,7 @@ orchestrating a 22-agent swarm.
   `{ brand, model, year, url, source, confidence, ref, price, currency, ... }`.
   Documented in `docs/README-bike-dataset.md`.
 - Component JSON shape: `backend/app/prompts/bike_details.md` — **follow it exactly**.
-- Target tables: `bike`, `bike_detail`, `bike_detail_component`, `bike_detail_photos`
+- Target tables: `bike` (details in `description` / `short_description`), `bike_detail_component`, `bike_detail_photos`
   (ORM in `backend/app/models.py`, writer in `backend/app/repository.py`).
 
 ---
@@ -253,7 +253,7 @@ speculatively and you never accept work from a researcher.
 
 Do **not** hand-write SQL. Go through the ORM writer so the flattening, ordering and
 cascade behaviour stay identical to the live `/v1/bike/details` path
-(`repository.save_bike_details` writes `bike` → `bike_detail` → `bike_detail_component`
+(`repository.save_bike_details` writes `bike` (description columns) → `bike_detail_component`
 one row per spec, `component_order`/`element_order`/`spec_order` preserving order → and
 `bike_detail_photos` ordered by `display_order`).
 
@@ -384,7 +384,7 @@ Responsibilities:
    - before/after DB counts:
 
 ```bash
-python -c "import sqlite3;c=sqlite3.connect('cache.db');print({t:c.execute(f'select count(*) from {t}').fetchone()[0] for t in ('bike','bike_detail','bike_detail_component','bike_detail_photos')})"
+python -c "import sqlite3;c=sqlite3.connect('cache.db');print({t:c.execute(f'select count(*) from {t}').fetchone()[0] for t in ('bike','bike_detail_component','bike_detail_photos')})"
 ```
 
 ---
@@ -411,7 +411,7 @@ python -c "import sqlite3;c=sqlite3.connect('cache.db');print({t:c.execute(f'sel
 
 - `backend/cache.db` is the live DB (`models.get_engine()` → `backend/cache.db`). The
   backup step in §3 is not optional at 20-agent scale.
-- `bike_detail.description` stores `BikeDescription` as JSON (`text` / `segments` /
+- `bike.description` stores `BikeDescription` as JSON (`text` / `segments` /
   `citations`); `segments` and `citations` may be empty — the frontend renders `text`.
 - Dataset coverage is skewed: Trek, Giant, Cube, Canyon and Merida are **absent**, so a
   brand-filtered run against those returns nothing. The 91 brands that carry models are

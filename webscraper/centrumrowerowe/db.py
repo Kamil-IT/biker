@@ -73,7 +73,7 @@ def norm(value: Optional[str]) -> str:
 
 
 class BikeDiscovery(models.Base):
-    """One bike waiting to be turned into a `bike` + `bike_detail` row, and its processing state.
+    """One bike waiting to be turned into a `bike` row with details, and its processing state.
 
     Identity = (company_norm, model_norm): a bike listed twice (by one shop or several) is one
     row with several listings. The norm columns follow company/model through `@validates` on

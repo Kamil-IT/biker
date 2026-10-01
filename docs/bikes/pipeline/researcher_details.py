@@ -1,4 +1,4 @@
-"""Researcher 1 — bike_detail + bike_detail_component (port 9102).
+"""Researcher 1 — bike details (bike.description) + bike_detail_component (port 9102).
 
 Mirrors app/bike_details_finder.py: one focused search per component category,
 same 8 categories, same per-category system prompts, same extract_json parsing

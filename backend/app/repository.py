@@ -6,7 +6,6 @@ from typing import Optional
 
 from .models import (
     Bike,
-    BikeDetails,
     BikeDetailComponent,
     BikeMissingRequest,
     dialect_insert,
@@ -75,13 +74,13 @@ def rebuild_components(rows) -> list[BikeCategory]:
     ]
 
 
-def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> None:
-    """Store bike details by company and model.
+def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> bool:
+    """Store bike details by company and model; True = committed, False = failed.
 
-    Updates the bike's bike_detail row in place (its id stays stable) and
-    replaces its component rows. Photos are keyed on `bike`, not on the details row, so
-    they are neither written nor touched here — a re-save keeps them
-    (photos_repository owns them).
+    Updates the bike row's `description` / `short_description` in place and
+    replaces its component rows. Photos are keyed on `bike` too, so they are
+    neither written nor touched here — a re-save keeps them (photos_repository
+    owns them). Errors are swallowed (WARNING log, rollback) and reported as False.
     """
     session = get_session()
     try:
@@ -95,25 +94,13 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> No
             session.add(bike)
             session.flush()
 
-        # Update the details row in place — never delete it. On a database not
-        # yet run through migrate_photos_bike_id.py, bike_detail_photos still
-        # FKs bike_detail ON DELETE CASCADE, so a delete would wipe the photos.
-        details = session.query(BikeDetails).filter_by(bike_id=bike.id).first()
-        if details:
-            details.description = data.description.model_dump_json()
-            details.short_description = data.short_description or ""
-            details.updated_at = datetime.now(timezone.utc)
-            session.query(BikeDetailComponent).filter_by(
-                bike_detail_id=details.id,
-            ).delete(synchronize_session=False)
-            session.expire(details, ["components"])
-        else:
-            details = BikeDetails(
-                bike_id=bike.id,
-                description=data.description.model_dump_json(),
-                short_description=data.short_description or "",
-            )
-            session.add(details)
+        bike.description = data.description.model_dump_json()
+        bike.short_description = data.short_description or ""
+        bike.updated_at = datetime.now(timezone.utc)
+        session.query(BikeDetailComponent).filter_by(
+            bike_id=bike.id,
+        ).delete(synchronize_session=False)
+        session.expire(bike, ["components"])
         session.flush()
 
         # Flatten the whole tree into one row per spec, each carrying its
@@ -129,7 +116,7 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> No
                     specs = list(element.specs)
                     if not specs:
                         session.add(BikeDetailComponent(
-                            bike_detail_id=details.id,
+                            bike_id=bike.id,
                             category=category.category,
                             subcategory=subcategory.subcategory,
                             component_order=comp_order,
@@ -143,7 +130,7 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> No
                         continue
                     for s_idx, spec in enumerate(specs):
                         session.add(BikeDetailComponent(
-                            bike_detail_id=details.id,
+                            bike_id=bike.id,
                             category=category.category,
                             subcategory=subcategory.subcategory,
                             component_order=comp_order,
@@ -158,9 +145,11 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> No
 
         session.commit()
         logger.info("bike_details stored | company=%r model=%r", company, model)
+        return True
     except Exception as exc:
         session.rollback()
         logger.warning("bike_details store failed (non-fatal) | %s", exc)
+        return False
     finally:
         session.close()
 
@@ -182,22 +171,21 @@ def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
             logger.info("bike_details miss | company=%r model=%r", company, model)
             return None
 
-        details = session.query(BikeDetails).filter_by(bike_id=bike.id).first()
-        if not details:
+        if bike.description is None:
             logger.info("bike_details miss | company=%r model=%r", company, model)
             return None
 
         # Parse stored JSON
-        description = BikeDescription.model_validate_json(details.description)
+        description = BikeDescription.model_validate_json(bike.description)
 
-        components = rebuild_components(details.components)
+        components = rebuild_components(bike.components)
 
         response = BikeDetailsResponse(
             company=bike.brand,
             model=bike.model,
             description=description,
             components=components,
-            short_description=details.short_description or "",
+            short_description=bike.short_description or "",
         )
 
         logger.info("bike_details hit | company=%r model=%r", company, model)
@@ -218,7 +206,7 @@ def empty_details(company: str, model: str) -> BikeDetailsResponse:
 
 
 # ── Search-result fill (TODO-041) ───────────────────────────────────────────
-# explanation = the bike's stored bike_detail.short_description; accessories =
+# explanation = the bike's stored bike.short_description; accessories =
 # chips derived from its stored components, no AI. One builder for every place
 # that returns a BikeResult (DB hit, AI fallback, search-cache readers).
 
@@ -256,24 +244,23 @@ def _search_fill(session, bike_ids: list[int]) -> dict[int, tuple[str, list[str]
     """bike_id -> (short_description, chips) for the bikes that have stored details."""
     if not bike_ids:
         return {}
-    details = session.query(
-        BikeDetails.id, BikeDetails.bike_id, BikeDetails.short_description,
-    ).filter(BikeDetails.bike_id.in_(list(bike_ids))).all()
-    by_detail = {d.id: d for d in details}
-    rows_by_detail: dict[int, list] = {d_id: [] for d_id in by_detail}
-    if by_detail:
-        for detail_id, cat, sub, el, key, value in session.query(
-            BikeDetailComponent.bike_detail_id, BikeDetailComponent.category,
+    bikes = session.query(Bike.id, Bike.short_description).filter(
+        Bike.id.in_(list(bike_ids)), Bike.description.isnot(None),
+    ).all()
+    rows_by_bike: dict[int, list] = {b.id: [] for b in bikes}
+    if rows_by_bike:
+        for bike_id, cat, sub, el, key, value in session.query(
+            BikeDetailComponent.bike_id, BikeDetailComponent.category,
             BikeDetailComponent.subcategory, BikeDetailComponent.element_name,
             BikeDetailComponent.spec_key, BikeDetailComponent.spec_value,
-        ).filter(BikeDetailComponent.bike_detail_id.in_(list(by_detail))).order_by(
+        ).filter(BikeDetailComponent.bike_id.in_(list(rows_by_bike))).order_by(
             BikeDetailComponent.component_order, BikeDetailComponent.element_order,
             BikeDetailComponent.spec_order,
         ):
-            rows_by_detail[detail_id].append((cat, sub, el, key, value))
+            rows_by_bike[bike_id].append((cat, sub, el, key, value))
     return {
-        d.bike_id: ((d.short_description or ""), _chips_from_rows(rows_by_detail[d.id]))
-        for d in details
+        b.id: ((b.short_description or ""), _chips_from_rows(rows_by_bike[b.id]))
+        for b in bikes
     }
 
 
@@ -402,30 +389,30 @@ def find_bikes_by_details(req) -> list[BikeResult]:
         ]
         spec_fields = {f: v for f, v in fields.items() if f in _MATCHERS}
         if spec_fields and candidates:
-            detail_by_bike = dict(
-                session.query(BikeDetails.bike_id, BikeDetails.id)
-                .filter(BikeDetails.bike_id.in_([b.id for b in candidates]))
+            with_details = {
+                r[0] for r in session.query(Bike.id)
+                .filter(Bike.id.in_([b.id for b in candidates]), Bike.description.isnot(None))
                 .all()
-            )
-            specs = {d: _BikeSpecs() for d in detail_by_bike.values()}
+            }
+            specs = {i: _BikeSpecs() for i in with_details}
             rows = (
                 session.query(
-                    BikeDetailComponent.bike_detail_id, BikeDetailComponent.category,
+                    BikeDetailComponent.bike_id, BikeDetailComponent.category,
                     BikeDetailComponent.subcategory, BikeDetailComponent.element_name,
                     BikeDetailComponent.spec_key, BikeDetailComponent.spec_value,
                 )
-                .filter(BikeDetailComponent.bike_detail_id.in_(list(specs)))
+                .filter(BikeDetailComponent.bike_id.in_(list(specs)))
                 .all()
             )
-            for detail_id, cat, sub, elem, key, value in rows:
-                bucket = specs[detail_id]
+            for bike_id, cat, sub, elem, key, value in rows:
+                bucket = specs[bike_id]
                 bucket.categories.add(cat)
                 bucket.rows.append((cat, sub, elem or "", key or "", value or ""))
             # A bike with no details cannot prove any spec, so it never matches.
             candidates = [
                 b for b in candidates
-                if b.id in detail_by_bike
-                and all(_MATCHERS[f](specs[detail_by_bike[b.id]], v) for f, v in spec_fields.items())
+                if b.id in with_details
+                and all(_MATCHERS[f](specs[b.id], v) for f, v in spec_fields.items())
             ]
 
         fill = _search_fill(session, [b.id for b in candidates])
