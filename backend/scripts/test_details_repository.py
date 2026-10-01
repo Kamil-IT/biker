@@ -1,6 +1,6 @@
 """Unit tests for the stored bike details (TODO-041): short_description round-trip,
-has_complete_details, accessory_chips / the search-result fill, the search-cache
-readers, scripts/migrate_short_description.py and scripts/purge_details_cache.py,
+has_complete_details, accessory_chips / the search-result fill, save_search,
+scripts/migrate_short_description.py and scripts/purge_details_cache.py,
 each on a fresh temp SQLite database — no server, no network, no AI call.
 Run: cd backend && pytest   (collected via pytest.ini)"""
 import json
@@ -113,8 +113,7 @@ def test_fill_bike_results_uses_stored_details(db):
     assert r.explanation == "Tekst krótki." and len(r.accessories) == 3
 
 
-def test_search_cache_readers_fill_from_details(db):
-    repository.save_bike_details("Trek", "Full", _details("Trek", "Full", FULL, short="Tekst krótki."))
+def test_save_search_stores_no_ai_text(db):
     store.save_search("Brand: Trek", [
         BikeResult(brand="Trek", model="Full", accessories=["ignored"], explanation="ignored"),
         BikeResult(brand="Trek", model="New", accessories=[], explanation=""),
@@ -122,10 +121,7 @@ def test_search_cache_readers_fill_from_details(db):
     with models.get_engine().connect() as conn:
         rows = conn.exec_driver_sql("SELECT explanation, accessories FROM search_bike_rating_cache").fetchall()
     assert {tuple(r) for r in rows} == {("", "[]")}, "save_search stores no AI text any more"
-    by_query = store.get_search_by_query("Brand: Trek")
-    assert [(b.model, b.explanation, len(b.accessories)) for b in by_query] == [("Full", "Tekst krótki.", 3), ("New", "", 0)]
-    by_brand = store.find_bikes_by_brand("trek")
-    assert [b.model for b in by_brand] == ["Full", "New"] and by_brand[0].explanation == "Tekst krótki."
+    assert not hasattr(store, "get_search_by_query") and not hasattr(store, "find_bikes_by_brand")
 
 
 def test_find_bikes_by_details_fills_explanation_and_chips(db):

@@ -91,10 +91,9 @@ get_bike_details(company: str, model: str) → Optional[BikeDetailsResponse]
 rebuild_components(rows) → list[BikeCategory]
 ```
 
-The search helpers (`save_search` / `get_search_by_query` / `find_bikes_by_brand`)
-that once lived here were removed with the `bike_results` + `accessories` tables;
-the live search cache is `search_cache` + `search_bike_rating_cache` in
-`app/store.py`.
+The search helpers that once lived here were removed with the `bike_results` + `accessories` tables;
+`app/store.py` now only has `save_search` (write-only: AI-found bikes into `bike` + `search_cache` +
+`search_bike_rating_cache`; nothing reads those two tables any more).
 
 Each function:
 - Uses `get_session()` to get a SQLAlchemy Session

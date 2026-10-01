@@ -106,7 +106,7 @@ the database.
 
 ```bash
 # In a second terminal:
-python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit) + search-cache, details-cache, details, details/search (404 only), missing, popular, review/cached, used, used/search, decathlon, decathlon/search, allegro, allegro/search, photos, photos/search, review, review/search; add --ai for the API cases
+python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit), details, details/search (404 only), missing, popular, used, used/search, decathlon, decathlon/search, allegro, allegro/search, photos, photos/search, review, review/search; add --ai for the API cases
 ```
 
 ```bash
@@ -214,11 +214,10 @@ Both reference the shared `bikes` identity row, so a bike found by search and a 
 - Both are indexed on their key columns and upsert on conflict (a re-run refreshes the entry).
 - Freshness: searches are fresh for 24 h (`store.SEARCH_TTL_SECONDS`, a module constant on `time_stored`; there is no per-row `ttl_seconds` column) and a stale one is treated as a miss (never served). **Details have no TTL** since TODO-035 (`repository.TTL_DETAILS` was removed): a stored details row is served whatever its age.
 - Search results carry an explicit **`display_order`** — the order of the AI answer, which a row set (unlike the old JSON blob) does not preserve for free. Reads order by `display_order`.
-- Searches are also queryable **by attribute** — `find_bikes_by_brand(brand)` returns de-duplicated bikes of that brand across fresh cached searches, powering `GET /v1/bike/search-cache?brand=`.
+- Search storage is **write-only**: `store.save_search` stores AI-found bikes into `search_cache` + `search_bike_rating_cache`, but nothing reads those two tables any more (the `GET /v1/bike/search-cache` endpoint and the `store.py` readers were removed), so the 24 h freshness above is no longer checked anywhere.
 - Writes are best-effort: a cache-table failure is logged but never breaks the underlying request.
 - This layer is **additive** — the generic per-endpoint cache is unchanged.
 
-The follow-up read endpoints are [`GET /v1/bike/search-cache`](#get-v1bikesearch-cache) and [`GET /v1/bike/details-cache`](#get-v1bikedetails-cache).
 
 ### Details storage — normalised ORM tables
 
@@ -327,9 +326,9 @@ A bike matches when **every** checkable field given matches. A bike missing the 
 | `is_electric` | `Electric / Powertrain` category present / absent | |
 | `bike_type`, `year`, `search` | — | **not checkable**, ignored by the DB step |
 
-A request with **only** non-checkable fields skips the DB and goes straight to the AI call. **Every** matching DB bike is returned (no cap, TODO-025), sorted by brand then model (case-insensitive) — never topped up with AI results. There is no match score any more (TODO-040): the frontend orders the cards by the stored expert rating it reads from [`POST /v1/bike/review/cached`](#post-v1bikereviewcached).
+A request with **only** non-checkable fields skips the DB and goes straight to the AI call. **Every** matching DB bike is returned (no cap, TODO-025), sorted by brand then model (case-insensitive) — never topped up with AI results. There is no match score any more (TODO-040): the frontend orders the cards by the stored expert rating it reads with one [`POST /v1/bike/review`](#post-v1bikereview) per result bike (a DB read).
 
-`explanation` / `accessories` (TODO-041) are **never produced by the AI and no longer depend on the query**: `explanation` is the bike's stored `bike_detail.short_description` (`""` when it has none) and `accessories` are chips computed at read time from its stored components — Drivetrain → the Rear Derailleur (else Crank) element name, Brakes → the Brake Lever Front (else Brake Lever, else Brake Rotor) element name, Frame → the Frame element's `Material` spec value; only parts that are present. One builder serves the DB hit, the AI fallback result and [`GET /v1/bike/search-cache`](#get-v1bikesearch-cache). The earlier `"Pasuje: marka Trek, …"` text and the lookup in `search_bike_rating_cache` are gone.
+`explanation` / `accessories` (TODO-041) are **never produced by the AI and no longer depend on the query**: `explanation` is the bike's stored `bike_detail.short_description` (`""` when it has none) and `accessories` are chips computed at read time from its stored components — Drivetrain → the Rear Derailleur (else Crank) element name, Brakes → the Brake Lever Front (else Brake Lever, else Brake Rotor) element name, Frame → the Frame element's `Material` spec value; only parts that are present. One builder serves the DB hit, and the AI fallback result. The earlier `"Pasuje: marka Trek, …"` text and the lookup in `search_bike_rating_cache` are gone.
 
 ### No generic cache for search
 
@@ -378,47 +377,6 @@ All fields except `search` default to `null` (no constraint). The backend assemb
 1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns every matching bike as a JSON array (`brand` + `model` only since TODO-041 — min 1: when nothing meets every filter, the closest bike, no longer with an explanation of the missed filter; `max_tokens=8000`, a warning is logged on `stop_reason == "max_tokens"`), parsed with `app/json_extract.extract_json()`; the result is then filled from stored details (`repository.fill_bike_results`, DB only). Runs only on a DB miss
 
 A response with no parseable JSON returns `bikes: []` (never a 502) and nothing is stored; an upstream API error is a 502, except an Anthropic 400, which is a 400 with Anthropic's message. When the AI returns bikes, they are written to `bike` + `search_cache` + `search_bike_rating_cache` (order only; `explanation` / `accessories` columns `""` / `"[]"`) via `store.save_search` — never to the generic cache. A DB-served result is not written anywhere — see [Search Cache](#search-cache).
-
----
-
-### `GET /v1/bike/search-cache`
-
-Follow-up read served **purely from the search tables** (`searches` + `bike_results`, read via `app/repository.py`) — makes **no** web/Claude call. Two modes:
-
-- `?query=<enriched query>` — exact (case-insensitive, trimmed) repeat of a prior search, matched on `search_cache.query`. Returns 404 if not cached or the entry is older than its 24 h TTL. Bikes come back in their original order (`ORDER BY search_bike_rating_cache.display_order`), `explanation` / `accessories` filled from stored details (TODO-041).
-- `?brand=<brand>` — lookup-by-attribute: every cached bike of that brand across all fresh cached searches (de-duplicated by brand+model). **`brand` is matched exactly** (against `bikes.brand_norm`, so casing and surrounding whitespace are ignored) — a partial brand name will not match. This matches the behaviour this endpoint has always shipped: the live implementation in `store.py` did an exact normalised compare too. The ORM's previously unused `ilike` substring variant was never wired to an endpoint, so no caller loses anything.
-
-```http
-GET http://localhost:8000/v1/bike/search-cache?query=Brand:%20Trek%20%E2%80%94%20trail%20riding
-GET http://localhost:8000/v1/bike/search-cache?brand=Trek
-```
-
-**Response:**
-```json
-{
-  "query": "Brand: Trek — trail riding",
-  "cached": true,
-  "bikes": [ { "brand": "Trek", "model": "Marlin 5", "accessories": [], "explanation": "…" } ]
-}
-```
-
-Returns 422 if neither `query` nor `brand` is provided.
-
-**Flow:** none — SQLite read only.
-
----
-
-### `GET /v1/bike/details-cache`
-
-Follow-up details lookup served **purely from the ORM details tables** (`bike` + `bike_detail` + `bike_detail_component`, read via `app/repository.py`) — makes **no** web/Claude call. Returns 404 if the `(company, model)` pair is not stored; there is **no TTL** (a stored row is served whatever its age, TODO-035). The `company`/`model` match is case-insensitive, and the response echoes the casing you asked with.
-
-```http
-GET http://localhost:8000/v1/bike/details-cache?company=Canyon&model=Grizl%20CF%207%20ESC
-```
-
-**Response:** identical shape to `POST /v1/bike/details` (`company`, `model`, `description`, `components`, `short_description` — no `photos`; use `POST /v1/bike/photos`).
-
-**Flow:** none — database read only.
 
 ---
 
@@ -496,7 +454,7 @@ Content-Type: application/json
 
 **Response:** `company`, `model` (the caller's casing), `description` (`{text, segments, citations}` — the 4–5 sentence Polish overview), `components` (category tree — each element `description` is Polish, while category/subcategory/spec keys, element names and spec values stay English) and `short_description` (the two-sentence Polish summary written by the searcher; `""` when none). **No `photos`** since TODO-035 — they come from [`POST /v1/bike/photos`](#post-v1bikephotos).
 
-- Unknown bike or nothing stored → **200** with the empty response `{"company": …, "model": …, "description": {"text": "", "segments": [], "citations": []}, "components": [], "short_description": ""}`, never an error. The frontend reads "description text empty **and** no components" as "no data" and shows the **Poproś o dane** button in the Opis and Komponenty sections. (`GET /v1/bike/details-cache` keeps answering 404 for a missing bike.)
+- Unknown bike or nothing stored → **200** with the empty response `{"company": …, "model": …, "description": {"text": "", "segments": [], "citations": []}, "components": [], "short_description": ""}`, never an error. The frontend reads "description text empty **and** no components" as "no data" and shows the **Poproś o dane** button in the Opis and Komponenty sections.
 - The lookup is on the normalised `brand_norm` / `model_norm` columns, so casing and surrounding whitespace do not matter.
 - `company` / `model` must be non-empty and at most 255 characters (422).
 
@@ -661,43 +619,6 @@ Content-Type: application/json
 2. Otherwise `POST {SEARCHER_URL}/v1/search/review` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once (`WebSearch` + `WebFetch`, no browser) and writes `bike_review` / `bike_review_source`. The backend itself makes no Anthropic call.
 
 **Tests:** `scripts/test_search.py` `case_review_search` — an unknown bike is a **404** before any searcher call, and a bike with a seeded review gets that review back fast without a searcher call (no paid run); `scripts/test_searcher_client_review.py` covers the client with a mocked transport; `searcher/scripts/test_searcher.py` covers the searcher route without a paid run.
-
----
-
-### `POST /v1/bike/review/cached`
-
-Expert ratings for a batch of bikes, read **only** from the stored reviews in `bike_review` — the table `POST /v1/bike/review` serves (TODO-037) (TODO-040). The search results page calls it once per result list to show each card's expert rating; a bike without a stored review gets `found: false` and the card shows "?". **No** AI call, **no** write, **no** generic cache, no TTL.
-
-```http
-POST http://localhost:8000/v1/bike/review/cached
-Content-Type: application/json
-
-{
-  "bikes": [
-    { "company": "Giant", "model": "Revolt Advanced Pro" },
-    { "company": "Trek", "model": "Marlin 5" }
-  ]
-}
-```
-
-**Response** (same order and the same `company`/`model` strings as the request):
-```json
-{
-  "ratings": [
-    { "company": "Giant", "model": "Revolt Advanced Pro", "rating": 8.4, "found": true },
-    { "company": "Trek", "model": "Marlin 5", "rating": null, "found": false }
-  ]
-}
-```
-
-- `bikes`: 1–100 items; `company` and `model` non-empty after trimming, ≤ 255 chars each — otherwise **422**.
-- Lookup (`app/review_ratings.py`): the bikes are resolved to `bike.id` by Python-normalised brand/model (`strip().lower()`, like `repository._find_bike_id`; never SQL `lower()`, oldest row wins on a case-split duplicate) in **one** scan of `bike`, then **one** query reads `bike_review.rating` / `sources_used` for those ids. Casing and surrounding spaces do not matter. The old generic-cache rows under `/v1/bike/review` are not read.
-- `found: false, rating: null` for an unknown bike, a bike without a `bike_review` row, or a stored `rating` ≤ 0 or `sources_used` < 1 (the "no review" placeholder).
-- A DB error → **200** with `found: false` for every bike + an ERROR log, never a 500.
-
-**Flow:** none — two DB reads (`bike`, then `bike_review`), zero outbound HTTP calls.
-
-**Test:** `scripts/test_search.py` `case_review_cached`.
 
 ---
 

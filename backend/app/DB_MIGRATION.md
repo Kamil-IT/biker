@@ -195,6 +195,8 @@ init_db()  # Creates all tables if they don't exist
 
 ### 3. Update Application Code
 
+> Historical: `get_search_by_query` / `find_bikes_by_brand` were removed later; only `save_search` remains.
+
 **Old:**
 ```python
 from app import store
@@ -224,10 +226,11 @@ save_search(query, old_data)
 
 ## API surface (current)
 
-- Search cache — `app.store`: `save_search`, `get_search_by_query`,
-  `find_bikes_by_brand` (backed by `search_cache` + `search_bike_rating_cache`).
+- Search storage — `app.store`: only `save_search` remains (write-only into `search_cache` +
+  `search_bike_rating_cache`; the readers `get_search_by_query` / `find_bikes_by_brand` and the
+  `GET /v1/bike/search-cache` endpoint were removed — nothing reads those tables any more).
 - Details — `app.repository`: `save_bike_details`, `get_bike_details`
-  (backed by `bike_detail` + `bike_detail_component`; no TTL — stored details are returned whatever their age). Since TODO-041 `POST /v1/bike/details` is a pure read of them (normalised brand/model lookup, `short_description` included) and the live writer is the searcher (`POST /v1/bike/details/search`, `searcher/app/repository.py` `save_details`); helpers `empty_details`, `has_complete_details`, `accessory_chips`, `fill_bike_results`, `search_fill_for`.
+  (backed by `bike_detail` + `bike_detail_component`; no TTL — stored details are returned whatever their age). Since TODO-041 `POST /v1/bike/details` is a pure read of them (normalised brand/model lookup, `short_description` included) and the live writer is the searcher (`POST /v1/bike/details/search`, `searcher/app/repository.py` `save_details`); helpers `empty_details`, `has_complete_details`, `accessory_chips`, `fill_bike_results`.
 - Bike photos — `app.photos_repository`: `get_bike_photos` (`POST /v1/bike/photos`) and `save_bike_photos`
   (offline pipeline only); the searcher's photo search is the live writer (backed by `bike_detail_photos`).
 - DB-first search (TODO-024) — `app.repository.find_bikes_by_details`: matches
@@ -286,8 +289,8 @@ python scripts/migrate_photos_bike_id.py --url postgresql+psycopg://biker:biker@
 
 ## Search match score dropped (`search_bike_rating_cache.rating`)
 
-TODO-040 removed `match_score` from `POST /v1/bike/search`, `GET /v1/bike/search-cache` and `BikeResult`; the search
-cards show the expert rating from the stored reviews in `bike_review` instead (`POST /v1/bike/review/cached`). The column that stored the
+TODO-040 removed `match_score` from `POST /v1/bike/search`, `GET /v1/bike/search-cache` (since removed) and `BikeResult`; the search
+cards show the expert rating from the stored reviews in `bike_review` instead (first `POST /v1/bike/review/cached`, since removed — now one `POST /v1/bike/review` per bike). The column that stored the
 score, `search_bike_rating_cache.rating` (`FLOAT NOT NULL`), is dropped from the model and from every existing
 database by `scripts/migrate_drop_search_rating.py`. `display_order` stays (the AI answer's order).
 

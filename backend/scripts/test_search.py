@@ -8,9 +8,9 @@ Run against a live local server (uvicorn app.main:app --port 8000):
 Every case seeds its own namespaced fixture rows and deletes them afterwards, so
 it passes on a cold or aged database. Endpoints covered here:
 
-  no API   /v1/bike/search (DB hit) · /v1/bike/search-cache · /v1/bike/details-cache · /v1/bike/details
+  no API   /v1/bike/search (DB hit) · /v1/bike/details
            /v1/bike/details/search (404 only — no paid run)
-           /v1/bike/missing · /v1/bike/popular · /v1/bike/review/cached · /v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
+           /v1/bike/missing · /v1/bike/popular · /v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
            /v1/bike/decathlon · /v1/bike/decathlon/search (404 + foreign-brand skip always; the
            live house-brand search — the ONE paid searcher run in the suite — only when the searcher is up)
            /v1/bike/allegro · /v1/bike/allegro/search (404 only — no paid run)
@@ -48,13 +48,10 @@ from app.repository import save_bike_details  # noqa: E402
 
 BASE = os.getenv("BIKER_API_URL", "http://localhost:8000").rstrip("/")
 SEARCH_URL = f"{BASE}/v1/bike/search"
-SEARCH_CACHE_URL = f"{BASE}/v1/bike/search-cache"
-DETAILS_CACHE_URL = f"{BASE}/v1/bike/details-cache"
 DETAILS_URL = f"{BASE}/v1/bike/details"
 DETAILS_SEARCH_URL = f"{BASE}/v1/bike/details/search"
 MISSING_URL = f"{BASE}/v1/bike/missing"
 POPULAR_URL = f"{BASE}/v1/bike/popular"
-REVIEW_CACHED_URL = f"{BASE}/v1/bike/review/cached"
 USED_URL = f"{BASE}/v1/bike/used/olx"
 USED_SEARCH_URL = f"{BASE}/v1/bike/used/search"
 PARSE_URL = f"{BASE}/v1/bike/parse"
@@ -187,29 +184,6 @@ def _insert_bike(brand: str, model: str) -> int:
         conn.close()
 
 
-def _seed_search_row(query: str, brand: str, model: str) -> None:
-    """A fresh search_cache row (+ its bike and rating row) owned by this suite."""
-    conn = _DB()
-    try:
-        conn.execute("DELETE FROM search_cache WHERE query = ?", (query,))
-        search_id = conn.execute(
-            "INSERT INTO search_cache (query, time_stored) VALUES (?, ?)", (query, _now())
-        ).lastrowid
-        hit = conn.execute("SELECT id FROM bike WHERE brand = ? AND model = ?", (brand, model)).fetchone()
-        bike_id = hit[0] if hit else conn.execute(
-            "INSERT INTO bike (brand, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (brand, model, _now(), _now()),
-        ).lastrowid
-        conn.execute(
-            "INSERT INTO search_bike_rating_cache "
-            "(search_cache_id, bike_id, explanation, accessories, display_order) VALUES (?, ?, ?, ?, ?)",
-            (search_id, bike_id, "Smoke fixture.", json.dumps(["fixture"]), 0),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def _drop_search_row(query: str) -> None:
     conn = _DB()
     try:
@@ -234,7 +208,6 @@ def _assert_offers(offers: list[dict], source: str) -> None:
 
 # ── Cases without any Anthropic API call ───────────────────────────────────
 
-FIX_SEARCH_QUERY = "smoke fixture: search happy path"
 FIX_SEARCH_BRAND, FIX_SEARCH_MODEL = "Smoke Fixture", "Search Bike"
 # The stale generic-cache answer. Namespaced like every fixture: a server still on the
 # old code serves it and save_search() stores its search + bike, which the test removes.
@@ -265,10 +238,8 @@ def _seed_bike_details(brand: str, model: str, short: str, components: list, tex
     ))
 
 
-def case_search_db_hit_and_search_cache():
-    """/v1/bike/search served from the DB (zero AI), never from the generic cache,
-    + /v1/bike/search-cache on the same stored search."""
-    _seed_search_row(FIX_SEARCH_QUERY, FIX_SEARCH_BRAND, FIX_SEARCH_MODEL)
+def case_search_db_hit():
+    """/v1/bike/search served from the DB (zero AI), never from the generic cache."""
     # TODO-041: explanation = the stored short description, accessories = chips from
     # the stored components (rear derailleur, brake lever, frame material).
     _seed_bike_details(FIX_SEARCH_BRAND, FIX_SEARCH_MODEL, FIX_SHORT, _full_components())
@@ -303,16 +274,9 @@ def case_search_db_hit_and_search_cache():
         (b0,) = bare.json()["bikes"]
         assert b0["explanation"] == "" and b0["accessories"] == [], b0
 
-        cached = httpx.get(SEARCH_CACHE_URL, params={"query": FIX_SEARCH_QUERY}, timeout=10)
-        assert cached.status_code == 200, f"search-cache: expected 200, got {cached.status_code}: {cached.text[:200]}"
-        assert cached.json()["cached"] is True and cached.json()["bikes"], cached.json()
-        assert all("match_score" not in b for b in cached.json()["bikes"]), cached.json()
-        c0 = cached.json()["bikes"][0]
-        assert c0["explanation"] == FIX_SHORT and c0["accessories"] == FIX_CHIPS, c0
     finally:
         _delete_bike(FIX_SEARCH_BRAND, FIX_SEARCH_BARE_MODEL)
         _cache_row_delete("/v1/bike/search", key)
-        _drop_search_row(FIX_SEARCH_QUERY)
         _delete_bike(FIX_SEARCH_BRAND, FIX_SEARCH_MODEL)
         _delete_bike(FIX_SEARCH_BRAND, FIX_STALE_MODEL)  # rating rows first, then the bike
         _drop_search_row(FIX_STALE_QUERY)
@@ -366,30 +330,6 @@ def case_details_search():
     live run is case_decathlon_search, same proxy code path)."""
     resp = _post(DETAILS_SEARCH_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=30)
     assert resp.status_code == 404, f"Expected 404 for an unknown bike, got {resp.status_code}: {resp.text[:200]}"
-
-
-def case_details_cache():
-    """/v1/bike/details-cache returns a stored details row (no web/Claude call)."""
-    _delete_bike(FIX_DETAILS_BRAND, FIX_DETAILS_MODEL)
-    save_bike_details(FIX_DETAILS_BRAND, FIX_DETAILS_MODEL, BikeDetailsResponse(
-        company=FIX_DETAILS_BRAND, model=FIX_DETAILS_MODEL,
-        description=BikeDescription(text="Smoke fixture.", segments=[], citations=[]),
-        components=[BikeCategory(category="Frame", subcategories=[BikeSubcategory(
-            subcategory="Frame", elements=[ComponentElement(name="Frame", specs=[SpecItem(key="Material", value="Alloy")])],
-        )])],
-    ))
-    try:
-        t0 = time.perf_counter()
-        resp = httpx.get(DETAILS_CACHE_URL, params={"company": FIX_DETAILS_BRAND, "model": FIX_DETAILS_MODEL}, timeout=10)
-        elapsed = time.perf_counter() - t0
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
-        data = resp.json()
-        assert data["company"] == FIX_DETAILS_BRAND and data["model"] == FIX_DETAILS_MODEL, data
-        assert data["components"][0]["category"] == "Frame", data["components"]
-        assert "photos" not in data, "details no longer carry photos — see /v1/bike/photos"
-        assert elapsed < 5.0, f"cache read took {elapsed:.2f}s"
-    finally:
-        _delete_bike(FIX_DETAILS_BRAND, FIX_DETAILS_MODEL)
 
 
 FIX_MISSING_BRAND, FIX_MISSING_MODEL = "Smoke Fixture", "Missing Bike"
@@ -813,69 +753,6 @@ def case_review_search():
         _delete_bike(FIX_REVIEW_BRAND, FIX_REVIEW_MODEL)
 
 
-FIX_REVIEW_RATED, FIX_REVIEW_ZERO = "Review Cached Rated", "Review Cached Zero"
-
-
-def _insert_review(bike_id: int, rating: float, sources_used: int) -> None:
-    conn = _DB()
-    try:
-        conn.execute(
-            "INSERT INTO bike_review (bike_id, score, explanation, rating, sources_used, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (bike_id, round(rating), "Smoke fixture.", rating, sources_used, _now(), _now()),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _cache_row_count() -> int:
-    conn = _DB()
-    try:
-        return conn.execute("SELECT COUNT(*) FROM endpoint_req_to_body_cache").fetchone()[0]
-    finally:
-        conn.close()
-
-
-def case_review_cached():
-    """/v1/bike/review/cached (TODO-040): expert ratings read from bike_review
-    only — a stored review → found, unknown bike / rating 0 → not found; no AI,
-    no write, order and strings echoed; 422 for an empty, >100 or blank batch."""
-    rated = {"company": FIX_REVIEW_BRAND, "model": FIX_REVIEW_RATED}
-    zero = {"company": FIX_REVIEW_BRAND, "model": FIX_REVIEW_ZERO}
-    unknown = {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}
-    for model in (FIX_REVIEW_RATED, FIX_REVIEW_ZERO):
-        _delete_bike(FIX_REVIEW_BRAND, model)
-    _insert_review(_insert_bike(FIX_REVIEW_BRAND, FIX_REVIEW_RATED), 8.4, 3)
-    _insert_review(_insert_bike(FIX_REVIEW_BRAND, FIX_REVIEW_ZERO), 0.0, 0)
-    try:
-        rows_before = _cache_row_count()
-        # Different casing / spacing than the stored bike: the lookup is normalised.
-        rated_sent = {"company": " smoke FIXTURE", "model": FIX_REVIEW_RATED.upper()}
-        t0 = time.perf_counter()
-        resp = _post(REVIEW_CACHED_URL, {"bikes": [unknown, rated_sent, zero]}, timeout=10)
-        elapsed = time.perf_counter() - t0
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
-        got = resp.json()["ratings"]
-        assert got == [
-            {**unknown, "rating": None, "found": False},
-            {**rated_sent, "rating": 8.4, "found": True},
-            {**zero, "rating": None, "found": False},
-        ], got
-        assert elapsed < 5.0, f"took {elapsed:.2f}s — expected < 5s (AI ran?)"
-        assert _cache_row_count() == rows_before, "the cached-ratings read must not write the generic cache"
-        for body in (unknown, rated):
-            assert not _cache_row_exists("/v1/bike/review", _norm_key(body)), f"wrote a generic-cache row for {body}"
-
-        for bad in ({"bikes": []}, {"bikes": [unknown] * 101}, {"bikes": [{"company": " ", "model": "x"}]}):
-            r = httpx.post(REVIEW_CACHED_URL, json=bad, timeout=10)  # not _post: it would print 101 items
-            assert r.status_code == 422, f"Expected 422 for {str(bad)[:60]}, got {r.status_code}"
-    finally:
-        for model in (FIX_REVIEW_RATED, FIX_REVIEW_ZERO):
-            _delete_bike(FIX_REVIEW_BRAND, model)
-
-
-
 # ── Cases that call the Anthropic API (--ai) ────────────────────────────────
 
 def case_search_free_text():
@@ -910,13 +787,11 @@ def case_ceneo():
 
 
 CASES = [
-    (case_search_db_hit_and_search_cache, False),
+    (case_search_db_hit, False),
     (case_details, False),
     (case_details_search, False),
-    (case_details_cache, False),
     (case_missing, False),
     (case_popular, False),
-    (case_review_cached, False),
     (case_used, False),
     (case_used_search, False),
     (case_decathlon, False),

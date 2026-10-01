@@ -326,18 +326,6 @@ def accessory_chips(bike_id: int) -> list[str]:
         session.close()
 
 
-def search_fill_for(bike_ids: list[int]) -> dict[int, tuple[str, list[str]]]:
-    """Public batch form of the fill; {} on a DB error (a search read must not break)."""
-    session = get_session()
-    try:
-        return _search_fill(session, bike_ids)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("search fill failed (non-fatal) | %s", exc)
-        return {}
-    finally:
-        session.close()
-
-
 # ── DB-first bike search (TODO-024) ─────────────────────────────────────────
 # A bike matches when EVERY checkable field given matches; bike_type / year /
 # free text are ignored. A missing spec row does not match. Normalise in Python:

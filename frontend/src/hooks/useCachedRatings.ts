@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NO_RATING, PENDING_RATING, bikeKey } from '../ratings'
-import type { Bike, CachedRatingsResponse, ExpertRating } from '../types'
+import type { Bike, BikeReviewResponse, ExpertRating } from '../types'
 
 interface Settled {
   forBikes: Bike[]
@@ -13,9 +13,10 @@ interface CachedRatings {
   settled: boolean
 }
 
-// TODO-040: expert ratings for the search results, read from the stored reviews (bike_review) only
-// (POST /v1/bike/review/cached — one batch, no AI call). Runs again whenever the list
-// changes. A non-OK or failed request marks every bike "no rating"; it never throws.
+// TODO-040: expert ratings for the search results, read from the stored reviews (bike_review) only.
+// One POST /v1/bike/review per bike (a DB read, no AI call), all at once; the ratings are
+// published together when the last one returns, so the list is sorted once. Runs again
+// whenever the list changes. A non-OK or failed call marks that bike "no rating"; it never throws.
 export default function useCachedRatings(bikes: Bike[]): CachedRatings {
   const [state, setState] = useState<Settled | null>(null)
 
@@ -25,31 +26,31 @@ export default function useCachedRatings(bikes: Bike[]): CachedRatings {
     let ignore = false
     const controller = new AbortController()
 
-    const load = async () => {
-      const ratings: Record<string, ExpertRating> = {}
-      bikes.forEach(b => { ratings[bikeKey(b)] = NO_RATING })
+    const fetchRating = async (bike: Bike): Promise<ExpertRating> => {
       try {
-        const res = await fetch('/v1/bike/review/cached', {
+        const res = await fetch('/v1/bike/review', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ bikes: bikes.map(b => ({ company: b.brand, model: b.model })) }),
+          body:    JSON.stringify({ company: bike.brand, model: bike.model }),
           signal:  controller.signal,
         })
         if (res.ok) {
-          const data: CachedRatingsResponse = await res.json()
-          if (Array.isArray(data.ratings)) {
-            data.ratings.forEach((r, i) => {
-              const bike = bikes[i]
-              // Same order as the request; a rating of 0 is never a score.
-              if (bike && r.found && typeof r.rating === 'number' && r.rating > 0) {
-                ratings[bikeKey(bike)] = { state: 'loaded', rating: r.rating }
-              }
-            })
+          const data: BikeReviewResponse = await res.json()
+          // A rating of 0 / no sources is the backend's empty review, not a score.
+          if (typeof data.rating === 'number' && data.rating > 0 && data.sources_used >= 1) {
+            return { state: 'loaded', rating: data.rating }
           }
         }
       } catch {
-        // network failure or malformed JSON — every bike stays "no rating"
+        // network failure or malformed JSON — "no rating"
       }
+      return NO_RATING
+    }
+
+    const load = async () => {
+      const results = await Promise.all(bikes.map(fetchRating))
+      const ratings: Record<string, ExpertRating> = {}
+      bikes.forEach((b, i) => { ratings[bikeKey(b)] = results[i] })
       if (!ignore) setState({ forBikes: bikes, ratings })
     }
 
