@@ -1,6 +1,8 @@
 """HTTP client for the on-demand searcher service (TODO-031 OLX, TODO-032 Decathlon, TODO-033 Allegro, bike photos,
 TODO-037 bike review, TODO-041 bike details: `search_details` posts to
-/v1/search/details and unwraps {details}).
+/v1/search/details and unwraps {details}; TODO-042 equipment details and photos:
+`search_equipment_details` / `search_equipment_photos` post the bike plus the
+spec-tree element name to /v1/search/equipment/details and /photos).
 
 The searcher (top-level `searcher/`, port 8100 locally) runs the Claude Code CLI
 once per search — plus Playwright once per OLX listing, or once on the
@@ -14,7 +16,9 @@ Allegro, bike photos or the bike review. One client, five routes:
 `search_photos` to /v1/search/photos and `search_review` to
 /v1/search/review (see SEARCH_PATHS); the offer routes answer {offers, info},
 the photo route {photos}, the review route {review}, each validated into the
-route's model.
+route's model. The equipment routes send {bike_company, bike_model,
+element_name, category?} instead of {company, model}; their single-flight key
+is (path, bike company, bike model, element name), all normalised.
 
 Configuration (backend/.env):
   SEARCHER_URL           base URL, e.g. http://localhost:8100 — unset = not configured
@@ -47,7 +51,10 @@ from typing import TypeVar
 import httpx
 from pydantic import BaseModel
 
-from .schemas import BikeDetailsResponse, BikeOfferResponse, BikePhotosResponse, BikeReviewResponse, UsedBikeResponse
+from .schemas import (
+    BikeDetailsResponse, BikeOfferResponse, BikePhotosResponse, BikeReviewResponse, UsedBikeResponse,
+    EquipmentDetailsResponse, EquipmentPhotosResponse,
+)
 
 logger = logging.getLogger("biker.searcher")
 
@@ -58,6 +65,8 @@ SEARCH_PATHS = {
     "photos": "/v1/search/photos",
     "review": "/v1/search/review",
     "details": "/v1/search/details",
+    "equipment_details": "/v1/search/equipment/details",
+    "equipment_photos": "/v1/search/equipment/photos",
 }
 _SOURCE_BY_PATH = {path: source for source, path in SEARCH_PATHS.items()}  # for log lines
 DEFAULT_TIMEOUT = 600.0  # one CLI search + photo scraping can take minutes
@@ -100,10 +109,33 @@ class _SearcherDetailsResponse(BaseModel):
 
     details: BikeDetailsResponse
 
+
+class _SearcherEquipmentDetailsResponse(BaseModel):
+    """The searcher's equipment details body: {details: {...}, equipment_id, saved} (TODO-042).
+
+    `details` is required and nested; its own `equipment_id` is kept (the
+    frontend links the spec-tree element with it), the wrapper's fields are dropped.
+    """
+
+    details: EquipmentDetailsResponse
+
+
+class _SearcherEquipmentPhotosResponse(BaseModel):
+    """The searcher's equipment photos body: {photos, equipment_id, saved} (TODO-042), `photos` REQUIRED.
+
+    Like _SearcherPhotosResponse: `{}` or a details-shaped body must be a
+    retryable 502, not "no photos found".
+    """
+
+    photos: list[str]
+    equipment_id: int | None = None
+
+
 # Searches in progress, keyed on (path, normalised company, normalised model) —
-# a second click for the same bike on the same source awaits the running
-# search instead of starting one.
-_inflight: dict[tuple[str, str, str], asyncio.Task] = {}
+# plus the normalised element name for the equipment routes. A second click for
+# the same bike (or bike element) on the same source awaits the running search
+# instead of starting one.
+_inflight: dict[tuple[str, ...], asyncio.Task] = {}
 _semaphore: asyncio.Semaphore | None = None
 
 
@@ -182,8 +214,12 @@ def _error_detail(resp: httpx.Response, source: str) -> str:
     return f"searcher answered HTTP {resp.status_code}"
 
 
-async def _post_search(path: str, company: str, model: str, response_model: type[ResponseT]) -> ResponseT:
-    """One real round trip to the searcher — see _search for the guards around it."""
+async def _post_search(path: str, body: dict, response_model: type[ResponseT]) -> ResponseT:
+    """One real round trip to the searcher — see _search for the guards around it.
+
+    `body` is the JSON sent: {company, model} for the bike routes,
+    {bike_company, bike_model, element_name, category?} for the equipment ones.
+    """
     source = _SOURCE_BY_PATH.get(path, path)
     base = os.getenv("SEARCHER_URL", "").strip().rstrip("/")
     if not base:
@@ -194,12 +230,12 @@ async def _post_search(path: str, company: str, model: str, response_model: type
     url = f"{base}{path}"
     timeout = httpx.Timeout(_env_number("SEARCHER_TIMEOUT", DEFAULT_TIMEOUT), connect=CONNECT_TIMEOUT)
 
-    logger.info("searcher %s request | url=%s company=%r model=%r", source, url, company, model)
+    logger.info("searcher %s request | url=%s body=%r", source, url, body)
     t0 = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
-                url, json={"company": company, "model": model}, headers={"X-Searcher-Key": key},
+                url, json=body, headers={"X-Searcher-Key": key},
             )
     except httpx.TimeoutException as exc:
         elapsed = time.perf_counter() - t0
@@ -232,7 +268,7 @@ async def _post_search(path: str, company: str, model: str, response_model: type
 
     try:
         data = resp.json()
-        result = response_model.model_validate(data)  # bike_id / saved are ignored
+        result = response_model.model_validate(data)  # bike_id / equipment_id / saved are ignored
     except Exception as exc:  # noqa: BLE001 — malformed body from the searcher
         logger.error("searcher %s returned a malformed body | error=%s body=%r", source, exc, resp.text[:300])
         # A pydantic ValidationError lists every failing field with input fragments —
@@ -252,25 +288,23 @@ async def _post_search(path: str, company: str, model: str, response_model: type
             items = details.components
         else:
             items = []
+    wrapper = data if isinstance(data, dict) else {}
     logger.info(
-        "searcher %s done | company=%r model=%r items=%d bike_id=%s saved=%s elapsed=%.2fs",
-        source, company, model, len(items),
-        data.get("bike_id") if isinstance(data, dict) else None,
-        data.get("saved") if isinstance(data, dict) else None,
-        elapsed,
+        "searcher %s done | body=%r items=%d bike_id=%s equipment_id=%s saved=%s elapsed=%.2fs",
+        source, body, len(items), wrapper.get("bike_id"), wrapper.get("equipment_id"), wrapper.get("saved"), elapsed,
     )
     return result
 
 
 async def _guarded_search(
-    key: tuple[str, str, str], path: str, company: str, model: str, response_model: type[ResponseT],
+    key: tuple[str, ...], path: str, body: dict, response_model: type[ResponseT],
 ) -> ResponseT:
     sem = _get_semaphore()
     if sem.locked():
         logger.warning("searcher %s refused: max in-flight searches reached | key=%s", _SOURCE_BY_PATH.get(path, path), key)
         raise SearcherBusy("too many searches running")
     async with sem:
-        return await _post_search(path, company, model, response_model)
+        return await _post_search(path, body, response_model)
 
 
 async def _search(path: str, company: str, model: str, response_model: type[ResponseT]) -> ResponseT:
@@ -284,9 +318,16 @@ async def _search(path: str, company: str, model: str, response_model: type[Resp
     the CLI run already paid for).
     """
     key = (path, company.strip().lower(), model.strip().lower())
+    return await _single_flight(key, path, {"company": company, "model": model}, response_model)
+
+
+async def _single_flight(
+    key: tuple[str, ...], path: str, body: dict, response_model: type[ResponseT],
+) -> ResponseT:
+    """Start the search for `key`, or join the one already running — see _search."""
     task = _inflight.get(key)
     if task is None:
-        task = asyncio.create_task(_guarded_search(key, path, company, model, response_model))
+        task = asyncio.create_task(_guarded_search(key, path, body, response_model))
         _inflight[key] = task
         task.add_done_callback(lambda _t: _inflight.pop(key, None))
     else:
@@ -332,3 +373,47 @@ async def search_details(company: str, model: str) -> BikeDetailsResponse:
     """
     result = await _search(SEARCH_PATHS["details"], company, model, _SearcherDetailsResponse)
     return result.details
+
+
+def _equipment_body(bike_company: str, bike_model: str, element_name: str, category: str | None) -> dict:
+    body = {"bike_company": bike_company, "bike_model": bike_model, "element_name": element_name}
+    if category:
+        body["category"] = category
+    return body
+
+
+def _equipment_key(path: str, bike_company: str, bike_model: str, element_name: str) -> tuple[str, ...]:
+    """Single-flight key: the category is not part of it — the searcher infers it when absent."""
+    return (path, bike_company.strip().lower(), bike_model.strip().lower(), element_name.strip().lower())
+
+
+async def search_equipment_details(
+    bike_company: str, bike_model: str, element_name: str, category: str | None = None,
+) -> EquipmentDetailsResponse:
+    """Run (or join) the details search for one element of a bike's spec tree (TODO-042) — see _search.
+
+    Returns the details the searcher now has stored for that equipment (the
+    empty response when it found nothing usable), `details.equipment_id`
+    included; the wrapper's equipment_id / saved are dropped.
+    """
+    path = SEARCH_PATHS["equipment_details"]
+    result = await _single_flight(
+        _equipment_key(path, bike_company, bike_model, element_name), path,
+        _equipment_body(bike_company, bike_model, element_name, category), _SearcherEquipmentDetailsResponse,
+    )
+    return result.details
+
+
+async def search_equipment_photos(
+    bike_company: str, bike_model: str, element_name: str, category: str | None = None,
+) -> EquipmentPhotosResponse:
+    """Run (or join) the photo search for one element of a bike's spec tree (TODO-042) — see _search.
+
+    Returns {photos, equipment_id} as the searcher now has them stored; `saved` is dropped.
+    """
+    path = SEARCH_PATHS["equipment_photos"]
+    result = await _single_flight(
+        _equipment_key(path, bike_company, bike_model, element_name), path,
+        _equipment_body(bike_company, bike_model, element_name, category), _SearcherEquipmentPhotosResponse,
+    )
+    return EquipmentPhotosResponse(photos=result.photos, equipment_id=result.equipment_id)

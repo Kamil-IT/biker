@@ -1,8 +1,9 @@
-"""SQLAlchemy engine helpers and the eight tables the searcher touches.
+"""SQLAlchemy engine helpers and the eleven tables the searcher touches.
 
 The DDL below is a verbatim copy of `bike`, `bike_offer`, `bike_offer_photos`,
-`bike_detail_photos`, `bike_review`, `bike_review_source` and
-`bike_detail_component` in
+`bike_detail_photos`, `bike_review`, `bike_review_source`,
+`bike_detail_component` and (TODO-042) `equipment`, `equipment_detail`,
+`equipment_detail_component`, `equipment_detail_photos` in
 backend/app/models.py — same names, columns, constraints and index names —
 because both services share one database. Change it there first, then here.
 init_db() only checks that the tables exist — the backend creates them.
@@ -28,7 +29,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine, make_url
-from sqlalchemy.orm import declarative_base, relationship, sessionmaker
+from sqlalchemy.orm import declarative_base, relationship, sessionmaker, validates
 
 from . import config
 
@@ -88,6 +89,7 @@ def get_session():
 REQUIRED_TABLES = (
     "bike", "bike_offer", "bike_offer_photos", "bike_detail_photos", "bike_review", "bike_review_source",
     "bike_detail_component",
+    "equipment", "equipment_detail", "equipment_detail_component", "equipment_detail_photos",
 )
 
 
@@ -134,6 +136,18 @@ def init_db():
             "description / short_description) — run backend/scripts/migrate_drop_bike_detail.py "
             "on this database first"
         )
+    # TODO-042: bike_detail_component gained equipment_id (the link to an equipment row); the
+    # bike details save re-applies it and the equipment save sets it, so both would fail without it.
+    if "equipment_id" not in comp_columns:
+        raise RuntimeError(
+            "bike_detail_component has no equipment_id column — run backend/scripts/migrate_equipment_tables.py "
+            "on this database first"
+        )
+
+
+def norm(value: Optional[str]) -> str:
+    """Identity form of a name: `strip().lower()` in Python — never SQL lower(), SQLite's is ASCII-only."""
+    return (value or "").strip().lower()
 
 
 class Bike(Base):
@@ -289,5 +303,106 @@ class BikeDetailComponent(Base):
     spec_value = Column(String(1024), nullable=True)
     spec_order = Column(Integer, nullable=True)
 
+    # TODO-042: the equipment row this element opens (set by an equipment search for THIS bike only).
+    equipment_id = Column(Integer, ForeignKey("equipment.id", ondelete="SET NULL"), nullable=True, index=True)
+
     # Relationships
     bike = relationship("Bike", back_populates="components")
+
+
+class Equipment(Base):
+    """One equipment item (TODO-042): helmet, light, lock, apparel/bag/accessory.
+
+    Identity = (category, company_norm, model_norm). Opened from a bike's spec
+    tree, so company is usually "" and model is the element name. The norm
+    columns follow company/model through @validates (construction and
+    assignment); a Core update() must set them itself.
+    """
+
+    __tablename__ = "equipment"
+
+    id = Column(Integer, primary_key=True)
+    category = Column(String(32), nullable=False)
+    company = Column(String(255), nullable=False, default="")
+    model = Column(String(512), nullable=False)
+    company_norm = Column(String(255), nullable=False)
+    model_norm = Column(String(512), nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    details = relationship("EquipmentDetail", back_populates="equipment", cascade="all, delete-orphan", uselist=False)
+    photos = relationship(
+        "EquipmentDetailPhoto", back_populates="equipment", cascade="all, delete-orphan",
+        order_by="EquipmentDetailPhoto.display_order, EquipmentDetailPhoto.id",
+    )
+
+    __table_args__ = (UniqueConstraint("category", "company_norm", "model_norm", name="uq_equipment_identity"),)
+
+    @validates("company", "model")
+    def _sync_norm(self, key, value):
+        setattr(self, f"{key}_norm", norm(value))
+        return value
+
+
+class EquipmentDetail(Base):
+    """An equipment item's description + short description (one row per item, updated in place)."""
+
+    __tablename__ = "equipment_detail"
+
+    id = Column(Integer, primary_key=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=False)  # JSON serialized BikeDescription
+    short_description = Column(Text, nullable=False, default="", server_default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    equipment = relationship("Equipment", back_populates="details")
+    components = relationship(
+        "EquipmentDetailComponent",
+        back_populates="details",
+        cascade="all, delete-orphan",
+        order_by=(
+            "EquipmentDetailComponent.component_order, "
+            "EquipmentDetailComponent.element_order, "
+            "EquipmentDetailComponent.spec_order"
+        ),
+    )
+
+
+class EquipmentDetailComponent(Base):
+    """One spec row of an equipment item — the flat shape of bike_detail_component."""
+
+    __tablename__ = "equipment_detail_component"
+
+    id = Column(Integer, primary_key=True)
+    equipment_detail_id = Column(Integer, ForeignKey("equipment_detail.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    category = Column(String(255), nullable=False, index=True)
+    subcategory = Column(String(255), nullable=False, index=True)
+    component_order = Column(Integer, nullable=False, default=0)
+
+    element_name = Column(String(512), nullable=False, index=True)
+    element_description = Column(Text, nullable=False, default="")
+    element_order = Column(Integer, nullable=False, default=0)
+
+    spec_key = Column(String(255), nullable=True, index=True)
+    spec_value = Column(String(1024), nullable=True)
+    spec_order = Column(Integer, nullable=True)
+
+    # Relationships
+    details = relationship("EquipmentDetail", back_populates="components")
+
+
+class EquipmentDetailPhoto(Base):
+    """Photos of an equipment item, keyed on the item (written once, never replaced)."""
+
+    __tablename__ = "equipment_detail_photos"
+
+    id = Column(Integer, primary_key=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id", ondelete="CASCADE"), nullable=False, index=True)
+    url = Column(String(2048), nullable=False)
+    display_order = Column(Integer, default=0)
+
+    # Relationships
+    equipment = relationship("Equipment", back_populates="photos")

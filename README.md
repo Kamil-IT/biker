@@ -13,7 +13,7 @@ Before the first search the home page shows **Najpopularniejsze rowery** — the
 5. In the **Opis** and **Komponenty** sections the button starts the on-demand details search (`POST /v1/bike/details/search` → the `searcher/` service runs the Claude Code CLI once — `WebSearch` + `WebFetch` — for the Polish description, a Polish two-sentence short description and the 8-category component tree, and stores a usable result in the bike row's `description` / `short_description` and `bike_detail_component`, updated in place, photos untouched); one click fills both sections, it reads "Szukam danych roweru…" while it runs, then the data replaces it — or "Nie znaleziono danych".
    In the **Recenzja eksperta** section the button also starts the on-demand review search (`POST /v1/bike/review/search` → the same `searcher/` service runs the Claude Code CLI once over the curated review sites, computes the weighted rating and stores it in `bike_review` / `bike_review_source` — only when it found at least one professional source; a stored review is never wiped by a bad run); it reads "Szukam recenzji…" while it runs, then the review replaces it — or "Nie znaleziono recenzji".
    In the photo gallery slot the button also starts the on-demand photo search (`POST /v1/bike/photos/search` → the same `searcher/` service finds the manufacturer's product page with the Claude Code CLI, scrapes up to 8 photos from it with Playwright and stores them in `bike_detail_photos` — only for a bike that has none, stored photos are never replaced); it reads "Szukam zdjęć…" while it runs, then the gallery replaces it — or "Nie znaleziono zdjęć". In the **Used** offers card that same button also starts the on-demand OLX search (`POST /v1/bike/used/search` → the `searcher/` service, which runs the Claude Code CLI on your subscription and stores what it finds in `bike_offer`). The button reads "Szukam na OLX…" while it runs, then the real listings with photos replace it — or "Nie znaleziono ofert" when there are none. In the **New** card it fires **two** searches at once — Decathlon (`POST /v1/bike/decathlon/search`) and Allegro (`POST /v1/bike/allegro/search`) — through the same searcher; neither stores photos (Allegro blocks every automated fetch with 403, so its photo scrape was dropped); the button reads "Szukam na Allegro i Decathlon…" and rows from either source replace it as they arrive ("Nie znaleziono ofert" only when both came back empty; clickable again when a search failed and neither brought rows). Allegro is searched for every brand, and a used Allegro listing lands in the **Used** card by its `is_new` flag; Decathlon only for its house brands (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt; `backend/app/decathlon_brands.py`) — any other brand gets an instant empty Decathlon answer with no search spent (closes `TODO_ISSUE_010`)
-6. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel). Equipment is informational only — no shopping/offer links
+6. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel, and bike parts — the default category when the name matches no keyword). Equipment is informational only — no shopping/offer links
 
 ## Running the project
 
@@ -52,6 +52,8 @@ python scripts/migrate_short_description.py --dry-run    # once per existing dat
 python scripts/migrate_short_description.py              # ... then add bike_detail.short_description (idempotent)
 python scripts/migrate_drop_bike_detail.py --dry-run     # once per existing database (after the two above): drop bike_detail, details move onto bike ...
 python scripts/migrate_drop_bike_detail.py               # ... then re-key bike_detail_component to bike_id (idempotent)
+python scripts/migrate_equipment_tables.py --dry-run     # once per existing database (TODO-042, after migrate_drop_bike_detail.py) ...
+python scripts/migrate_equipment_tables.py               # ... then create equipment tables and add bike_detail_component.equipment_id (idempotent)
 python scripts/purge_details_cache.py --dry-run          # once per database (TODO-041): count the dead '/v1/bike/details' generic-cache rows ... (then without --dry-run; production only on an explicit go)
 uvicorn app.main:app --reload --port 8000
 ```
@@ -75,6 +77,8 @@ uvicorn app.main:app --reload --port 8000
 > its bikes exist in `bike`. The new backend runs fine before the drop; the old one logs a WARNING per search after it.
 
 > **Run `migrate_drop_bike_detail.py` once on every existing database** (after the two migrations above; `--dry-run` first, idempotent, `--url` / `--db`). The `bike_detail` table is gone: the description and short description now live on `bike` (`bike.description IS NOT NULL` = the bike has details) and `bike_detail_component` is keyed on `bike_id`. The new searcher refuses to start on an unmigrated database and the **old** backend breaks on a migrated one. Production order: Cloud SQL backup, migration through the proxy (only on the user's explicit go), deploy backend + searcher together; the frontend is unchanged. Details: `backend/app/DB_MIGRATION.md` § bike_detail dropped.
+
+> **Also run `migrate_equipment_tables.py` once on every existing database** (TODO-042, same options; **after** `migrate_drop_bike_detail.py` — it refuses a database still keyed on `bike_detail_id`). Equipment now has its own DB identity (`equipment`, `equipment_detail`, `equipment_detail_component`, `equipment_detail_photos` tables) and `bike_detail_component.equipment_id` links spec-tree elements to equipment rows; `create_all()` never alters a table. The searcher refuses to start without the column. On production Cloud SQL: backup, migrate, then deploy backend + searcher together, then the frontend (the old backend keeps working on the migrated database — the column is nullable, new tables are ignored). Details: `backend/app/DB_MIGRATION.md`.
 
 ### Terminal 2 — Frontend
 
@@ -389,8 +393,7 @@ Manual test plan and results (13 of 13 cases pass in round 3, after the merge of
 | `cd backend && python scripts/seed_popular_bikes.py` | Fill `bike_popular` — the home page's "Najpopularniejsze rowery" served by `GET /v1/bike/popular` (TODO-034) — with 3 bikes that have details, photos and a stored review (`bike_review`) with a real rating; `--dry-run`, `--count N`, repeatable `--bike "Brand\|Model"`; replaces the table contents |
 | `cd searcher && python scripts/test_searcher.py` | Smoke-test the searcher (`/health`, 401/422 on all six search routes and a stored-photos answer from the DB — free, no CLI run; the single paid live run lives in `backend/scripts/test_search.py` `case_decathlon_search`) |
 | `cd backend && python scripts/copy_review_cache_to_table.py` | One-off (TODO-037): copy the old generic-cache bike reviews into `bike_review` / `bike_review_source`; `--dry-run`, `--force`, `--db` / `--url`; idempotent |
-| `cd backend && python scripts/test_equipment.py` | Smoke-test `POST /v1/equipment/details` + `/v1/equipment/review` |
-| `cd backend && pytest` | Unit tests (no API key): stored reviews + cache copy, browser-launch cap, searcher client photo and review routes (the review aggregation tests live in `searcher/`) |
+| `cd backend && pytest` | Unit tests (no API key): stored reviews + cache copy, search database read, details + equipment tables and migrations, searcher client routes (photo, review, details, equipment x2), stored data repository reads |
 | `cd frontend && npm run build` | TypeScript check + production bundle → `dist/` |
 | `cd frontend && npm run preview` | Serve the production bundle locally |
 | http://localhost:8000/docs | Interactive OpenAPI UI for the backend |
@@ -429,26 +432,25 @@ biker/
 │   │   ├── bike_finder.py             # Single Claude call → all matching bikes, min 1 (DB-miss fallback)
 │   │   ├── reviews_repository.py      # Stored bike review (bike_review + bike_review_source) — DB read for /v1/bike/review
 │   │   ├── photos_repository.py       # Stored bike photos: get_bike_photos (POST /v1/bike/photos) — bike_detail_photos keyed on bike_id
-│   │   ├── equipment_categories.py    # 4 equipment category registry + inference
-│   │   ├── equipment_details_finder.py    # Equipment component specs (per-category prompt)
-│   │   ├── equipment_description_finder.py # Equipment overview via web search
-│   │   ├── equipment_photos_finder.py      # Equipment manufacturer photos
+│   │   ├── equipment_routes.py        # Four POST /v1/equipment/* endpoints (TODO-042): /details, /photos (DB reads); /details/search, /photos/search (searcher proxies)
+│   │   ├── equipment_repository.py    # Equipment data access (get_equipment_details, get_equipment_photos, save_equipment_details, save_equipment_photos, bike_has_component)
+│   │   ├── equipment_models.py        # Equipment ORM: equipment, equipment_detail, equipment_detail_component, equipment_detail_photos; equipment_id FK on bike_detail_component
+│   │   ├── component_tree.py          # Shared tree builder for bike and equipment spec trees
 │   │   ├── equipment_review_finder.py      # Equipment review (review/forum links only)
 │   │   └── prompts/
 │   │       ├── bike_search.md         # Single-call bike-finding prompt
 │   │       ├── bike_offer.md          # Multi-marketplace offer prompt (unused)
 │   │       ├── bike_offer_ceneo.md    # Ceneo offer search prompt (the only offer finder still on the API key)
-│   │       ├── equipment_details_*.md # Per-category equipment spec prompts (helmets/lights/locks/apparel)
-│   │       ├── equipment_description.md   # Equipment overview prompt
-│   │       ├── equipment_photos.md        # Equipment manufacturer page URL prompt
-│   │       └── equipment_review.md        # Equipment review prompt (no offer links)
+│   │       └── equipment_review.md    # Equipment review prompt (SDK + generic cache, no offer links)
 │   └── scripts/
 │       ├── migrate_drop_search_tables.py  # One-off, idempotent: drop search_cache + search_bike_rating_cache (write-only per-search tables, TODO-043); --dry-run, --db, --url
+│       ├── migrate_equipment_tables.py    # One-off, idempotent: create equipment tables and add bike_detail_component.equipment_id (TODO-042); --dry-run, --db, --url
 │       ├── seed_popular_bikes.py      # Fill bike_popular (home page "Najpopularniejsze rowery") with 3 bikes that have details + photos + a stored review; --dry-run, --count, --bike "Brand|Model"
-│       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing, /v1/bike/popular, /v1/bike/used/olx, /v1/bike/used/search, /v1/bike/decathlon, /v1/bike/decathlon/search, /v1/bike/allegro, /v1/bike/allegro/search)
+│       ├── test_search.py             # Smoke tests for all backend endpoints (bike search/details, offers, photos, review; equipment details/photos x2) — one happy path per endpoint, no AI
 │       ├── copy_review_cache_to_table.py  # One-off: generic-cache reviews -> bike_review tables (TODO-037)
-│       ├── test_equipment.py          # Smoke test for /v1/equipment/details + /review
-│       └── test_equipment_review.py   # Focused regression for equipment-review JSON extraction
+│       ├── test_equipment_repository.py   # pytest: get/save equipment details + photos, link preservation after bike re-save, insert-only photos (TODO-042)
+│       ├── test_migrate_equipment_tables.py # pytest: idempotent migration (TODO-042)
+│       ├── test_searcher_client_equipment.py # pytest: searcher client routes for equipment details + photos (TODO-042)
 └── frontend/
     └── src/
         ├── App.tsx                    # App shell, state machine, all API calls

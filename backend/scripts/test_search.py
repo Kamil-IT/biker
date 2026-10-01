@@ -16,10 +16,13 @@ it passes on a cold or aged database. Endpoints covered here:
            /v1/bike/allegro · /v1/bike/allegro/search (404 only — no paid run)
            /v1/bike/photos · /v1/bike/photos/search (404 only — no paid run)
            /v1/bike/review · /v1/bike/review/search (404 only — no paid run)
+           /v1/equipment/details · /v1/equipment/photos (by id and by name)
+           /v1/equipment/details/search · /v1/equipment/photos/search (404 only — no paid run)
   --ai     /v1/bike/search (free text) · /v1/bike/parse · /v1/bike/ceneo
 
-The equipment endpoints have their own single-happy-path scripts: test_equipment.py
-(/equipment/details), test_equipment_review.py (/equipment/review).
+/v1/equipment/review (Anthropic API, generic cache) has its own focused script,
+test_equipment_review.py; the old test_equipment.py left with the in-backend
+equipment finders (TODO-042).
 Exit code 0 = every selected case passed (skips do not fail); 1 = a failure.
 """
 import json
@@ -45,6 +48,8 @@ from app.schemas import (  # noqa: E402
     BikeCategory, BikeDescription, BikeDetailsResponse, BikeSubcategory, ComponentElement, SpecItem,
 )
 from app.repository import save_bike_details  # noqa: E402
+from app.schemas import EquipmentDetailsResponse  # noqa: E402
+from app import equipment_repository  # noqa: E402
 
 BASE = os.getenv("BIKER_API_URL", "http://localhost:8000").rstrip("/")
 SEARCH_URL = f"{BASE}/v1/bike/search"
@@ -64,6 +69,10 @@ PHOTOS_URL = f"{BASE}/v1/bike/photos"
 PHOTOS_SEARCH_URL = f"{BASE}/v1/bike/photos/search"
 REVIEW_URL = f"{BASE}/v1/bike/review"
 REVIEW_SEARCH_URL = f"{BASE}/v1/bike/review/search"
+EQUIP_DETAILS_URL = f"{BASE}/v1/equipment/details"
+EQUIP_PHOTOS_URL = f"{BASE}/v1/equipment/photos"
+EQUIP_DETAILS_SEARCH_URL = f"{BASE}/v1/equipment/details/search"
+EQUIP_PHOTOS_SEARCH_URL = f"{BASE}/v1/equipment/photos/search"
 SEARCHER_URL = os.getenv("SEARCHER_URL", "").strip().rstrip("/")
 
 
@@ -711,6 +720,145 @@ def case_review_search():
     assert resp.status_code == 404, f"Expected 404 for an unknown bike, got {resp.status_code}: {resp.text[:200]}"
 
 
+# ── Equipment (TODO-042): DB reads + the 404 guards of the on-demand searches ──
+
+FIX_EQUIP_MODEL = "Smoke Fixture Helmet"
+FIX_EQUIP_CATEGORY = "helmets"
+FIX_EQUIP_SHORT = "Kask testowy. Drugie zdanie."
+FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL = "Smoke Fixture", "Equipment Bike"
+EMPTY_DESC = {"text": "", "segments": [], "citations": []}
+
+
+def _delete_equipment(model: str) -> None:
+    """Remove fixture equipment and its rows (bike links fall back to NULL via ON DELETE SET NULL)."""
+    conn = _DB()
+    try:
+        ids = "(SELECT id FROM equipment WHERE model_norm = ?)"
+        p = (model.strip().lower(),)
+        for sql in (
+            f"UPDATE bike_detail_component SET equipment_id = NULL WHERE equipment_id IN {ids}",
+            f"DELETE FROM equipment_detail_component WHERE equipment_detail_id IN "
+            f"(SELECT id FROM equipment_detail WHERE equipment_id IN {ids})",
+            f"DELETE FROM equipment_detail WHERE equipment_id IN {ids}",
+            f"DELETE FROM equipment_detail_photos WHERE equipment_id IN {ids}",
+            "DELETE FROM equipment WHERE model_norm = ?",
+        ):
+            conn.execute(sql, p)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _equipment_cache_key(model: str) -> str:
+    """The key the old in-backend /v1/equipment/details wrote its generic-cache rows under."""
+    return _norm_key({"company": "", "model": model, "category": ""})
+
+
+def case_equipment_details():
+    """/v1/equipment/details is a pure DB read: by equipment_id and by name, no AI, no generic-cache row;
+    an unknown id or name -> fast empty 200."""
+    _delete_equipment(FIX_EQUIP_MODEL)
+    eid = equipment_repository.save_equipment_details("", FIX_EQUIP_MODEL, FIX_EQUIP_CATEGORY, EquipmentDetailsResponse(
+        company="", model=FIX_EQUIP_MODEL, category=FIX_EQUIP_CATEGORY,
+        description=BikeDescription(text="Opis kasku testowego.", segments=[], citations=[]),
+        components=[BikeCategory(category="Protection", subcategories=[BikeSubcategory(subcategory="Shell", elements=[
+            ComponentElement(name="In-mould shell", description="", specs=[SpecItem(key="Weight", value="400 g")]),
+        ])])],
+        short_description=FIX_EQUIP_SHORT,
+    ))
+    assert eid is not None, "seeding the equipment fixture failed (is the DB migrated? scripts/migrate_equipment_tables.py)"
+    key = _equipment_cache_key(FIX_EQUIP_MODEL)
+    try:
+        _cache_row_delete("/v1/equipment/details", key)
+        for body in ({"model": "ignored when the id is given", "equipment_id": eid},
+                     {"company": "", "model": FIX_EQUIP_MODEL.upper()}):
+            t0 = time.perf_counter()
+            resp = _post(EQUIP_DETAILS_URL, body, timeout=10)
+            elapsed = time.perf_counter() - t0
+            assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+            data = resp.json()
+            assert (data["equipment_id"], data["company"], data["model"], data["category"]) == (
+                eid, "", FIX_EQUIP_MODEL, FIX_EQUIP_CATEGORY), data
+            assert data["description"]["text"] == "Opis kasku testowego." and data["short_description"] == FIX_EQUIP_SHORT, data
+            assert data["components"][0]["subcategories"][0]["elements"][0]["specs"] == [{"key": "Weight", "value": "400 g"}], data
+            assert "photos" not in data, data
+            assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
+        assert not _cache_row_exists("/v1/equipment/details", key), "/v1/equipment/details must not write a generic-cache row"
+        for body in ({"model": "x", "equipment_id": 999999999}, {"company": "", "model": "No Such Equipment XYZ999"}):
+            t0 = time.perf_counter()
+            resp = _post(EQUIP_DETAILS_URL, body, timeout=10)
+            assert resp.status_code == 200, resp.text[:200]
+            data = resp.json()
+            assert (data["description"], data["components"], data["short_description"], data["equipment_id"]) == (
+                EMPTY_DESC, [], "", None), data
+            assert time.perf_counter() - t0 < 5.0
+    finally:
+        _delete_equipment(FIX_EQUIP_MODEL)
+
+
+def case_equipment_photos():
+    """/v1/equipment/photos serves the stored equipment_detail_photos in display_order, by id and by name."""
+    _delete_equipment(FIX_EQUIP_MODEL)
+    photos = ["https://example.com/smoke-equipment-0.jpg", "https://example.com/smoke-equipment-1.jpg"]
+    # Stored in the opposite order, then re-ordered: the answer must follow display_order, not insertion order.
+    eid, written = equipment_repository.save_equipment_photos("", FIX_EQUIP_MODEL, FIX_EQUIP_CATEGORY, list(reversed(photos)))
+    assert eid is not None and written == 2, f"seeding failed: {eid}, {written}"
+    conn = _DB()
+    try:
+        for order, url in enumerate(photos):
+            conn.execute("UPDATE equipment_detail_photos SET display_order = ? WHERE equipment_id = ? AND url = ?",
+                         (order, eid, url))
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        for body in ({"model": "x", "equipment_id": eid}, {"company": "", "model": f"  {FIX_EQUIP_MODEL.lower()} "}):
+            t0 = time.perf_counter()
+            resp = _post(EQUIP_PHOTOS_URL, body, timeout=10)
+            elapsed = time.perf_counter() - t0
+            assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+            assert resp.json() == {"photos": photos, "equipment_id": eid}, resp.json()
+            assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
+        assert not _cache_row_exists("/v1/equipment/photos", _equipment_cache_key(FIX_EQUIP_MODEL))
+        for body in ({"model": "x", "equipment_id": 999999999}, {"company": "", "model": "No Such Equipment XYZ999"}):
+            t0 = time.perf_counter()
+            resp = _post(EQUIP_PHOTOS_URL, body, timeout=10)
+            assert resp.status_code == 200 and resp.json() == {"photos": [], "equipment_id": None}, resp.text[:200]
+            assert time.perf_counter() - t0 < 5.0
+    finally:
+        _delete_equipment(FIX_EQUIP_MODEL)
+
+
+def _equipment_search_404s(url: str) -> None:
+    """Unknown bike -> 404 "Bike not found"; known bike + an element it does not have -> 404 "Component not found".
+
+    No live run: every searcher run is a paid subscription search (the suite's one
+    live run is case_decathlon_search, same searcher_client code path)."""
+    body = {"bike_company": "FakeBrand", "bike_model": "NoSuchModel XYZ999", "element_name": FIX_EQUIP_MODEL}
+    resp = _post(url, body, timeout=30)
+    assert resp.status_code == 404 and resp.json() == {"detail": "Bike not found"}, f"{resp.status_code}: {resp.text[:200]}"
+    _delete_bike(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL)
+    _seed_bike_details(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL, "", _full_components())
+    try:
+        body = {"bike_company": FIX_EQUIP_BIKE_BRAND, "bike_model": FIX_EQUIP_BIKE_MODEL,
+                "element_name": "No Such Element XYZ999"}
+        resp = _post(url, body, timeout=30)
+        assert resp.status_code == 404 and resp.json() == {"detail": "Component not found"}, \
+            f"{resp.status_code}: {resp.text[:200]}"
+    finally:
+        _delete_bike(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL)
+
+
+def case_equipment_details_search():
+    """/v1/equipment/details/search: the two 404 guards run before any searcher call."""
+    _equipment_search_404s(EQUIP_DETAILS_SEARCH_URL)
+
+
+def case_equipment_photos_search():
+    """/v1/equipment/photos/search: the two 404 guards run before any searcher call."""
+    _equipment_search_404s(EQUIP_PHOTOS_SEARCH_URL)
+
+
 # ── Cases that call the Anthropic API (--ai) ────────────────────────────────
 
 def case_search_free_text():
@@ -760,6 +908,10 @@ CASES = [
     (case_photos_search, False),
     (case_review, False),
     (case_review_search, False),
+    (case_equipment_details, False),
+    (case_equipment_photos, False),
+    (case_equipment_details_search, False),
+    (case_equipment_photos_search, False),
     (case_search_free_text, True),
     (case_parse, True),
     (case_ceneo, True),

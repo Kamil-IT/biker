@@ -1,6 +1,8 @@
-"""Biker Searcher — FastAPI entry point (TODO-031, TODO-032, TODO-033, photos, TODO-037).
+"""Biker Searcher — FastAPI entry point (TODO-031, TODO-032, TODO-033, photos, TODO-037, TODO-041, TODO-042).
 
-Seven routes (the last, POST /v1/search/details, TODO-041: bike details through the CLI onto the bike row + bike_detail_component): POST /v1/search/olx (X-Searcher-Key required) runs the OLX
+Nine routes (POST /v1/search/details, TODO-041: bike details through the CLI onto the bike row + bike_detail_component;
+POST /v1/search/equipment/details and /v1/search/equipment/photos, TODO-042: an equipment item opened from a
+bike's spec tree, into the equipment tables, linked on that bike's bike_detail_component rows): POST /v1/search/olx (X-Searcher-Key required) runs the OLX
 search through the Claude Code CLI, scrapes listing photos with Playwright and
 writes the result into bike_offer / bike_offer_photos; POST /v1/search/decathlon
 (same key) runs the Decathlon search through the CLI — no Playwright — and
@@ -12,8 +14,8 @@ the CLI, scrapes up to 8 photos with Playwright and stores them in
 bike_detail_photos — only for a bike that has none; POST /v1/search/review
 (same key) runs the expert-review search through the CLI — no Playwright — and
 stores it in bike_review / bike_review_source when it found sources; GET
-/health is open. The SIX searches share one semaphore of SEARCHER_MAX_CONCURRENT slots
-(default 10); a slot is one CLI run plus, for OLX and photos, one browser
+/health is open. The EIGHT searches share one semaphore of SEARCHER_MAX_CONCURRENT slots
+(default 10); a slot is one CLI run plus, for OLX and both photo routes, one browser
 (browser launches are capped separately by BROWSER_MAX_CONCURRENCY, default 2).
 The next request is refused with 503, never queued. On Cloud Run each
 instance still serves one request (--concurrency 1); the parallelism there
@@ -35,6 +37,9 @@ from .allegro_finder import ALLEGRO_SOURCE, find_allegro_offers
 from .claude_cli import cli_version
 from .decathlon_finder import DECATHLON_SOURCE, find_decathlon_offers
 from .details_finder import empty_details, find_bike_details
+from .equipment_details_finder import empty_equipment_details, find_equipment_details
+from .equipment_photos_finder import find_equipment_photos
+from .equipment_repository import get_equipment_details, save_equipment_details, save_equipment_photos
 from .models import dispose_engine, get_engine, init_db
 from .olx_finder import OLX_SOURCE, SearcherError, SearcherLimitError, find_used_bikes
 from .photos_finder import find_bike_photos
@@ -49,6 +54,9 @@ from .review_finder import find_bike_review
 from .schemas import (
     BikeOffer,
     DetailsResponse,
+    EquipmentDetailsSearchResponse,
+    EquipmentPhotosSearchResponse,
+    EquipmentSearchRequest,
     HealthResponse,
     PhotosResponse,
     ReviewResponse,
@@ -371,3 +379,89 @@ async def search_details(req: SearchRequest) -> DetailsResponse:
         int(saved), bike_id, time.perf_counter() - t_start,
     )
     return DetailsResponse(details=result, bike_id=bike_id, saved=int(saved))
+
+
+def _claim_slot(label: str, req: EquipmentSearchRequest) -> None:
+    """503 "searcher busy" when every SEARCHER_MAX_CONCURRENT slot is taken (the same semaphore as every route)."""
+    assert _semaphore is not None  # set in lifespan
+    if _semaphore.locked():
+        logger.warning("%s search refused: busy | bike=%r %r element=%r", label, req.bike_company, req.bike_model,
+                       req.element_name)
+        raise HTTPException(status_code=503, detail="searcher busy")
+
+
+@app.post("/v1/search/equipment/details", response_model=EquipmentDetailsSearchResponse,
+          dependencies=[Depends(require_api_key)])
+async def search_equipment_details(req: EquipmentSearchRequest) -> EquipmentDetailsSearchResponse:
+    """Search an equipment item's details (TODO-042) and store them; answer with what is stored now.
+
+    Always runs a search (no DB read first). One CLI run (WebSearch + WebFetch,
+    no Playwright) under the category prompt (`category` or inferred from the
+    element name). A usable result (components or description) is stored —
+    equipment row created if missing, equipment_detail updated in place,
+    components replaced — and the element is linked on THIS bike's
+    bike_detail_component rows (bike missing: stored, not linked); saved 1.
+    Anything less writes nothing (saved 0). Same 400 / 401 / 422 / 502 / 503 /
+    500 mapping and the SAME SEARCHER_MAX_CONCURRENT slots as the other routes.
+    """
+    logger.info("equipment details search request | bike=%r %r element=%r category=%r",
+                req.bike_company, req.bike_model, req.element_name, req.category)
+    _claim_slot("equipment details", req)
+    t_start = time.perf_counter()
+    async with _semaphore:
+        try:
+            slug, found = await find_equipment_details(req.bike_company, req.bike_model, req.element_name, req.category)
+        except SearcherError as exc:
+            logger.error("equipment details search failed | element=%r | %s", req.element_name, exc)
+            raise _search_failed(exc) from exc
+        try:
+            equipment_id, saved = await asyncio.to_thread(
+                save_equipment_details, req.bike_company, req.bike_model, req.element_name, slug, found,
+            )
+            stored = await asyncio.to_thread(get_equipment_details, equipment_id) if equipment_id is not None else None
+        except Exception as exc:  # noqa: BLE001 - logged in the repository; callers get a summary only
+            raise HTTPException(status_code=500, detail="database write failed") from exc
+    result = stored or empty_equipment_details(req.element_name, slug).model_copy(update={"equipment_id": equipment_id})
+    logger.info(
+        "equipment details search complete | element=%r category=%r saved=%d equipment_id=%s elapsed=%.2fs",
+        req.element_name, slug, int(saved), equipment_id, time.perf_counter() - t_start,
+    )
+    return EquipmentDetailsSearchResponse(details=result, equipment_id=equipment_id, saved=int(saved))
+
+
+@app.post("/v1/search/equipment/photos", response_model=EquipmentPhotosSearchResponse,
+          dependencies=[Depends(require_api_key)])
+async def search_equipment_photos(req: EquipmentSearchRequest) -> EquipmentPhotosSearchResponse:
+    """Search an equipment item's photos (TODO-042) and store them when it has none; return its photos as stored.
+
+    Always runs a search (no DB read first). The bike photo search with the
+    equipment prompt: one WebSearch-only CLI run for the manufacturer page,
+    then the guarded Playwright scrape (≤ 8). Photos are inserted only for an
+    item that has none (row lock), never replaced; a non-empty result links the
+    element on THIS bike; an empty one writes nothing. Same status mapping and
+    the SAME SEARCHER_MAX_CONCURRENT slots as the other routes.
+    """
+    logger.info("equipment photos search request | bike=%r %r element=%r category=%r",
+                req.bike_company, req.bike_model, req.element_name, req.category)
+    _claim_slot("equipment photos", req)
+    t_start = time.perf_counter()
+    async with _semaphore:
+        try:
+            slug, photos, product_url = await find_equipment_photos(
+                req.bike_company, req.bike_model, req.element_name, req.category,
+            )
+        except SearcherError as exc:
+            logger.error("equipment photos search failed | element=%r | %s", req.element_name, exc)
+            raise _search_failed(exc) from exc
+        try:
+            equipment_id, stored, saved = await asyncio.to_thread(
+                save_equipment_photos, req.bike_company, req.bike_model, req.element_name, slug, photos,
+            )
+        except Exception as exc:  # noqa: BLE001 - logged in the repository; callers get a summary only
+            raise HTTPException(status_code=500, detail="database write failed") from exc
+    logger.info(
+        "equipment photos search complete | element=%r category=%r product_url=%r found=%d saved=%d "
+        "equipment_id=%s elapsed=%.2fs",
+        req.element_name, slug, product_url, len(photos), saved, equipment_id, time.perf_counter() - t_start,
+    )
+    return EquipmentPhotosSearchResponse(photos=stored, equipment_id=equipment_id, saved=saved)

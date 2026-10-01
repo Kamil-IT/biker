@@ -16,6 +16,7 @@ from app.schemas import (  # noqa: E402
     BikeCategory, BikeDescription, BikeDetailsResponse, BikeSubcategory, ComponentElement, SpecItem,
 )
 from migrate_drop_bike_detail import migrate  # noqa: E402
+from migrate_equipment_tables import migrate as migrate_equipment_tables  # noqa: E402
 
 
 A_JSON = '{"text": "a", "segments": [], "citations": []}'
@@ -126,6 +127,8 @@ def test_fresh_database_is_left_to_init_db(tmp_path):
 def test_migrated_database_works_with_the_orm(tmp_path, monkeypatch):
     path = _old_db(tmp_path / "old.db")
     migrate(path, verbose=False)
+    # The documented order: this migration, then TODO-042's (the ORM reads bike_detail_component.equipment_id).
+    assert migrate_equipment_tables(path, verbose=False)["status"] == "migrated"
     monkeypatch.setattr(models, "_db_url", None)
     models.configure_db(path)
     try:

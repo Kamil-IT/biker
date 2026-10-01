@@ -127,6 +127,8 @@ class ComponentElement(BaseModel):
     name: str
     description: str = ""
     specs: list[SpecItem] = []
+    # TODO-042: the equipment row this bike element was searched as (bike trees only).
+    equipment_id: Optional[int] = None
 
 
 class BikeSubcategory(BaseModel):
@@ -286,9 +288,16 @@ class BikePhotosResponse(BaseModel):
 
 
 class EquipmentDetailsRequest(BaseModel):
-    company: str = ""
-    model: str
-    category: Optional[str] = None
+    """Read of stored equipment data (TODO-042): by `equipment_id` when given, else by name.
+
+    The name lookup matches the Python-normalised (company, model) and ignores
+    `category` (the oldest matching row wins). `model` is bounded by the
+    equipment.model / element_name column width (512).
+    """
+    company: str = Field(default="", max_length=255)
+    model: str = Field(max_length=512)
+    category: Optional[str] = Field(default=None, max_length=32)
+    equipment_id: Optional[int] = Field(default=None, ge=1, le=2147483647)  # INTEGER range: no DB overflow
 
     @field_validator("company", mode="before")
     @classmethod
@@ -319,7 +328,42 @@ class EquipmentDetailsResponse(BaseModel):
     category: str
     description: BikeDescription
     components: list[BikeCategory]
+    short_description: str = ""
+    equipment_id: Optional[int] = None
+
+
+class EquipmentPhotosRequest(EquipmentDetailsRequest):
+    """Same lookup as EquipmentDetailsRequest: by `equipment_id`, else by name."""
+
+
+class EquipmentPhotosResponse(BaseModel):
     photos: list[str] = []
+    equipment_id: Optional[int] = None
+
+
+class EquipmentSearchRequest(BaseModel):
+    """On-demand equipment search from a bike's spec tree (TODO-042).
+
+    Bounded because every field reaches the searcher's CLI prompt and its rows.
+    """
+    bike_company: str = Field(max_length=255)
+    bike_model: str = Field(max_length=255)
+    element_name: str = Field(max_length=255)
+    category: Optional[str] = Field(default=None, max_length=32)
+
+    @field_validator("bike_company", "bike_model", "element_name")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def blank_category_to_none(cls, v):
+        if v is None:
+            return None
+        return str(v).strip() or None
 
 
 class EquipmentReviewRequest(BaseModel):

@@ -100,8 +100,16 @@ def get_session():
     return _SessionLocal()
 
 
+def norm(value: Optional[str]) -> str:
+    """Identity normalisation, always in Python (`strip().lower()`).
+
+    Never SQL `lower()`: SQLite's is ASCII-only, so 'RIESE & MÜLLER' would miss.
+    """
+    return (value or "").strip().lower()
+
+
 def init_db():
-    """Create all tables."""
+    """Create all tables (the equipment ones too — see the import at the bottom)."""
     engine = get_engine()
     Base.metadata.create_all(engine)
 
@@ -208,6 +216,11 @@ class BikeDetailComponent(Base):
     spec_key = Column(String(255), nullable=True, index=True)
     spec_value = Column(String(1024), nullable=True)
     spec_order = Column(Integer, nullable=True)
+
+    # TODO-042: the equipment this element was searched as, set only on THIS bike's
+    # rows with that element name; kept across a details re-save by element name.
+    # scripts/migrate_equipment_tables.py adds it to an existing database.
+    equipment_id = Column(Integer, ForeignKey("equipment.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Relationships
     bike = relationship("Bike", back_populates="components")
@@ -363,3 +376,10 @@ endpoint_req_to_body_cache = Table(
     Column("time_stored", Text, nullable=False),  # ISO-8601 UTC
     UniqueConstraint("endpoint", "request"),
 )
+
+
+# --- Equipment (TODO-042) -------------------------------------------------
+# equipment / equipment_detail / equipment_detail_component /
+# equipment_detail_photos live in equipment_models.py (keeps this file short);
+# importing it here registers them on Base, so init_db() creates them too.
+from . import equipment_models  # noqa: E402,F401

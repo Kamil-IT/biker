@@ -4,73 +4,27 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
+from sqlalchemy.exc import OperationalError, ProgrammingError
+
+from .component_tree import flatten_components, rebuild_components  # noqa: F401 — re-exported
 from .models import (
     Bike,
     BikeDetailComponent,
     BikeMissingRequest,
     dialect_insert,
     get_session,
+    norm,
 )
 from .schemas import (
     BikeDetailsResponse,
     BikeDescription,
     BikeResult,
-    BikeCategory,
     MissingDataResponse,
-    BikeSubcategory,
-    ComponentElement,
-    SpecItem,
 )
 
 logger = logging.getLogger(__name__)
 
 # store.py puts AI-found bikes into `bike` (save_search). This module owns the bike-details helpers and the DB-first search below.
-
-
-def rebuild_components(rows) -> list[BikeCategory]:
-    """Regroup flat BikeDetailComponent rows back into the nested response tree.
-
-    `rows` must already be ordered by (component_order, element_order,
-    spec_order) — the relationship declares that ordering. Grouping keys off
-    those integers rather than off names, so two elements sharing a name inside
-    one subcategory stay distinct. A row whose spec_key is NULL contributes an
-    element with no specs, which is how `specs: []` round-trips.
-    """
-    comps: dict[int, dict] = {}
-    for r in rows:
-        comp = comps.setdefault(r.component_order, {
-            "category": r.category,
-            "subcategory": r.subcategory,
-            "elements": {},
-        })
-        element = comp["elements"].setdefault(r.element_order, {
-            "name": r.element_name,
-            "description": r.element_description or "",
-            "specs": [],
-        })
-        if r.spec_key is not None:
-            element["specs"].append(SpecItem(key=r.spec_key, value=r.spec_value or ""))
-
-    # Categories are contiguous runs of component_order, so walking in order and
-    # grouping into a dict re-nests them with their original ordering intact.
-    grouped: dict[str, list[BikeSubcategory]] = {}
-    for comp_order in sorted(comps):
-        comp = comps[comp_order]
-        grouped.setdefault(comp["category"], []).append(BikeSubcategory(
-            subcategory=comp["subcategory"],
-            elements=[
-                ComponentElement(
-                    name=el["name"],
-                    description=el["description"],
-                    specs=el["specs"],
-                )
-                for _, el in sorted(comp["elements"].items())
-            ],
-        ))
-    return [
-        BikeCategory(category=name, subcategories=subs)
-        for name, subs in grouped.items()
-    ]
 
 
 def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> bool:
@@ -93,6 +47,8 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> bo
             session.add(bike)
             session.flush()
 
+        # TODO-042: snapshot the equipment links before the component rows go.
+        links = _equipment_links(session, bike.id)
         bike.description = data.description.model_dump_json()
         bike.short_description = data.short_description or ""
         bike.updated_at = datetime.now(timezone.utc)
@@ -102,45 +58,15 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> bo
         session.expire(bike, ["components"])
         session.flush()
 
-        # Flatten the whole tree into one row per spec, each carrying its
-        # element/subcategory/category ancestry. `component_order` is a running
-        # counter across the tree so rows sharing a category stay contiguous;
-        # element_order and spec_order order the levels beneath it.
-        # An element with no specs still emits one row, with the spec_* columns
-        # NULL — that is what makes `specs: []` survive the round-trip.
-        comp_order = 0
-        for category in data.components:
-            for subcategory in category.subcategories:
-                for e_idx, element in enumerate(subcategory.elements):
-                    specs = list(element.specs)
-                    if not specs:
-                        session.add(BikeDetailComponent(
-                            bike_id=bike.id,
-                            category=category.category,
-                            subcategory=subcategory.subcategory,
-                            component_order=comp_order,
-                            element_name=element.name,
-                            element_description=element.description,
-                            element_order=e_idx,
-                            spec_key=None,
-                            spec_value=None,
-                            spec_order=None,
-                        ))
-                        continue
-                    for s_idx, spec in enumerate(specs):
-                        session.add(BikeDetailComponent(
-                            bike_id=bike.id,
-                            category=category.category,
-                            subcategory=subcategory.subcategory,
-                            component_order=comp_order,
-                            element_name=element.name,
-                            element_description=element.description,
-                            element_order=e_idx,
-                            spec_key=spec.key,
-                            spec_value=spec.value,
-                            spec_order=s_idx,
-                        ))
-                comp_order += 1
+        # One row per spec (component_tree.flatten_components). TODO-042: a row
+        # gets back the equipment link its element name had before the re-save;
+        # an incoming element.equipment_id is ignored (it may be another DB's id).
+        for row in flatten_components(data.components):
+            session.add(BikeDetailComponent(
+                bike_id=bike.id,
+                equipment_id=links.get(norm(row["element_name"])),
+                **row,
+            ))
 
         session.commit()
         logger.info("bike_details stored | company=%r model=%r", company, model)
@@ -151,6 +77,35 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> bo
         return False
     finally:
         session.close()
+
+
+def _equipment_links(session, bike_id: int) -> dict[str, int]:
+    """norm(element_name) -> equipment_id of one bike's linked component rows (TODO-042)."""
+    links: dict[str, int] = {}
+    for name, equipment_id in session.query(
+        BikeDetailComponent.element_name, BikeDetailComponent.equipment_id,
+    ).filter(
+        BikeDetailComponent.bike_id == bike_id,
+        BikeDetailComponent.equipment_id.isnot(None),
+    ).order_by(BikeDetailComponent.id):
+        links.setdefault(norm(name), equipment_id)
+    return links
+
+
+EQUIPMENT_MIGRATION_HINT = "run backend/scripts/migrate_equipment_tables.py"
+
+
+def _log_schema_error(what: str, exc: Exception) -> None:
+    """ERROR for a DB schema error, naming the TODO-042 migration.
+
+    The ORM reads bike_detail_component.equipment_id, which create_all() never
+    adds to an existing table — an unmigrated database fails here ("no such
+    column" / "does not exist") without saying why.
+    """
+    logger.error(
+        "%s failed: database schema error — if bike_detail_component.equipment_id is missing, "
+        "the database is not migrated, %s | %s", what, EQUIPMENT_MIGRATION_HINT, exc,
+    )
 
 
 def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
@@ -189,6 +144,9 @@ def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
 
         logger.info("bike_details hit | company=%r model=%r", company, model)
         return response
+    except (OperationalError, ProgrammingError) as exc:
+        _log_schema_error("get_bike_details", exc)
+        raise
     finally:
         session.close()
 
@@ -323,7 +281,7 @@ _SIZE_ALIASES = {"SM": "S", "MD": "M", "LG": "L", "2XL": "XXL"}
 
 
 def _lc(s: Optional[str]) -> str:
-    return (s or "").strip().lower()
+    return norm(s)
 
 
 def checkable_fields(req) -> dict:
@@ -426,6 +384,9 @@ def find_bikes_by_details(req) -> list[BikeResult]:
             "find_bikes_by_details | fields=%s matches=%d", sorted(fields), len(results),
         )
         return results
+    except (OperationalError, ProgrammingError) as exc:
+        _log_schema_error("find_bikes_by_details", exc)
+        return []
     except Exception as exc:  # noqa: BLE001 — a DB read must never break search
         logger.warning("find_bikes_by_details failed (non-fatal) | %s", exc)
         return []

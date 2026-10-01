@@ -133,30 +133,34 @@ def client(monkeypatch):
 
 
 def _fail_with(monkeypatch, exc: Exception):
-    async def finder(company, model):
+    async def finder(*args):
         raise exc
 
     for name in ("find_used_bikes", "find_decathlon_offers", "find_allegro_offers",
-                 "find_bike_photos", "find_bike_review", "find_bike_details"):
+                 "find_bike_photos", "find_bike_review", "find_bike_details",
+                 "find_equipment_details", "find_equipment_photos"):
         monkeypatch.setattr(searcher_main, name, finder)
 
 
 # No route reads the DB before its search, so none needs a stubbed repository here.
-ROUTES = ["/v1/search/olx", "/v1/search/decathlon", "/v1/search/allegro", "/v1/search/photos",
-          "/v1/search/review", "/v1/search/details"]
+BIKE = {"company": "Trek", "model": "Marlin 5"}
+EQUIPMENT = {"bike_company": "Trek", "bike_model": "Marlin 5", "element_name": "Bontrager Comp Lock"}
+ROUTES = [("/v1/search/olx", BIKE), ("/v1/search/decathlon", BIKE), ("/v1/search/allegro", BIKE),
+          ("/v1/search/photos", BIKE), ("/v1/search/review", BIKE), ("/v1/search/details", BIKE),
+          ("/v1/search/equipment/details", EQUIPMENT), ("/v1/search/equipment/photos", EQUIPMENT)]
 
 
-@pytest.mark.parametrize("path", ROUTES)
-def test_limit_is_400_with_the_notice(client, monkeypatch, path):
+@pytest.mark.parametrize("path,body", ROUTES)
+def test_limit_is_400_with_the_notice(client, monkeypatch, path, body):
     _fail_with(monkeypatch, SearcherLimitError(LIMIT))
-    resp = client.post(path, json={"company": "Trek", "model": "Marlin 5"}, headers={"X-Searcher-Key": "secret-key"})
+    resp = client.post(path, json=body, headers={"X-Searcher-Key": "secret-key"})
     assert resp.status_code == 400
     assert resp.json() == {"detail": LIMIT}
 
 
-@pytest.mark.parametrize("path", ROUTES)
-def test_other_cli_failure_stays_502(client, monkeypatch, path):
+@pytest.mark.parametrize("path,body", ROUTES)
+def test_other_cli_failure_stays_502(client, monkeypatch, path, body):
     _fail_with(monkeypatch, SearcherError("claude CLI failed: exit 1"))
-    resp = client.post(path, json={"company": "Trek", "model": "Marlin 5"}, headers={"X-Searcher-Key": "secret-key"})
+    resp = client.post(path, json=body, headers={"X-Searcher-Key": "secret-key"})
     assert resp.status_code == 502
     assert resp.json() == {"detail": "claude CLI failed: exit 1"}

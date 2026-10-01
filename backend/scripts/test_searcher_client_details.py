@@ -27,7 +27,7 @@ DETAILS = {
         "citations": [{"url": "https://trek.example/1", "title": "Trek", "cited_text": ""}],
     },
     "components": [{"category": "Frame", "subcategories": [
-        {"subcategory": "Frame", "elements": [{"name": "Alpha Silver", "description": "", "specs": [{"key": "Material", "value": "Alloy"}]}]},
+        {"subcategory": "Frame", "elements": [{"name": "Alpha Silver", "description": "", "specs": [{"key": "Material", "value": "Alloy"}], "equipment_id": None}]},
     ]}],
     "short_description": "Rower górski. Dobry na start.",
 }

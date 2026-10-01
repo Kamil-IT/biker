@@ -1,30 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react'
-import type { Bike, BikeCategory, BikeDescription, BikeReviewResponse, BikeOffer, BikeOfferResponse, UsedBikeResponse } from '../types'
+import type { Bike, BikeCategory, BikeDescription, ComponentElement, BikeReviewResponse, BikeOffer, BikeOfferResponse, UsedBikeResponse } from '../types'
 import { MissingType } from '../types'
 import { PhotoGallery, DescriptionCard, ReviewSection, LoadingSkeleton, CategorySection } from './BikeDetailsShared'
 import RequestDataButton from './RequestDataButton'
-
-// How long a section shows its loading state before the "Request data" button
-// takes its place (TODO-027). The request itself keeps running.
-const REQUEST_BUTTON_DELAY_MS = 5000
-
-// True while `loading` has been on for less than `ms`. Restarts whenever
-// `loading` turns on again (e.g. a details retry).
-function useLoadingGrace(loading: boolean, ms = REQUEST_BUTTON_DELAY_MS): boolean {
-  const [elapsed, setElapsed] = useState(false)
-  const [prevLoading, setPrevLoading] = useState(loading)
-  if (loading !== prevLoading) {
-    setPrevLoading(loading)
-    if (loading) setElapsed(false)
-  }
-  useEffect(() => {
-    if (!loading) return
-    const t = setTimeout(() => setElapsed(true), ms)
-    return () => clearTimeout(t)
-  }, [loading, ms])
-  return loading && !elapsed
-}
+import { useLoadingGrace } from '../hooks/useLoadingGrace'
 
 type ReviewState = 'loading' | 'loaded' | 'error'
 
@@ -48,7 +28,7 @@ interface BikeDetailsViewProps {
   decathlonState: 'loading' | 'loaded' | 'error'
   onBack: () => void
   onRetry: () => void
-  onEquipmentSelect: (name: string) => void
+  onEquipmentSelect: (element: ComponentElement) => void
   // On-demand OLX search behind the Used card's "Request data" button (TODO-031).
   onSearchUsed: () => Promise<void>
   // On-demand Decathlon + Allegro searches (run in parallel) behind the New card's

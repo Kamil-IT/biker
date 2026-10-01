@@ -11,8 +11,10 @@ import ContactPage from './components/ContactPage'
 import useRoute, { ROUTES, type Route } from './hooks/useRoute'
 import usePopularBikes from './hooks/usePopularBikes'
 import useCachedRatings from './hooks/useCachedRatings'
+import { useEquipment } from './hooks/useEquipment'
+import { postJson } from './api'
 import { PENDING_RATING, bikeKey } from './ratings'
-import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikePhotosResponse, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse, EquipmentDetailsResponse, EquipmentReviewResponse, SearchPayload, ParseResponse, SearchFilters } from './types'
+import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikePhotosResponse, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse, ComponentElement, SearchPayload, ParseResponse, SearchFilters } from './types'
 import { EMPTY_FILTERS } from './types'
 
 type AppState     = 'idle' | 'loading' | 'results' | 'error'
@@ -100,16 +102,9 @@ export default function App() {
   const [usedBikeState, setUsedBikeState]   = useState<UsedBikeState>('loading')
   const [usedBikes, setUsedBikes]           = useState<UsedBikeResponse | null>(null)
 
-  // Equipment details state (entered by clicking a bike's accessory chip)
-  const [equipItem, setEquipItem]               = useState<{ company: string; model: string } | null>(null)
-  const [equipCategory, setEquipCategory]       = useState<string | null>(null)
-  const [equipCategories, setEquipCategories]   = useState<BikeCategory[] | null>(null)
-  const [equipDescription, setEquipDescription] = useState<BikeDescription | null>(null)
-  const [equipPhotos, setEquipPhotos]           = useState<string[]>([])
-  const [equipState, setEquipState]             = useState<DetailsState>('loading')
-  const [equipError, setEquipError]             = useState<string | null>(null)
-  const [equipReview, setEquipReview]           = useState<EquipmentReviewResponse | null>(null)
-  const [equipReviewState, setEquipReviewState] = useState<ReviewState>('loading')
+  // Equipment view (entered by clicking a component name in the bike's spec tree, TODO-042):
+  // stored details + photos are DB reads on open, the searches run only on a button click.
+  const equipment = useEquipment(selectedBikeRef, setBikeCategories)
 
   /* ── Handlers ─────────────────────────────────────── */
 
@@ -292,16 +287,7 @@ export default function App() {
   // open by then the result is dropped — it is stored in the DB anyway and shows when
   // this bike is opened again.
   const postOnDemandSearch = async <T,>(path: string, bike: Bike): Promise<T | null> => {
-    const res = await fetch(path, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ company: bike.brand, model: bike.model }),
-    })
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
-      throw new Error((data as { detail?: string }).detail ?? `Błąd serwera ${res.status}`)
-    }
-    const data: T = await res.json()
+    const data = await postJson<T>(path, { company: bike.brand, model: bike.model })
     return selectedBikeRef.current === bike ? data : null
   }
 
@@ -379,60 +365,17 @@ export default function App() {
     setDetailsState('loaded')
   }
 
-  const fetchEquipmentDetails = async (company: string, model: string) => {
-    setEquipState('loading')
-    setEquipError(null)
-    setEquipCategories(null)
-    setEquipDescription(null)
-    setEquipPhotos([])
-    setEquipCategory(null)
-    try {
-      const res = await fetch('/v1/equipment/details', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ company, model }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error((data as { detail?: string }).detail ?? `Błąd serwera ${res.status}`)
-      }
-      const data: EquipmentDetailsResponse = await res.json()
-      setEquipCategories(data.components)
-      setEquipDescription(data.description ?? null)
-      setEquipPhotos(data.photos ?? [])
-      setEquipCategory(data.category ?? null)
-      setEquipState('loaded')
-    } catch (err) {
-      setEquipError(err instanceof Error ? err.message : 'Coś poszło nie tak. Spróbuj ponownie.')
-      setEquipState('error')
-    }
-  }
-
-  const fetchEquipmentReview = async (company: string, model: string) => {
-    setEquipReviewState('loading')
-    setEquipReview(null)
-    try {
-      const res = await fetch('/v1/equipment/review', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ company, model }),
-      })
-      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
-      const data: EquipmentReviewResponse = await res.json()
-      setEquipReview(data)
-      setEquipReviewState('loaded')
-    } catch {
-      setEquipReviewState('error')
-    }
-  }
-
-  const handleEquipmentSelect = (name: string) => {
-    const item = { company: '', model: name }
-    setEquipItem(item)
+  const handleEquipmentSelect = (element: ComponentElement) => {
+    const bike = selectedBikeRef.current
+    if (!bike) return
+    equipment.open({
+      name:        element.name,
+      equipmentId: element.equipment_id ?? null,
+      bikeCompany: bike.brand,
+      bikeModel:   bike.model,
+    })
     setView('equipment')
     window.scrollTo({ top: 0, behavior: 'smooth' })
-    fetchEquipmentDetails(item.company, item.model)
-    fetchEquipmentReview(item.company, item.model)
   }
 
   const handleBackFromEquipment = () => {
@@ -484,15 +427,7 @@ export default function App() {
     setOffers(null)
     setUsedBikeState('loading')
     setUsedBikes(null)
-    setEquipItem(null)
-    setEquipCategory(null)
-    setEquipCategories(null)
-    setEquipDescription(null)
-    setEquipPhotos([])
-    setEquipState('loading')
-    setEquipError(null)
-    setEquipReview(null)
-    setEquipReviewState('loading')
+    equipment.reset()
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
@@ -731,20 +666,23 @@ export default function App() {
         )}
 
         {/* ── Equipment details view ───────────────────── */}
-        {route === ROUTES.search && view === 'equipment' && equipItem && (
+        {route === ROUTES.search && view === 'equipment' && equipment.item && (
           <EquipmentDetailsView
-            company={equipItem.company}
-            model={equipItem.model}
-            category={equipCategory}
-            categories={equipCategories}
-            description={equipDescription}
-            photos={equipPhotos}
-            state={equipState}
-            error={equipError}
-            review={equipReview}
-            reviewState={equipReviewState}
+            company=""
+            model={equipment.item.name}
+            category={equipment.category}
+            categories={equipment.categories}
+            description={equipment.description}
+            photos={equipment.photos}
+            photosState={equipment.photosState}
+            state={equipment.state}
+            error={equipment.error}
+            review={equipment.review}
+            reviewState={equipment.reviewState}
             onBack={handleBackFromEquipment}
-            onRetry={() => fetchEquipmentDetails(equipItem.company, equipItem.model)}
+            onRetry={equipment.retry}
+            onSearchDetails={equipment.searchDetails}
+            onSearchPhotos={equipment.searchPhotos}
           />
         )}
       </main>

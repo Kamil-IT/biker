@@ -19,6 +19,8 @@ Bike details (/v1/search/details, TODO-041) go onto the bike row itself
 (`description` / `short_description`, updated in place) + bike_detail_component
 (the flattened tree, keyed on bike_id): a port of the backend's
 repository.save_bike_details / get_bike_details. get_stored_details / save_details below.
+A re-save keeps each element's equipment_id link (TODO-042). Equipment
+persistence lives in equipment_repository.py.
 """
 import logging
 from datetime import datetime, timezone
@@ -35,6 +37,7 @@ from .models import (
     BikeReviewSource,
     BikeDetailComponent,
     dialect_insert,
+    norm,
     get_session,
 )
 from .details_finder import has_components, is_usable_details
@@ -301,7 +304,9 @@ def _rebuild_components(rows) -> list[BikeCategory]:
     for r in rows:
         comp = comps.setdefault(r.component_order, {"category": r.category, "subcategory": r.subcategory, "elements": {}})
         element = comp["elements"].setdefault(
-            r.element_order, {"name": r.element_name, "description": r.element_description or "", "specs": []},
+            r.element_order, {"name": r.element_name, "description": r.element_description or "", "specs": [],
+                              # TODO-042: the element's equipment link, from its first row (equipment rows have none)
+                              "equipment_id": getattr(r, "equipment_id", None)},
         )
         if r.spec_key is not None:
             element["specs"].append(SpecItem(key=r.spec_key, value=r.spec_value or ""))
@@ -311,11 +316,35 @@ def _rebuild_components(rows) -> list[BikeCategory]:
         grouped.setdefault(comp["category"], []).append(BikeSubcategory(
             subcategory=comp["subcategory"],
             elements=[
-                ComponentElement(name=el["name"], description=el["description"], specs=el["specs"])
+                ComponentElement(**el)
                 for _, el in sorted(comp["elements"].items())
             ],
         ))
     return [BikeCategory(category=name, subcategories=subs) for name, subs in grouped.items()]
+
+
+def flatten_components(components: list[BikeCategory]):
+    """The component tree -> one dict of *_detail_component column values per spec (no FK).
+
+    An element without specs gives one row with NULL spec_*; component_order
+    counts subcategories across the whole tree. Shared by the bike and the
+    equipment details saves (TODO-042) — both tables have these columns.
+    """
+    comp_order = 0
+    for category in components:
+        for subcategory in category.subcategories:
+            for e_idx, element in enumerate(subcategory.elements):
+                base = dict(
+                    category=category.category, subcategory=subcategory.subcategory,
+                    component_order=comp_order, element_name=element.name,
+                    element_description=element.description, element_order=e_idx,
+                )
+                if not element.specs:
+                    yield dict(base, spec_key=None, spec_value=None, spec_order=None)
+                    continue
+                for s_idx, spec in enumerate(element.specs):
+                    yield dict(base, spec_key=spec.key, spec_value=spec.value, spec_order=s_idx)
+            comp_order += 1
 
 
 def _stored_details(session, bike_id: int, company: str, model: str) -> Optional[BikeDetails]:
@@ -368,9 +397,10 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
     Usable = a non-empty component tree or a non-empty description. Then, in
     one transaction: the bike row is created if missing (caller's casing; an
     existing placeholder casing is upgraded), its details columns are updated
-    IN PLACE (description JSON and short_description replaced), and its bike_detail_component rows are replaced with the
-    flattened tree (one row per spec, an element without specs gets one row
-    with NULL spec_*; component_order counts subcategories across the tree).
+    IN PLACE (description JSON and short_description replaced), and its
+    bike_detail_component rows are replaced with the flattened tree
+    (flatten_components). A replaced row's equipment_id link (TODO-042) is
+    carried over to the new row with the same element_name.
     Photos hang off `bike` and are never touched. An unusable result writes and
     deletes nothing - not even a bike row - so a bad run never wipes stored
     details. Raises on a DB error after rolling back.
@@ -387,6 +417,7 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
         row = session.get(Bike, bike_id)
         has_desc = bool(details.description.text.strip())
         has_comps = has_components(details)
+        links: dict[str, int] = {}
         # Only the half this run produced is replaced; the other half stays as stored.
         # A bike without stored details (description NULL) gets the run's description JSON
         # even when empty, so "has details" (description IS NOT NULL) holds afterwards.
@@ -395,28 +426,24 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
             row.short_description = details.short_description
         row.updated_at = now
         if has_comps:
+            # TODO-042: the replaced rows may carry equipment links; the new row of the same element keeps its
+            # link. Keyed on the Python-normalised name like every link UPDATE; the first link (row order) wins.
+            for r in (
+                session.query(BikeDetailComponent.element_name, BikeDetailComponent.equipment_id)
+                .filter(BikeDetailComponent.bike_id == bike_id, BikeDetailComponent.equipment_id.isnot(None))
+                .order_by(BikeDetailComponent.id)
+            ):
+                links.setdefault(norm(r.element_name), r.equipment_id)
             session.query(BikeDetailComponent).filter_by(bike_id=bike_id).delete(synchronize_session=False)
             session.expire(row, ["components"])
         session.flush()
 
-        comp_order = 0
         rows = 0
-        for category in (details.components if has_comps else []):
-            for subcategory in category.subcategories:
-                for e_idx, element in enumerate(subcategory.elements):
-                    base = dict(
-                        bike_id=bike_id, category=category.category, subcategory=subcategory.subcategory,
-                        component_order=comp_order, element_name=element.name,
-                        element_description=element.description, element_order=e_idx,
-                    )
-                    if not element.specs:
-                        session.add(BikeDetailComponent(**base, spec_key=None, spec_value=None, spec_order=None))
-                        rows += 1
-                        continue
-                    for s_idx, spec in enumerate(element.specs):
-                        session.add(BikeDetailComponent(**base, spec_key=spec.key, spec_value=spec.value, spec_order=s_idx))
-                        rows += 1
-                comp_order += 1
+        for values in flatten_components(details.components if has_comps else []):
+            session.add(BikeDetailComponent(
+                bike_id=bike_id, equipment_id=links.get(norm(values["element_name"])), **values,
+            ))
+            rows += 1
         session.commit()
         logger.info(
             "details stored | company=%r model=%r bike_id=%d component_rows=%d",
