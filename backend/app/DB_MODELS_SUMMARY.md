@@ -19,34 +19,29 @@ Defines 8 tables with relationships and constraints:
         │          │                  │
         ↓          ↓                  ↓
 ┌──────────────┐ ┌──────────────┐ ┌──────────────────────────┐
-│ BikeDetails  │ │ BikeOffer    │ │ SearchBikeRating         │
-│ (specs) 1:1  │ │ (listings)   │ │ (per-search rated bike)  │
-│              │ │ 1:N          │ │ FK bike + FK search_cache│
-└──┬───────────┘ └──┬───────────┘ └──────────┬───────────────┘
-   │                │                          │
-   ↓                ↓                          ↑ N:1
-┌──────────────────┐ ┌──────────────┐   ┌──────────────┐
-│ BikeDetailPhotos │ │ BikeOffer    │   │ SearchCache  │
-│ (URLs + order)   │ │ Photos       │   │ (query)      │
-└──────────────────┘ └──────────────┘   └──────────────┘
+│ BikeDetails  │ │ BikeOffer    │ │ BikeReview (1:1)         │
+│ (specs) 1:1  │ │ (listings)   │ │ + BikeReviewSource 1:N   │
+│              │ │ 1:N          │ │ (search tables dropped,  │
+└──┬───────────┘ └──┬───────────┘ │  TODO-043)               │
+   │                │             └──────────────────────────┘
+   ↓                ↓
+┌──────────────────┐ ┌──────────────┐
+│ BikeDetailPhotos │ │ BikeOffer    │
+│ (URLs + order)   │ │ Photos       │
+└──────────────────┘ └──────────────┘
 ```
 
 #### Table Details
 
 **`Bike`** — Master bike record
 - Primary identity by (brand, model)
-- Shared across search ratings, details, and offers
+- Shared across search results, details, offers, reviews and photos
 - Timestamp tracking (created_at, updated_at)
-- One-to-many: bike_offer, search_bike_rating_cache
+- One-to-many: bike_offer, bike_detail_photos
 - One-to-one: bike_detail, bike_review
 
-**`SearchCache`** / **`SearchBikeRating`** — the search cache
-- `search_cache`: one row per query (`query`, `time_stored`)
-- `search_bike_rating_cache`: one row per bike a search returned — FK to
-  `search_cache` + `bike`, plus `rating`, `explanation`, `accessories` (inline
-  JSON), `display_order`
-- TTL: 24 h from `store.SEARCH_TTL_SECONDS` vs `time_stored`
-- (Replaced the earlier `bike_results` + `accessories` tables, now removed)
+> The search cache (`search_cache` / `search_bike_rating_cache`, earlier `bike_results` + `accessories`) is gone since
+> TODO-043: a search only inserts the bikes it found into `bike` (`store.save_search`).
 
 **`BikeDetails`** — Full specifications for one bike
 - Unique per Bike (one-to-one)
@@ -92,8 +87,7 @@ rebuild_components(rows) → list[BikeCategory]
 ```
 
 The search helpers that once lived here were removed with the `bike_results` + `accessories` tables;
-`app/store.py` now only has `save_search` (write-only: AI-found bikes into `bike` + `search_cache` +
-`search_bike_rating_cache`; nothing reads those two tables any more).
+`app/store.py` now only has `save_search` (AI-found bikes into `bike`; the per-search tables were dropped in TODO-043).
 
 Each function:
 - Uses `get_session()` to get a SQLAlchemy Session
@@ -135,11 +129,11 @@ Complete guide covering:
 
 ### 5. **No TTL for details (TODO-035)**
 - The former module constant `repository.TTL_DETAILS` (30 days) was removed: stored details are returned whatever their age
-- Search results still expire after 24 h (`store.SEARCH_TTL_SECONDS`)
+- Search results are not stored per search at all since TODO-043 (only the bikes, in `bike`)
 
 ### 6. **Foreign Key Cascades**
 - Delete a Bike → auto-deletes its results, details, offers
-- Delete a SearchCache → auto-deletes its search_bike_rating_cache rows
+- Delete a BikeReview → auto-deletes its bike_review_source rows
 - Maintains referential integrity
 
 ## Migration Path

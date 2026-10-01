@@ -12,8 +12,8 @@ This migration moves from JSON serialization in SQLite to a proper relational da
 
 ### New Approach
 - Normalized `bike` table — single source of truth for bike identity
-- Related tables: `bike_detail`, `bike_offer`, `photos`, and the search cache
-  (`search_cache` + `search_bike_rating_cache`)
+- Related tables: `bike_detail`, `bike_offer`, `photos` (the per-search tables `search_cache` +
+  `search_bike_rating_cache` were dropped in TODO-043 — see below)
 - Foreign key constraints (enforced — on SQLite `app/models.py` sets `PRAGMA foreign_keys=ON` on every engine
   connection; PostgreSQL always enforces them)
 - Database chosen by `DATABASE_URL` (unset → SQLite `cache.db`, or PostgreSQL); copy an existing `cache.db` into
@@ -35,23 +35,8 @@ updated_at: datetime
 UNIQUE(brand, model)
 ```
 
-**`search_cache`** — one cached search query
-```
-id (PK)
-query: text (UNIQUE)
-time_stored: str (ISO-8601)
-```
-
-**`search_bike_rating_cache`** — one bike a search returned (replaces the old
-`bike_results` + `accessories` tables)
-```
-id (PK)
-search_cache_id (FK → search_cache.id, CASCADE)
-bike_id (FK → bike.id, CASCADE)
-explanation: text
-accessories: text (JSON array of strings)
-display_order: int
-```
+> `search_cache` / `search_bike_rating_cache` (one row per query / one per returned bike) existed until TODO-043;
+> `store.save_search` now only inserts the found bikes into `bike`.
 
 **`bike_details`** — Full specifications
 ```
@@ -226,9 +211,9 @@ save_search(query, old_data)
 
 ## API surface (current)
 
-- Search storage — `app.store`: only `save_search` remains (write-only into `search_cache` +
-  `search_bike_rating_cache`; the readers `get_search_by_query` / `find_bikes_by_brand` and the
-  `GET /v1/bike/search-cache` endpoint were removed — nothing reads those tables any more).
+- Search storage — `app.store`: only `save_search` remains, and since TODO-043 it only makes sure every
+  AI-found bike exists in `bike` (the readers `get_search_by_query` / `find_bikes_by_brand`, the
+  `GET /v1/bike/search-cache` endpoint and then the two per-search tables themselves were removed).
 - Details — `app.repository`: `save_bike_details`, `get_bike_details`
   (backed by `bike_detail` + `bike_detail_component`; no TTL — stored details are returned whatever their age). Since TODO-041 `POST /v1/bike/details` is a pure read of them (normalised brand/model lookup, `short_description` included) and the live writer is the searcher (`POST /v1/bike/details/search`, `searcher/app/repository.py` `save_details`); helpers `empty_details`, `has_complete_details`, `accessory_chips`, `fill_bike_results`.
 - Bike photos — `app.photos_repository`: `get_bike_photos` (`POST /v1/bike/photos`) and `save_bike_photos`
@@ -289,32 +274,32 @@ python scripts/migrate_photos_bike_id.py --url postgresql+psycopg://biker:biker@
 
 ## Search match score dropped (`search_bike_rating_cache.rating`)
 
-TODO-040 removed `match_score` from `POST /v1/bike/search`, `GET /v1/bike/search-cache` (since removed) and `BikeResult`; the search
-cards show the expert rating from the stored reviews in `bike_review` instead (first `POST /v1/bike/review/cached`, since removed — now one `POST /v1/bike/review` per bike). The column that stored the
-score, `search_bike_rating_cache.rating` (`FLOAT NOT NULL`), is dropped from the model and from every existing
-database by `scripts/migrate_drop_search_rating.py`. `display_order` stays (the AI answer's order).
+TODO-040 removed `match_score` from `POST /v1/bike/search` and `BikeResult`; the search cards show the expert rating from
+`bike_review` instead. Its column `search_bike_rating_cache.rating` was dropped by `scripts/migrate_drop_search_rating.py`
+(run 2026-09-30 on `cache.db`, the local PostgreSQL and Cloud SQL). The script is gone since TODO-043 dropped the whole table.
 
-**Run it on every pre-existing database BEFORE the new backend is deployed on it** — `create_all()` never `ALTER`s a
-table, and the new `save_search` does not write `rating`, so on an unmigrated database the `NOT NULL` column makes
-it fail (rollback + WARNING; the search answer is still returned, the bikes are just not stored). Once migrated, the
-**old** backend's `save_search` fails the same way until the new one is deployed. Production order: migrate Cloud
-SQL → deploy the backend → deploy the frontend.
+## Search tables dropped (`search_cache`, `search_bike_rating_cache`)
+
+TODO-043 drops both per-search tables. They were write-only since the cache-read endpoints went (TODO-024/025) and held
+nothing but the search → bike link plus `""` / `"[]"` payloads since TODO-041. `store.save_search` now only makes sure the
+found bikes exist in `bike` (`repository._find_bike_id` lookup, new rows keep the caller's casing); `SEARCH_TTL_SECONDS` is gone.
 
 ```bash
 cd backend
-python scripts/migrate_drop_search_rating.py --dry-run          # $DATABASE_URL (backend/.env), else backend/cache.db
-python scripts/migrate_drop_search_rating.py
-python scripts/migrate_drop_search_rating.py --db path/to/copy.db
-python scripts/migrate_drop_search_rating.py --url postgresql+psycopg://biker:biker@localhost:5432/<db>
+python scripts/migrate_drop_search_tables.py --dry-run          # $DATABASE_URL (backend/.env), else backend/cache.db
+python scripts/migrate_drop_search_tables.py
+python scripts/migrate_drop_search_tables.py --db path/to/copy.db
+python scripts/migrate_drop_search_tables.py --url postgresql+psycopg://biker@127.0.0.1:6543/<db>
 ```
 
-- `ALTER TABLE search_bike_rating_cache DROP COLUMN rating` on both dialects (SQLite ≥ 3.35 — the column has no index,
-  key or constraint); PostgreSQL first takes `LOCK TABLE search_bike_rating_cache IN SHARE ROW EXCLUSIVE MODE`.
-- One transaction: every row's `id, search_cache_id, bike_id, explanation, accessories, display_order` is snapshotted
-  before and compared after; any difference or error rolls back (exit code 1). Row counts are printed.
-- Idempotent: no `rating` column → `already-migrated`; no table → `absent` (left to `init_db()`). Importable:
-  `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `rows_before`, `rows_after`, `verified`, `error`).
-- Verified 2026-09-30: a copy of `cache.db` (206 rows) and the local PostgreSQL (199 rows) — rows kept, second run a no-op.
+- `DROP TABLE search_bike_rating_cache` (child: FKs to `search_cache` and `bike`) then `DROP TABLE search_cache`, one
+  transaction on both dialects; the `bike` row count is compared before and after, a difference rolls back (exit code 1).
+- Idempotent: neither table → `already-migrated`; a half-dropped database (one table left) is still migrated. Importable:
+  `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `dropped`, `bikes_before`, `bikes_after`, `verified`, `error`).
+- Deploy order: the new backend never touches the tables, so **deploy the backend first, then drop** — no failing window. Dropping
+  first only makes the old backend's `save_search` log a WARNING per AI search (the answer is still returned, nothing stored is lost).
+- Run 2026-10-01: local PostgreSQL `biker-pg` (`search_bike_rating_cache` 199 + `search_cache` 46 rows, `bike` 723 kept) and
+  `cache.db` (206 + 47, `bike` 674 kept); second run `already-migrated`. Cloud SQL held 210 + 48 rows on 2026-10-01.
 
 ## Short description added (`bike_detail.short_description`)
 
@@ -338,8 +323,7 @@ python scripts/migrate_short_description.py --url postgresql+psycopg://biker:bik
   is missing; existing rows get `''` (no backfill). Row counts compared before and after; a mismatch rolls back (exit code 1).
 - Idempotent: column present → `already-migrated`; no table → `absent` (left to `init_db()`). Importable:
   `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict`.
-- `search_bike_rating_cache.explanation` / `accessories` are kept (no migration) but `store.save_search` writes `""` / `"[]"`;
-  a search result's text and chips are read from `bike_detail` at request time.
+- A search result's text and chips are read from `bike_detail` at request time (the per-search tables went in TODO-043).
 - `scripts/purge_details_cache.py` (`--dry-run`, `--db`, `--url`) deletes the dead `endpoint_req_to_body_cache` rows of
   `'/v1/bike/details'` — local only; Cloud SQL on an explicit go.
 
@@ -347,7 +331,7 @@ python scripts/migrate_short_description.py --url postgresql+psycopg://biker:bik
 
 ✅ **Data Integrity** — Foreign keys, unique constraints, cascading deletes
 ✅ **Queryability** — Rich ORM queries instead of JSON parsing
-✅ **Relationships** — One-to-many (Bike → BikeOffer, SearchCache → ratings), One-to-one (Bike → BikeDetails)
+✅ **Relationships** — One-to-many (Bike → BikeOffer), One-to-one (Bike → BikeDetails)
 ✅ **Photo Management** — Proper ordering and sourcing
 ✅ **Indexed Lookups** — Brand, source, URL indices for fast queries
 ✅ **Future Extensions** — Easy to add new fields, relationships

@@ -46,8 +46,8 @@ pip install -U anthropic        # existing venv: keep the SDK as new as the Dock
 copy .env.example .env          # edit .env and set your ANTHROPIC_API_KEY
 python scripts/migrate_photos_bike_id.py --dry-run   # once per existing database: report what would change ...
 python scripts/migrate_photos_bike_id.py             # ... then re-key bike_detail_photos to bike_id (idempotent)
-python scripts/migrate_drop_search_rating.py --dry-run   # once per existing database (TODO-040) ...
-python scripts/migrate_drop_search_rating.py             # ... then drop search_bike_rating_cache.rating (idempotent)
+python scripts/migrate_drop_search_tables.py --dry-run   # once per existing database (TODO-043) ...
+python scripts/migrate_drop_search_tables.py             # ... then drop search_cache + search_bike_rating_cache (idempotent)
 python scripts/migrate_short_description.py --dry-run    # once per existing database (TODO-041) ...
 python scripts/migrate_short_description.py              # ... then add bike_detail.short_description (idempotent)
 python scripts/purge_details_cache.py --dry-run          # once per database (TODO-041): count the dead '/v1/bike/details' generic-cache rows ... (then without --dry-run; production only on an explicit go)
@@ -68,9 +68,9 @@ uvicorn app.main:app --reload --port 8000
 > "Request data" button). The searcher refuses to start without the two tables. On production Cloud SQL: backend `init_db()` creates the
 > tables, run the script, then deploy searcher and backend.
 >
-> **Also run `migrate_drop_search_rating.py` once on every existing database** (TODO-040, same options). The search
-> match score is gone from the API, and the script drops its `NOT NULL` column `search_bike_rating_cache.rating`;
-> until then the new backend cannot store search results (rollback + WARNING, the answer itself is unaffected).
+> **Also run `migrate_drop_search_tables.py` once on every existing database** (TODO-043, same options). The per-search
+> tables `search_cache` + `search_bike_rating_cache` are gone from the app (nothing read them); a search now only makes sure
+> its bikes exist in `bike`. The new backend runs fine before the drop; the old one logs a WARNING per search after it.
 
 ### Terminal 2 — Frontend
 
@@ -171,9 +171,9 @@ calls it over the public URL). TODO-035 adds the photo route and TODO-037 the re
 > between steps 1 and 2 in which the old backend's details save fails (it rolls back and logs a warning; no data is lost). The new `save_bike_details` updates
 > the details row in place, so it can never cascade-delete photos through the old foreign key.
 >
-> **TODO-040 (search expert rating):** run `backend/scripts/migrate_drop_search_rating.py` against Cloud SQL first, then deploy the backend, then the
-> frontend. Between the migration and the backend deploy the old backend's `save_search` fails (it still writes the dropped `rating` column):
-> it rolls back and logs a warning, the search answer is still returned, nothing already stored is lost.
+> **TODO-043 (search tables dropped):** deploy the backend first, then run `backend/scripts/migrate_drop_search_tables.py` against Cloud SQL
+> through the proxy (the new backend never touches `search_cache` / `search_bike_rating_cache`, so there is no failing window; dropping them
+> under the old backend would only make its `save_search` log a WARNING per search — nothing stored is lost either way).
 
 Capacity: up to 10 searcher instances and 2 backend instances each hold their own SQLAlchemy pool (default 5 + 10 overflow) against Cloud SQL, whose
 `max_connections` has not been checked (the tier is "smallest shared-core instance" per `TODO_030`; the deploy script sets no tier). There is no per-IP rate limit on the
@@ -439,7 +439,7 @@ biker/
 │   │       ├── equipment_photos.md        # Equipment manufacturer page URL prompt
 │   │       └── equipment_review.md        # Equipment review prompt (no offer links)
 │   └── scripts/
-│       ├── migrate_drop_search_rating.py  # One-off, idempotent: drop search_bike_rating_cache.rating (the old match score, TODO-040); --dry-run, --db, --url
+│       ├── migrate_drop_search_tables.py  # One-off, idempotent: drop search_cache + search_bike_rating_cache (write-only per-search tables, TODO-043); --dry-run, --db, --url
 │       ├── seed_popular_bikes.py      # Fill bike_popular (home page "Najpopularniejsze rowery") with 3 bikes that have details + photos + a stored review; --dry-run, --count, --bike "Brand|Model"
 │       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing, /v1/bike/popular, /v1/bike/used/olx, /v1/bike/used/search, /v1/bike/decathlon, /v1/bike/decathlon/search, /v1/bike/allegro, /v1/bike/allegro/search)
 │       ├── copy_review_cache_to_table.py  # One-off: generic-cache reviews -> bike_review tables (TODO-037)

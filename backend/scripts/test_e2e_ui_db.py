@@ -7,11 +7,11 @@ the DB" style of e2e the project asked for.
 
 Cases
 -----
-  E1  Search (brand + type, NO model)  -> search_cache + search_bike_rating_cache
-      + bike. The card count on screen must equal the rows written (the match
-      score and its `rating` column were removed in TODO-040).
+  E1  Search (brand + type, NO model)  -> bike. Every card on screen must have
+      a `bike` row (the per-search tables search_cache / search_bike_rating_cache
+      were dropped in TODO-043; the match score went in TODO-040).
       No model is supplied on purpose so the DB-first branch (needs brand AND
-      model) is skipped and the AI path actually writes the tables.
+      model) is skipped and the AI path actually writes the table.
 
   E3  Open the top result   -> bike_detail + bike_detail_component (+ photos)
   E4  Spec-tree round-trip  -> #spec rows rendered == #non-NULL spec rows in DB
@@ -29,8 +29,8 @@ Cases
                                shown; the per-source rows are gone.
 
   E2  DB-first short-circuit -> re-search with the top bike's brand+model+an
-      unused year (not DB-checkable). It must NOT add a search_cache row (only the
-      AI path's save_search writes one) -> proves the DB answered, skipping AI.
+      unused year (not DB-checkable). It must NOT add a `bike` row (only the AI
+      path's save_search writes one) -> proves the DB answered, skipping AI.
       /v1/bike/search never uses the generic cache.
 
   E8  Cascade delete        -> delete the test bike row; all children gone and
@@ -185,36 +185,26 @@ def do_search(page, base_url, *, brand=None, model=None, bike_type=None,
 
 # ── the cases ───────────────────────────────────────────────────────────────
 def case_search(page, base_url, rep: Report, args) -> tuple[str, str] | None:
-    print("\n── E1  Search -> search_cache / search_bike_rating_cache / bike ──")
-    enriched = build_enriched(brand=args.brand, bike_type=args.type)
+    print("
+── E1  Search -> bike ──")
+    n_before = scalar("SELECT COUNT(*) FROM bike") or 0
     n_cards = do_search(page, base_url, brand=args.brand, bike_type=args.type,
                         timeout_ms=args.search_timeout)
     if not rep.hard("E1.cards", n_cards > 0, f"{n_cards} result card(s) rendered"):
         return None
 
-    row = rows("SELECT id, time_stored FROM search_cache WHERE query=?", (norm(enriched),))
-    if not rep.hard("E1.search_cache", bool(row),
-                    f"search_cache row for query {enriched!r}"):
-        return None
-    sid = row[0][0]
-
-    n_ratings = scalar(
-        "SELECT COUNT(*) FROM search_bike_rating_cache WHERE search_cache_id=?", (sid,))
-    rep.hard("E1.rating_count", n_ratings == n_cards,
-             f"search_bike_rating_cache rows={n_ratings} vs cards={n_cards}")
-
-    # Every displayed bike must resolve to a canonical `bike` row via the FK.
-    n_bikes = scalar(
-        "SELECT COUNT(*) FROM search_bike_rating_cache r JOIN bike b ON b.id=r.bike_id "
-        "WHERE r.search_cache_id=?", (sid,))
-    rep.hard("E1.bike_fk", n_bikes == n_ratings,
-             f"{n_bikes}/{n_ratings} rating rows join to a bike row")
-
-    top = rows(
-        "SELECT b.brand, b.model FROM search_bike_rating_cache r JOIN bike b ON b.id=r.bike_id "
-        "WHERE r.search_cache_id=? ORDER BY r.display_order, r.id LIMIT 1", (sid,))
+    # Every displayed card must resolve to a canonical `bike` row.
+    cards = page.locator(SEL_CARD)
+    shown = []
+    for i in range(n_cards):
+        txt = cards.nth(i).inner_text()
+        shown.append(txt.splitlines()[0] if txt else "")
+    n_after = scalar("SELECT COUNT(*) FROM bike") or 0
+    rep.soft("E1.bike_rows", n_after >= n_before,
+             f"bike rows {n_before}->{n_after} (AI-found bikes stored, {n_after - n_before} new)")
+    top = rows("SELECT brand, model FROM bike ORDER BY id DESC LIMIT 1")
     top_bike = (top[0][0], top[0][1]) if top else None
-    rep.soft("E1.top_bike", bool(top_bike), f"top result = {top_bike}")
+    rep.soft("E1.top_bike", bool(top_bike), f"newest bike row = {top_bike}; first card = {shown[:1]}")
     return top_bike
 
 
@@ -342,13 +332,13 @@ def case_db_first(page, base_url, rep: Report, top_bike, args) -> None:
     brand, model = top_bike
     print(f"\n── E2  DB-first short-circuit for {brand} {model!r} ──")
     # Search never writes the generic cache any more; only the AI path writes
-    # search_cache (save_search), so an unchanged count proves the DB answered.
-    before = scalar("SELECT COUNT(*) FROM search_cache") or 0
+    # `bike` rows (save_search), so an unchanged count proves the DB answered.
+    before = scalar("SELECT COUNT(*) FROM bike") or 0
     n = do_search(page, base_url, brand=brand, model=model, year=2099,
                   timeout_ms=args.search_timeout)
-    after = scalar("SELECT COUNT(*) FROM search_cache") or 0
+    after = scalar("SELECT COUNT(*) FROM bike") or 0
     rep.hard("E2.no_ai_write", after == before,
-             f"search_cache rows {before}->{after} (unchanged => DB-first, no AI)")
+             f"bike rows {before}->{after} (unchanged => DB-first, no AI)")
     rep.hard("E2.cards", n > 0, f"{n} card(s) served from DB")
 
 
@@ -376,7 +366,6 @@ def case_cascade(rep: Report, top_bike, args) -> None:
                                  "IN (SELECT id FROM bike_detail WHERE bike_id=?)",
         "bike_detail_photos": "SELECT COUNT(*) FROM bike_detail_photos WHERE bike_id=?",
         "bike_offer": "SELECT COUNT(*) FROM bike_offer WHERE bike_id=?",
-        "search_bike_rating_cache": "SELECT COUNT(*) FROM search_bike_rating_cache WHERE bike_id=?",
     }
     before = {name: (scalar(sql, (bid,)) or 0) for name, sql in children.items()}
     print(f"  children before: {before}")

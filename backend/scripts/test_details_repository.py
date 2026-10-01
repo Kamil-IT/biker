@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from sqlalchemy import insert, select
+from sqlalchemy import insert, inspect, select
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -107,14 +107,19 @@ def test_fill_bike_results_uses_stored_details(db):
     assert r.explanation == "Tekst krótki." and len(r.accessories) == 3
 
 
-def test_save_search_stores_no_ai_text(db):
+def test_save_search_stores_bikes_only(db):
+    with models.get_session() as s:
+        s.add(models.Bike(brand="Trek", model="Full"))
+        s.commit()
     store.save_search("Brand: Trek", [
-        BikeResult(brand="Trek", model="Full", accessories=["ignored"], explanation="ignored"),
+        BikeResult(brand="trek", model="FULL", accessories=["ignored"], explanation="ignored"),
         BikeResult(brand="Trek", model="New", accessories=[], explanation=""),
     ])
     with models.get_engine().connect() as conn:
-        rows = conn.exec_driver_sql("SELECT explanation, accessories FROM search_bike_rating_cache").fetchall()
-    assert {tuple(r) for r in rows} == {("", "[]")}, "save_search stores no AI text any more"
+        rows = conn.exec_driver_sql("SELECT brand, model FROM bike ORDER BY id").fetchall()
+        tables = set(inspect(conn).get_table_names())
+    assert [tuple(r) for r in rows] == [("Trek", "Full"), ("Trek", "New")],         "an existing bike is matched case-insensitively, a new one is created with the caller's casing"
+    assert not tables & {"search_cache", "search_bike_rating_cache"}, "the per-search tables are gone (TODO-043)"
     assert not hasattr(store, "get_search_by_query") and not hasattr(store, "find_bikes_by_brand")
 
 
@@ -210,3 +215,38 @@ def test_purge_deletes_only_details_rows(db):
         left = sorted(r.endpoint for r in conn.execute(select(endpoint_req_to_body_cache)))
     assert left == ["/v1/bike/details-cache", "/v1/equipment/details"]
     assert purge(db, verbose=False)["rows"] == 0, "idempotent"
+
+
+def test_migrate_drop_search_tables(tmp_path):
+    """The TODO-043 migration drops both per-search tables, keeps `bike`, and is idempotent."""
+    from sqlalchemy import create_engine
+    from migrate_drop_search_tables import migrate as drop_search_tables
+
+    path = tmp_path / "old.db"
+    eng = create_engine(f"sqlite:///{path}")
+    with eng.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE bike (id INTEGER PRIMARY KEY, brand TEXT, model TEXT)")
+        conn.exec_driver_sql("INSERT INTO bike (brand, model) VALUES ('Trek', 'A'), ('Trek', 'B')")
+        conn.exec_driver_sql("CREATE TABLE search_cache (id INTEGER PRIMARY KEY, query TEXT UNIQUE, time_stored TEXT)")
+        conn.exec_driver_sql(
+            "CREATE TABLE search_bike_rating_cache (id INTEGER PRIMARY KEY, "
+            "search_cache_id INTEGER REFERENCES search_cache(id) ON DELETE CASCADE, "
+            "bike_id INTEGER REFERENCES bike(id) ON DELETE CASCADE, "
+            "explanation TEXT, accessories TEXT, display_order INTEGER)")
+        conn.exec_driver_sql("INSERT INTO search_cache (query, time_stored) VALUES ('q', 't')")
+        conn.exec_driver_sql("INSERT INTO search_bike_rating_cache VALUES (1, 1, 1, '', '[]', 0), (2, 1, 2, '', '[]', 1)")
+    eng.dispose()
+
+    dry = drop_search_tables(path, dry_run=True, verbose=False)
+    assert dry["status"] == "dry-run" and dry["dropped"] == {"search_bike_rating_cache": 2, "search_cache": 1}
+    with sqlite3.connect(path) as con:
+        assert con.execute("SELECT COUNT(*) FROM search_cache").fetchone()[0] == 1, "dry run wrote nothing"
+
+    rep = drop_search_tables(path, verbose=False)
+    assert rep["status"] == "migrated" and rep["verified"] and rep["bikes_before"] == rep["bikes_after"] == 2
+    with sqlite3.connect(path) as con:
+        names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        assert names == {"bike"}
+        assert con.execute("SELECT COUNT(*) FROM bike").fetchone()[0] == 2
+
+    assert drop_search_tables(path, verbose=False)["status"] == "already-migrated"
