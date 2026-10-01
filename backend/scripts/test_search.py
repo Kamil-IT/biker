@@ -714,43 +714,13 @@ def case_review():
 
 
 def case_review_search():
-    """/v1/bike/review/search: 404 for an unknown bike, and a stored review comes back without a searcher run.
+    """/v1/bike/review/search refuses an unknown bike with 404 before touching the searcher.
 
-    Deliberately no live review run here: every searcher run is a paid subscription
-    search, and the one live run this suite keeps is case_decathlon_search, which
-    exercises the same proxy code path (searcher_client._search). The stored-review
-    short-circuit returns before the searcher is touched, so it is safe (and free)
-    even with a searcher configured."""
+    No live run here: every searcher run is a paid subscription search, and a known
+    bike now always reaches the searcher, stored review or not (the suite's one live
+    run is case_decathlon_search, same proxy code path)."""
     resp = _post(REVIEW_SEARCH_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=30)
     assert resp.status_code == 404, f"Expected 404 for an unknown bike, got {resp.status_code}: {resp.text[:200]}"
-
-    _delete_bike(FIX_REVIEW_BRAND, FIX_REVIEW_MODEL)
-    bike_id = _insert_bike(FIX_REVIEW_BRAND, FIX_REVIEW_MODEL)
-    ref = "https://www.bikeradar.com/smoke-review-search"
-    conn = _DB()
-    try:
-        review_id = conn.execute(
-            "INSERT INTO bike_review (bike_id, score, explanation, rating, sources_used, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (bike_id, 7, "Recenzja zapisana.", 6.9, 1, _now(), _now()),
-        ).lastrowid
-        conn.execute(
-            "INSERT INTO bike_review_source (review_id, url, display_order) VALUES (?, ?, ?)", (review_id, ref, 0),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-    try:
-        t0 = time.perf_counter()
-        resp = _post(REVIEW_SEARCH_URL, {"company": FIX_REVIEW_BRAND, "model": FIX_REVIEW_MODEL}, timeout=10)
-        elapsed = time.perf_counter() - t0
-        assert resp.status_code == 200, f"Expected 200 (stored review), got {resp.status_code}: {resp.text[:200]}"
-        assert resp.json() == {
-            "score": 7, "explanation": "Recenzja zapisana.", "ref": [ref], "rating": 6.9, "sources_used": 1,
-        }, resp.json()
-        assert elapsed < 5.0, f"stored review took {elapsed:.2f}s — the searcher must not run"
-    finally:
-        _delete_bike(FIX_REVIEW_BRAND, FIX_REVIEW_MODEL)
 
 
 # ── Cases that call the Anthropic API (--ai) ────────────────────────────────

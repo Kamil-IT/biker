@@ -217,15 +217,6 @@ def empty_details(company: str, model: str) -> BikeDetailsResponse:
     )
 
 
-def has_complete_details(details: Optional[BikeDetailsResponse]) -> bool:
-    """Complete = non-empty components AND non-empty description text (TODO-041).
-
-    Defined once: POST /v1/bike/details/search returns complete stored details
-    without a searcher call. A missing short_description does not matter.
-    """
-    return bool(details and details.components and details.description.text.strip())
-
-
 # ── Search-result fill (TODO-041) ───────────────────────────────────────────
 # explanation = the bike's stored bike_detail.short_description; accessories =
 # chips derived from its stored components, no AI. One builder for every place
