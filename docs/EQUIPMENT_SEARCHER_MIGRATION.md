@@ -3,7 +3,7 @@
 Zapis całego procesu — od stanu wyjściowego, przez wywiad, sondy, implementację i przeglądy, aż po testy ręczne — z datą
 2026-10-01. Kolejna powtórka schematu z `docs/OLX_SEARCHER_MIGRATION.md` (TODO-031), `docs/DECATHLON_SEARCHER_MIGRATION.md`
 (TODO-032) i `docs/ALLEGRO_SEARCHER_MIGRATION.md` (TODO-033), ale z własnymi tabelami i migracją schematu jak w TODO-041.
-Branch `feature/042-equipment-searcher`, zadanie `backlog/TODO_042_EQUIPMENT_SEARCHER.md`, sondy
+Branch `feature/042-equipment-searcher`, zadanie `backlog/done/DONE_042_EQUIPMENT_SEARCHER.md`, sondy
 `docs/testing/TODO_042/PROBES.md`, plan i wyniki testów `docs/testing/TODO_042/TEST_PLAN.md`.
 
 ## 1. Punkt wyjścia
