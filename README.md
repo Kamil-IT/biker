@@ -420,7 +420,6 @@ biker/
 │   │   ├── repository.py              # ORM data access: bike details + DB-first search (find_bikes_by_details) + missing-data request counter
 │   │   ├── offers_repository.py       # Stored marketplace offers read side: get_used_offers (olx.pl) + get_decathlon_offers (decathlon.pl) + get_allegro_offers (allegro.pl) + bike_exists
 │   │   ├── popular_repository.py      # Popular bikes read side for GET /v1/bike/popular: bike_popular + bike + bike_detail, two-sentence blurb (first_sentences)
-│   │   ├── review_ratings.py          # POST /v1/bike/review/cached: expert ratings of a batch of bikes from the stored reviews in bike_review only (TODO-040)
 │   │   ├── searcher_client.py         # httpx proxy to the searcher (search_olx / search_decathlon / search_allegro / search_photos / search_review), single-flight + shared in-flight cap (10)
 │   │   ├── decathlon_brands.py        # Decathlon house-brand allowlist for /v1/bike/decathlon/search (is_decathlon_brand, not_sold_info; TODO_ISSUE_010)
 │   │   ├── bike_finder.py             # Single Claude call → all matching bikes, min 1 (DB-miss fallback)
@@ -442,7 +441,7 @@ biker/
 │   └── scripts/
 │       ├── migrate_drop_search_rating.py  # One-off, idempotent: drop search_bike_rating_cache.rating (the old match score, TODO-040); --dry-run, --db, --url
 │       ├── seed_popular_bikes.py      # Fill bike_popular (home page "Najpopularniejsze rowery") with 3 bikes that have details + photos + a stored review; --dry-run, --count, --bike "Brand|Model"
-│       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing, /v1/bike/popular, /v1/bike/review/cached, /v1/bike/used/olx, /v1/bike/used/search, /v1/bike/decathlon, /v1/bike/decathlon/search, /v1/bike/allegro, /v1/bike/allegro/search)
+│       ├── test_search.py             # Smoke tests for /v1/bike/search (+ /v1/bike/missing, /v1/bike/popular, /v1/bike/used/olx, /v1/bike/used/search, /v1/bike/decathlon, /v1/bike/decathlon/search, /v1/bike/allegro, /v1/bike/allegro/search)
 │       ├── copy_review_cache_to_table.py  # One-off: generic-cache reviews -> bike_review tables (TODO-037)
 │       ├── test_equipment.py          # Smoke test for /v1/equipment/details + /review
 │       └── test_equipment_review.py   # Focused regression for equipment-review JSON extraction
