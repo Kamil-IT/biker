@@ -481,15 +481,15 @@ Content-Type: application/json
 **Response:** the same shape as `/v1/bike/details` — the details now stored for the bike (the searcher's `bike_id` / `saved` are dropped); a search that found nothing usable is a **200** with the empty response.
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table — checked **before** any searcher call.
-- **Already stored → returned without a searcher call:** when the bike already has complete stored details (`repository.has_complete_details`: non-empty `components` **and** non-empty `description.text`; a missing `short_description` does not matter, so there is no backfill), they are returned at once (200) — a repeat click or a scripted caller cannot spend another subscription run on it.
+- **No stored-details short-circuit:** the stored details are not read first — whether a search is worth paying for is the caller's decision (the UI offers the button only while nothing is stored), so a repeat click or a scripted caller always spends a subscription run.
 - **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Details searcher is not configured"`), the searcher is unreachable / does not answer within `SEARCHER_TIMEOUT` (`"Details searcher unavailable"`), or no search slot is free (`"Details searcher is busy — try again in a moment"`; the in-flight cap `SEARCHER_MAX_INFLIGHT` and the searcher's slots are shared with all other searcher routes, Cloud Run's 429 maps to the same 503) — nothing queues. Identical concurrent requests for the same bike share one search.
 - **400** `{"detail": "<the CLI's notice>"}` when the searcher's `claude -p` run was refused because the Claude subscription limit is used up (TODO-038) — relayed by the app-wide `searcher_limit_reached` handler, same shape as the Anthropic credit-balance 400. Not a 502 / 503.
 - **502** with the searcher's `detail` (≤ 300 chars) when it fails (wrong key, `claude` CLI error, DB error) or answers with a malformed body.
 - `company` / `model` must be non-empty and at most 255 characters (422).
 
 **Flow:**
-1. DB read of `bike` (404 when missing) and of `bike_detail` / `bike_detail_component` — complete stored details are returned here, with **no** outbound call.
-2. Otherwise `POST {SEARCHER_URL}/v1/search/details` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once and writes `bike_detail` / `bike_detail_component`. The backend itself makes no Anthropic call.
+1. DB read of `bike` (404 when missing) — `bike_exists`, nothing else is read.
+2. Always `POST {SEARCHER_URL}/v1/search/details` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once and writes `bike_detail` / `bike_detail_component`. The backend itself makes no Anthropic call.
 
 **Tests:** `scripts/test_search.py` `case_details_search` — an unknown bike is a **404** before any searcher call (no paid run); `scripts/test_searcher_client_details.py` covers the client with a mocked transport; `searcher/scripts/test_searcher.py` covers the searcher route without a paid run.
 
@@ -608,17 +608,17 @@ Content-Type: application/json
 **Response:** the same shape as `/v1/bike/review` — the review now stored for the bike (the searcher's `bike_id` / `saved` are dropped); a search that found nothing usable is a **200** with the empty review.
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table — checked **before** any searcher call.
-- **Already stored → returned without a searcher call:** when the bike already has a stored review with a non-empty `ref` and `sources_used >= 1`, that review is returned at once (200) — a repeat click or a scripted caller cannot spend another subscription run on it.
+- **No stored-review short-circuit:** the stored review is not read first — whether a search is worth paying for is the caller's decision (the UI offers the button only while nothing is stored), so a repeat click or a scripted caller always spends a subscription run.
 - **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Review searcher is not configured"`), the searcher is unreachable / does not answer within `SEARCHER_TIMEOUT` (`"Review searcher unavailable"`), or no search slot is free (`"Review searcher is busy — try again in a moment"`; the in-flight cap `SEARCHER_MAX_INFLIGHT` and the searcher's slots are shared with all other searcher routes, Cloud Run's 429 maps to the same 503) — nothing queues. Identical concurrent requests for the same bike share one search.
 - **400** `{"detail": "<the CLI's notice>"}` when the searcher's `claude -p` run was refused because the Claude subscription limit is used up (TODO-038) — the searcher answers 400 with the CLI's own text (e.g. *"You've hit your session limit · resets 1am (Europe/Warsaw)"*), `searcher_client` raises `SearcherLimitReached`, and the app-wide handler `searcher_limit_reached` in `app/main.py` relays it — the same shape as the Anthropic credit-balance 400. Not a 502 / 503.
 - **502** with the searcher's `detail` (≤ 300 chars) when it fails (wrong key, `claude` CLI error, DB error) or answers with a malformed body.
 - `company` / `model` must be non-empty and at most 255 characters (422).
 
 **Flow:**
-1. DB read of `bike` (404 when missing) and of `bike_review` / `bike_review_source` — a usable stored review is returned here, with **no** outbound call.
-2. Otherwise `POST {SEARCHER_URL}/v1/search/review` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once (`WebSearch` + `WebFetch`, no browser) and writes `bike_review` / `bike_review_source`. The backend itself makes no Anthropic call.
+1. DB read of `bike` (404 when missing) — `bike_exists`, nothing else is read.
+2. Always `POST {SEARCHER_URL}/v1/search/review` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once (`WebSearch` + `WebFetch`, no browser) and writes `bike_review` / `bike_review_source`. The backend itself makes no Anthropic call.
 
-**Tests:** `scripts/test_search.py` `case_review_search` — an unknown bike is a **404** before any searcher call, and a bike with a seeded review gets that review back fast without a searcher call (no paid run); `scripts/test_searcher_client_review.py` covers the client with a mocked transport; `searcher/scripts/test_searcher.py` covers the searcher route without a paid run.
+**Tests:** `scripts/test_search.py` `case_review_search` — an unknown bike is a **404** before any searcher call (no paid run); `scripts/test_searcher_client_review.py` covers the client with a mocked transport; `searcher/scripts/test_searcher.py` covers the searcher route without a paid run.
 
 ---
 

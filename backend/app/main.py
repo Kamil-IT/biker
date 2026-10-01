@@ -36,7 +36,7 @@ from .store import (  # noqa: E402
 # not the retired bike_details_cache blob — see TODO-019.
 from .repository import (  # noqa: E402
     get_bike_details, find_bikes_by_details, record_missing_request,
-    empty_details, has_complete_details, fill_bike_results,
+    empty_details, fill_bike_results,
 )
 from .offers_repository import (  # noqa: E402
     get_used_offers, get_decathlon_offers, get_allegro_offers, bike_exists,
@@ -153,9 +153,9 @@ async def bike_details_search(req: BikeDetailsRequest) -> BikeDetailsResponse:
     """Run the bike-details search on demand through the searcher service (TODO-041).
 
     Proxies to {SEARCHER_URL}/v1/search/details and waits for it
-    (SEARCHER_TIMEOUT, default 600 s) — unless the bike already has complete
-    stored details (components + description text), which are returned without a
-    searcher call. The searcher runs `claude -p` once, stores the result only when
+    (SEARCHER_TIMEOUT, default 600 s) — always, whatever is stored: whether a
+    search is worth paying for is the caller's decision (the UI offers it only
+    while nothing is stored). The searcher runs `claude -p` once, stores the result only when
     usable, and returns what is now stored (the empty response when nothing usable
     was found). Shares SEARCHER_MAX_INFLIGHT with the other searches. 503 when the
     searcher is not configured, unreachable or busy, 502 (its detail passed
@@ -165,10 +165,6 @@ async def bike_details_search(req: BikeDetailsRequest) -> BikeDetailsResponse:
     if not bike_exists(req.company, req.model):
         logger.warning("details search refused: unknown bike | company=%r model=%r", req.company, req.model)
         raise HTTPException(status_code=404, detail="Bike not found")
-    stored = get_bike_details(req.company, req.model)
-    if has_complete_details(stored):
-        logger.info("details search skipped: details already stored | company=%r model=%r", req.company, req.model)
-        return stored.model_copy(update={"company": req.company, "model": req.model})
     t_start = time.perf_counter()
     try:
         result = await search_details(req.company, req.model)
@@ -289,8 +285,9 @@ async def bike_review_search(req: BikeReviewRequest) -> BikeReviewResponse:
     """Run the expert-review search on demand through the searcher service (TODO-037).
 
     Proxies to {SEARCHER_URL}/v1/search/review and waits for it
-    (SEARCHER_TIMEOUT, default 600 s) — unless the bike already has a stored
-    review with sources, which is returned without a searcher call. The searcher runs `claude -p` once,
+    (SEARCHER_TIMEOUT, default 600 s) — always, whatever is stored: whether a
+    search is worth paying for is the caller's decision (the UI offers it only
+    while nothing is stored). The searcher runs `claude -p` once,
     stores the review only when it has sources, and returns what is now stored
     for the bike (the empty review when nothing usable was found). Shares
     SEARCHER_MAX_INFLIGHT with the other searches. 503 when the searcher is not
@@ -303,12 +300,6 @@ async def bike_review_search(req: BikeReviewRequest) -> BikeReviewResponse:
     if not bike_exists(req.company, req.model):
         logger.warning("review search refused: unknown bike | company=%r model=%r", req.company, req.model)
         raise HTTPException(status_code=404, detail="Bike not found")
-    # A usable review already stored is returned as is: a repeat click (or a
-    # scripted caller) must not spend another subscription run on it.
-    stored = get_review(req.company, req.model)
-    if stored.ref and stored.sources_used >= 1:
-        logger.info("review search skipped: review already stored | company=%r model=%r", req.company, req.model)
-        return stored
     t_start = time.perf_counter()
     try:
         result = await search_review(req.company, req.model)

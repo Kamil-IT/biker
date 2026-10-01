@@ -1,5 +1,5 @@
 """Unit tests for the stored bike details (TODO-041): short_description round-trip,
-has_complete_details, accessory_chips / the search-result fill, save_search,
+accessory_chips / the search-result fill, save_search,
 scripts/migrate_short_description.py and scripts/purge_details_cache.py,
 each on a fresh temp SQLite database — no server, no network, no AI call.
 Run: cd backend && pytest   (collected via pytest.ini)"""
@@ -72,12 +72,6 @@ def test_empty_details_shape():
     e = repository.empty_details("A", "B")
     assert e.description.text == "" and e.components == [] and e.short_description == ""
 
-
-def test_has_complete_details():
-    assert repository.has_complete_details(_details("A", "B", FULL, short=""))  # no short_description: still complete
-    assert not repository.has_complete_details(None)
-    assert not repository.has_complete_details(_details("A", "B", []))
-    assert not repository.has_complete_details(_details("A", "B", FULL, text="  "))
 
 
 def test_accessory_chips_picks_present_parts_only(db):
