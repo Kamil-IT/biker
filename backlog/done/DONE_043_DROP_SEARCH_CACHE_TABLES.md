@@ -2,7 +2,7 @@
 
 **Branch:** `feature/043-drop-search-cache-tables`
 **Worktree:** `C:\Users\kamil_wolny\Projects\biker-wt\feature-043-drop-search-cache-tables` (backend 8001, frontend 5174, searcher 8101)
-**Status:** TODO — implemented, QA 11/11, PR #136 open
+**Status:** DONE — merged in PR #136 (2026-10-01); Cloud SQL dropped the same day after an on-demand backup, local `biker-pg` re-run after the merge
 
 ## Skąd się wzięło (inwentaryzacja bazy, 2026-10-01)
 
