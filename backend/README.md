@@ -139,6 +139,11 @@ python scripts/migrate_equipment_tables.py
 python scripts/migrate_rename_bike_component.py --dry-run
 python scripts/migrate_rename_bike_component.py
 
+# One-off per existing database (TODO-044, AFTER migrate_rename_bike_component.py): merge equipment_detail into equipment and rename equipment_detail_component to equipment_component.
+# REQUIRED before the new backend or searcher runs (the searcher refuses to start without it; the OLD backend breaks on a migrated one and its create_all() recreates the empty old tables - rerun: `repaired`).
+python scripts/migrate_merge_equipment_detail.py --dry-run
+python scripts/migrate_merge_equipment_detail.py
+
 # One-off per existing database (ISSUE-016, AFTER migrate_rename_bike_component.py): add bike_component.is_linkable and backfill it with the regex heuristic of app/linkable.py.
 # REQUIRED before the new backend or searcher runs against the database (the searcher refuses to start without the column; the new backend's details reads fail). --dry-run prints the true/false distribution and the most frequent names of each class.
 python scripts/migrate_component_linkable.py --dry-run
@@ -196,7 +201,7 @@ pytest -m "not llm"
 ```
 
 `pytest.ini` scopes default collection to `scripts/test_searcher_client_photos.py`,
-`scripts/test_searcher_client_review.py`, `scripts/test_searcher_client_limit.py`, `scripts/test_reviews_repository.py`, `scripts/test_searcher_client_details.py`, `scripts/test_searcher_client_equipment.py`, `scripts/test_details_repository.py`, `scripts/test_equipment_repository.py`, `scripts/test_migrate_equipment_tables.py` and `scripts/test_migrate_drop_bike_detail.py`, so a bare `pytest` run covers the stored-review read and the cache-copy script (temp SQLite), the details repository helpers, `migrate_short_description` and `purge_details_cache` (temp SQLite),
+`scripts/test_searcher_client_review.py`, `scripts/test_searcher_client_limit.py`, `scripts/test_reviews_repository.py`, `scripts/test_searcher_client_details.py`, `scripts/test_searcher_client_equipment.py`, `scripts/test_details_repository.py`, `scripts/test_equipment_repository.py`, `scripts/test_migrate_equipment_tables.py` and `scripts/test_migrate_drop_bike_detail.py`, `scripts/test_migrate_merge_equipment_detail.py`, so a bare `pytest` run covers the stored-review read and the cache-copy script (temp SQLite), the details repository helpers, `migrate_short_description` and `purge_details_cache` (temp SQLite),
 the equipment repository and its migration (temp SQLite), and
 the searcher client's photo, review, details and equipment routes (mocked httpx: request, single-flight, busy mapping, in-flight cap 10, body validation;
 for equipment also the 404 guards and status mapping of `/v1/equipment/*/search`). (`scripts/test_browser_slots.py` was removed in TODO-042
@@ -324,6 +329,10 @@ python scripts/migrate_rename_bike_component.py --url postgresql+psycopg://biker
 - One transaction on both dialects: `ALTER TABLE … RENAME` → rename the indexes (SQLite drops and recreates them) and, on PostgreSQL, the constraints and sequence → rename the orphans table. Verified before commit (every row reads back identical from `bike_component`, nothing left under the old name); any mismatch rolls back, exit code 1.
 - Idempotent: `already-migrated`; leftover old names are `repaired`. An empty `bike_detail_component` beside a populated `bike_component` (recreated by an OLD backend's `create_all()`) is dropped; an empty `bike_component` beside a populated old table (the NEW backend started too early) is dropped and the rename goes ahead; both populated → refused, nothing written. A database with neither table is left to `init_db()`. Importable as `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `rows_before/after`, `renamed`, `verified`, `error`). Tests: `scripts/test_migrate_rename_bike_component.py`.
 - **Required on every existing database, AFTER `migrate_drop_bike_detail.py` and `migrate_equipment_tables.py` (both still address the old name) and BEFORE the new backend or searcher runs against it** (production: Cloud SQL backup → migrate through the proxy, only on the user's explicit go → deploy backend + searcher together → the frontend is unchanged). The old backend breaks on a migrated database; the new searcher refuses to start on an unmigrated one.
+
+#### `equipment_detail` merged into `equipment` (`scripts/migrate_merge_equipment_detail.py`, TODO-044)
+
+`equipment_detail` is gone: `equipment` carries `description` (nullable, NULL = no details), `short_description`, `updated_at` and the lookup identity `name` / `name_norm` (the element name; `UNIQUE(category, name_norm)`), and `equipment_detail_component` is now `equipment_component` keyed on `equipment_id`. `company` / `model` are the researched brand and model, filled by the searcher's details save where missing. Same options as the other migrations (`--dry-run`, `--db`, `--url`, importable `migrate(...)`); one transaction, orphans to `equipment_component_orphans`, verified before commit; statuses `migrated` / `already-migrated` / `repaired` (empty leftovers recreated by an old backend are dropped) / `dry-run` / `absent` / `failed`. **Required on every existing database, AFTER `migrate_rename_bike_component.py`, BEFORE the new backend or searcher** (backup → migrate → backend + searcher together → frontend; production only on the user's explicit go). Details: `app/DB_MIGRATION.md`.
 
 #### Details generic-cache purge (`scripts/purge_details_cache.py`)
 
@@ -932,7 +941,7 @@ Content-Type: application/json
 
 ### `POST /v1/equipment/details`
 
-Return the details **stored in the database** for a piece of cycling equipment (helmet, light, lock, apparel/bags/accessories, or a bike part — five categories, `parts` is the default for an unmatched name) — a pure read of `equipment` + `equipment_detail` + `equipment_detail_component` through `app/equipment_repository.py` `get_equipment_details` (TODO-042). **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/equipment/details/search`](#post-v1equipmentdetailssearch)). The old in-backend pipeline (three Anthropic calls in one `asyncio.gather` — `equipment_details_finder.py`, `equipment_description_finder.py`, `equipment_photos_finder.py` with Playwright — plus `equipment_categories.py` and their prompts) is gone; its generic-cache rows under `'/v1/equipment/details'` are dead (nothing reads them). The gear counterpart to `/v1/bike/details`; **no shopping/offer links** are ever included.
+Return the details **stored in the database** for a piece of cycling equipment (helmet, light, lock, apparel/bags/accessories, or a bike part — five categories, `parts` is the default for an unmatched name) — a pure read of `equipment` (the item and its details since TODO-044: `description` NULL = no details) + `equipment_component` through `app/equipment_repository.py` `get_equipment_details` (TODO-042). Without `equipment_id` the row is found by name, category ignored, oldest first: company `""` (the spec-tree click) → `name_norm` == the normalised model (= the element name); with a company → the researched (company_norm, model_norm) or `name_norm` of "company model". The response's `company` / `model` are the stored, researched ones (`""` and the element name until a details search ran). **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/equipment/details/search`](#post-v1equipmentdetailssearch)). The old in-backend pipeline (three Anthropic calls in one `asyncio.gather` — `equipment_details_finder.py`, `equipment_description_finder.py`, `equipment_photos_finder.py` with Playwright — plus `equipment_categories.py` and their prompts) is gone; its generic-cache rows under `'/v1/equipment/details'` are dead (nothing reads them). The gear counterpart to `/v1/bike/details`; **no shopping/offer links** are ever included.
 
 ```http
 POST http://localhost:8000/v1/equipment/details
@@ -952,7 +961,7 @@ Content-Type: application/json
 
 - Unknown equipment, nothing stored or a DB error (also an ERROR log) → **200** with the empty response `{"company": …, "model": …, "category": …, "description": {"text": "", "segments": [], "citations": []}, "components": [], "short_description": "", "equipment_id": null}`; equipment that has photos but no details row answers the empty details **with** its `equipment_id`. The frontend reads "description text empty **and** no components" as "no data" and shows **Poproś o dane** in the Opis and Komponenty sections.
 
-**Flow:** none — no outbound HTTP calls; one DB read of `equipment` + `equipment_detail` + `equipment_detail_component`.
+**Flow:** none — no outbound HTTP calls; one DB read of `equipment` + `equipment_component`.
 
 **Tests:** `scripts/test_search.py` `case_equipment_details` — fixture equipment stored through `equipment_repository.save_equipment_details` → the stored values by id **and** by name (other casing), no `photos` key, no generic-cache row, under 5 s; an unknown id and an unknown name → a fast empty 200. `scripts/test_equipment_repository.py` (pytest) covers the repository.
 
@@ -982,7 +991,7 @@ Content-Type: application/json
 
 ### `POST /v1/equipment/details/search`
 
-Run the equipment details search **on demand** through the separate searcher service (`searcher/`, TODO-042) and wait for it. The request names the **bike** and the element of its spec tree that was clicked; the searcher runs the Claude Code CLI once (subscription OAuth token, `WebSearch` + `WebFetch`, the category's `equipment_details_{slug}.md` prompt — category inferred when not given — no browser), stores the result **only when usable** (non-empty components or description): `equipment` row created if missing, `equipment_detail` updated in place, components replaced, and `equipment_id` set on **that bike's** `bike_component` rows with that element name (never globally). An empty result writes nothing. Triggered by the equipment view's **Poproś o dane** button in the Opis / Komponenty sections (one shared run fills both); also usable from `curl`. Never cached.
+Run the equipment details search **on demand** through the separate searcher service (`searcher/`, TODO-042) and wait for it. The request names the **bike** and the element of its spec tree that was clicked; the searcher runs the Claude Code CLI once (subscription OAuth token, `WebSearch` + `WebFetch`, the category's `equipment_details_{slug}.md` prompt — category inferred when not given — no browser), stores the result **only when usable** (non-empty components or description): `equipment` row found by (category, element name) or created, its `description` / `short_description` updated in place, components replaced, the researched `company` / `model` (asked of the model, required in its answer) filled **only where missing** (a stored value is never overwritten, a `""` never counts), and `equipment_id` set on **that bike's** `bike_component` rows with that element name (never globally). An empty result writes nothing. Triggered by the equipment view's **Poproś o dane** button in the Opis / Komponenty sections (one shared run fills both); also usable from `curl`. Never cached.
 
 ```http
 POST http://localhost:8000/v1/equipment/details/search

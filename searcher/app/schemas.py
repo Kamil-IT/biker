@@ -180,6 +180,10 @@ class EquipmentDetails(BaseModel):
     components: list[BikeCategory] = []
     short_description: str = ""
     equipment_id: int | None = None
+    # What the run identified (TODO-044): the manufacturer and the model name WITHOUT the brand, "" when unknown.
+    # Used by the save to fill the stored row's company / model; never part of the API answer.
+    found_company: str = Field("", exclude=True)
+    found_model: str = Field("", exclude=True)
 
 
 class EquipmentDetailsSearchResponse(BaseModel):

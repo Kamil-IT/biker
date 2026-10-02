@@ -294,9 +294,11 @@ class BikePhotosResponse(BaseModel):
 class EquipmentDetailsRequest(BaseModel):
     """Read of stored equipment data (TODO-042): by `equipment_id` when given, else by name.
 
-    The name lookup matches the Python-normalised (company, model) and ignores
-    `category` (the oldest matching row wins). `model` is bounded by the
-    equipment.model / element_name column width (512).
+    The name lookup (TODO-044) matches the Python-normalised "company model"
+    against `equipment.name_norm` (just the model when company is empty - the
+    spec-tree click) or the researched (company_norm, model_norm) pair, and
+    ignores `category` (the oldest matching row wins). `model` is bounded by
+    the equipment.model / element_name column width (512).
     """
     company: str = Field(default="", max_length=255)
     model: str = Field(max_length=512)

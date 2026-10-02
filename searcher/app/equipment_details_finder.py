@@ -24,6 +24,7 @@ from . import config
 from .claude_cli import ClaudeCliError, run_structured
 from .details_finder import (
     DETAILS_SCHEMA,
+    ELEMENT_NAME_MAX,
     SHORT_DESCRIPTION_MAX,
     _sources,
     _text,
@@ -39,8 +40,14 @@ from .shop_filter import is_shop_source
 logger = logging.getLogger("searcher.equipment.details")
 
 COMMON_PROMPT_FILE = config.PROMPTS_DIR / "equipment_details.md"
-# Same keys as the bike details answer: found, description, short_description, sources, components.
-EQUIPMENT_DETAILS_SCHEMA = DETAILS_SCHEMA
+COMPANY_MAX = 255  # equipment.company column width
+# The bike details answer plus the identified product (TODO-044): `company` (the manufacturer / brand, "" when
+# unknown) and `model` (the model name WITHOUT the brand, "" when unknown). A copy - the bike schema is unchanged.
+EQUIPMENT_DETAILS_SCHEMA = {
+    **DETAILS_SCHEMA,
+    "properties": {**DETAILS_SCHEMA["properties"], "company": {"type": "string"}, "model": {"type": "string"}},
+    "required": [*DETAILS_SCHEMA["required"], "company", "model"],
+}
 
 def _no_shops(sources: list[DescriptionCitation], item_name: str) -> list[DescriptionCitation]:
     """Drop shop / marketplace sources (shop_filter); an all-dropped list leaves the description as it is."""
@@ -80,7 +87,8 @@ def empty_equipment_details(element_name: str, slug: str) -> EquipmentDetails:
 
 
 def build_equipment_details(element_name: str, slug: str, data) -> EquipmentDetails:
-    """The structured CLI answer -> EquipmentDetails (company "", model = element name). Pure."""
+    """The structured CLI answer -> EquipmentDetails (company "", model = element name; what the run identified
+    as the manufacturer / model goes to found_company / found_model). Pure."""
     if not isinstance(data, dict):
         logger.error("equipment details result is not an object | data=%r", data)
         return empty_equipment_details(element_name, slug)
@@ -94,6 +102,8 @@ def build_equipment_details(element_name: str, slug: str, data) -> EquipmentDeta
         description=build_description(data.get("description"), _no_shops(_sources(data.get("sources")), element_name)),
         components=_tree(data.get("components"), slug),
         short_description=clean_short_description(data.get("short_description")),
+        found_company=_text(data.get("company"), COMPANY_MAX),
+        found_model=_text(data.get("model"), ELEMENT_NAME_MAX),
     )
 
 

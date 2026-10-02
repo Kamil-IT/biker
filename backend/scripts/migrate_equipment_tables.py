@@ -14,9 +14,12 @@ are ignored).
     python scripts/migrate_equipment_tables.py --db path/to/copy.db
     python scripts/migrate_equipment_tables.py --url postgresql+psycopg://biker:biker@127.0.0.1:5432/biker
 
-How, in ONE transaction: the four tables `equipment`, `equipment_detail`,
-`equipment_detail_component`, `equipment_detail_photos` are created from the
-ORM models (create_all, checkfirst — an existing one is left alone), then
+How, in ONE transaction: the tables `equipment`, `equipment_component`,
+`equipment_detail_photos` are created from the ORM models (create_all,
+checkfirst — an existing one is left alone; since TODO-044 the ORM has no
+`equipment_detail` / `equipment_detail_component` any more, and a database whose
+`equipment` still has the old layout, i.e. no `name` column, gets no table
+here — `migrate_merge_equipment_detail.py` converts it), then
 `bike_detail_component.equipment_id` is added only when missing — SQLite:
 `ALTER TABLE … ADD COLUMN equipment_id INTEGER REFERENCES equipment(id) ON
 DELETE SET NULL`; PostgreSQL: `ADD COLUMN` → FK `…_equipment_id_fkey` →
@@ -59,7 +62,7 @@ TABLE = "bike_detail_component"
 COLUMN = "equipment_id"
 INDEX = "ix_bike_detail_component_equipment_id"
 FK = "bike_detail_component_equipment_id_fkey"
-NEW_TABLES = ("equipment", "equipment_detail", "equipment_detail_component", "equipment_detail_photos")
+NEW_TABLES = ("equipment", "equipment_component", "equipment_detail_photos")
 
 
 def _url(url_or_path) -> str:
@@ -78,6 +81,8 @@ def _engine(url: str) -> Engine:
 def _plan(insp, dialect: str) -> dict:
     """What is missing: tables to create, column / FK / index to add."""
     missing_tables = [t for t in NEW_TABLES if not insp.has_table(t)]
+    if insp.has_table("equipment") and "name" not in {c["name"] for c in insp.get_columns("equipment")}:
+        missing_tables = []  # the pre-TODO-044 layout: migrate_merge_equipment_detail.py owns the tables
     has_column = COLUMN in {c["name"] for c in insp.get_columns(TABLE)}
     has_index = any(ix["name"] == INDEX for ix in insp.get_indexes(TABLE))
     has_fk = any(
@@ -174,7 +179,7 @@ def migrate(url_or_path=None, dry_run: bool = False, verbose: bool = True) -> di
                 after = conn.execute(text(f"SELECT COUNT(*) FROM {TABLE}")).scalar_one()
                 linked = conn.execute(text(f"SELECT COUNT(*) FROM {TABLE} WHERE {COLUMN} IS NOT NULL")).scalar_one()
                 check = inspect(conn)
-                still_missing = [t for t in NEW_TABLES if not check.has_table(t)]
+                still_missing = [t for t in plan["tables"] if not check.has_table(t)]
                 report["rows_before"], report["rows_after"] = before, after
                 if after != before or still_missing or (plan["column"] and linked):
                     raise RuntimeError(

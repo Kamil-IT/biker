@@ -403,6 +403,8 @@ python scripts/migrate_equipment_tables.py --url postgresql+psycopg://biker:bike
   (32 972 rows). Production order: `migrate_drop_bike_detail.py` → `migrate_equipment_tables.py` → deploy backend + searcher
   → frontend.
 
+_(The `equipment_detail` / `equipment_detail_component` tables above were merged away by TODO-044 — see the section after the rename.)_
+
 ## `bike_detail_component` renamed to `bike_component`
 
 Keyed on `bike.id` since the bike_detail drop above, the component spec tree no longer belonged to a "detail" row, so the table is now **`bike_component`** (ORM class `BikeComponent` in `backend/app/models.py` and the searcher's copy). Columns (`equipment_id` included), constraints and data are unchanged; only names moved: table, indexes (`ix_bike_component_*`), and on PostgreSQL the `bike_component_pkey` / `bike_component_bike_id_fkey` / `bike_component_equipment_id_fkey` constraints and the `bike_component_id_seq` sequence. The leftover `bike_detail_component_orphans` table (if the drop migration created one) becomes `bike_component_orphans`. The API shapes are untouched; the frontend never saw the table name. `migrate_drop_bike_detail.py` and `migrate_equipment_tables.py` still address the old name — run them first; on a renamed database each answers `already-migrated` / `absent` and writes nothing.
@@ -410,6 +412,39 @@ Keyed on `bike.id` since the bike_detail drop above, the component spec tree no 
 `scripts/migrate_rename_bike_component.py` (`--dry-run`, `--db <sqlite file>`, `--url <sqlalchemy url>`, importable `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` with `status`, `rows_before/after`, `renamed`, `verified`, `error`) does it in ONE transaction: `ALTER TABLE … RENAME` → rename the indexes (SQLite drops and recreates them, PostgreSQL `ALTER INDEX … RENAME`), the PostgreSQL constraints and sequence, and the orphans table → verify every row (every column) reads back identical from `bike_component` and nothing is left under the old name, else roll back (exit code 1). Idempotent: `already-migrated`; leftover old names are `repaired`. An empty `bike_detail_component` next to a populated `bike_component` (an OLD backend's `create_all()` recreated it) is dropped; an empty `bike_component` next to a populated old table (the NEW backend started too early) is dropped and the rename goes ahead; both populated → refused. Tests: `scripts/test_migrate_rename_bike_component.py`.
 
 **Deploy order:** (1) Cloud SQL on-demand backup, (2) run the script on Cloud SQL through the proxy — **only on the user's explicit go** — (3) deploy the backend and the searcher together, (4) the frontend is unchanged. The OLD backend breaks on a migrated database (its ORM still queries `bike_detail_component`, and its `create_all()` recreates it empty — rerun the script afterwards, it drops the empty duplicate), and the NEW searcher refuses to start on an unmigrated one (its `init_db()` names this script).
+
+## `equipment_detail` merged into `equipment` (TODO-044, `scripts/migrate_merge_equipment_detail.py`)
+
+The equipment details row duplicated what `bike` carries since PR #137, so `equipment_detail` is gone and its component table is
+`equipment_component`. Layout (`app/equipment_models.py`, verbatim copy in `searcher/app/models.py`):
+
+| Table | Columns |
+|---|---|
+| `equipment` | `id`, `category` (slug ≤ 32), `name` / `name_norm` (≤ 512, NOT NULL - the element name from a bike's spec tree, the lookup identity), `company` (≤ 255) / `model` (≤ 512) / `company_norm` / `model_norm` (the **researched** brand and model: `""` and the name until a details search fills them), `description` (`Text`, **nullable** - JSON `BikeDescription`, NULL = no details), `short_description` (`TEXT NOT NULL DEFAULT ''`), `created_at`, `updated_at`; `UNIQUE(category, name_norm)` = `uq_equipment_name` (replaces `uq_equipment_identity`) |
+| `equipment_component` | the flat shape of `bike_component` (no `equipment_id` link, no `is_linkable`), `equipment_id` FK → `equipment.id` `ON DELETE CASCADE`, NOT NULL, indexed |
+| `equipment_detail_photos` | unchanged |
+
+The norm columns follow `name` / `company` / `model` through `@validates` (Python `strip().lower()`); a Core insert / update sets them itself.
+`equipment_component.equipment_id` is the OWNER of the row (not an element link like `bike_component.equipment_id`), so
+`component_tree.rebuild_components(..., element_links=False)` is used for equipment.
+
+**company / model rule.** A details search asks the model for the identified manufacturer (`company`) and the model name without the brand (`model`).
+`save_equipment_details` finds the row by `(category, name)` - never by company / model - and fills only what is missing: `company` when the stored one is `""`,
+`model` when the stored one is empty or still the name; stored values are never overwritten and a `""` never counts. The photo save never touches them. Existing
+rows are not backfilled by AI. Reads without `equipment_id` match `name_norm` (company `""`: the spec-tree click) or the researched pair or `name_norm` of "company model".
+
+```bash
+cd backend
+python scripts/migrate_merge_equipment_detail.py --dry-run     # report only; database: $DATABASE_URL (backend/.env), else cache.db
+python scripts/migrate_merge_equipment_detail.py               # migrate
+python scripts/migrate_merge_equipment_detail.py --db path/to/copy.db
+python scripts/migrate_merge_equipment_detail.py --url postgresql+psycopg://biker:biker@localhost:5432/<db>
+```
+
+- One transaction on both dialects (SQLite rebuilds `equipment`; PostgreSQL alters it in place under `LOCK TABLE equipment, equipment_detail, equipment_detail_component IN SHARE ROW EXCLUSIVE MODE`): add the columns → copy each detail row's description / short_description / `updated_at` (else `created_at`) → backfill `name` (= model, or "company model" for a row with a company) and `name_norm` in Python → swap the unique constraint → create `equipment_component` from the ORM model and copy every component row keeping its id (PostgreSQL: sequence reset) → drop `equipment_detail_component` and `equipment_detail`.
+- Component rows without a detail row (or whose equipment is missing) are copied whole into `equipment_component_orphans` and left out of the new table, never dropped silently. Verified before commit (every equipment row keeps its columns and gets its old detail row's description / short_description - NULL / `''` without one; every component row keeps id, equipment and content; photo and `bike_component` link counts unchanged); any mismatch, or two rows that would share `(category, name_norm)`, rolls back with exit code 1.
+- Idempotent: `already-migrated`; a migrated database where an OLD backend's `create_all()` recreated the empty `equipment_detail` / `equipment_detail_component` (or `equipment_component` is missing) is `repaired` - the empty leftovers are dropped, non-empty ones are refused. An empty `equipment_component` the NEW backend created before the migration is dropped and rebuilt. A database without `equipment` is left to `init_db()` (`absent`). Refused while `bike_detail_component` is not yet renamed. `migrate_equipment_tables.py` creates no table next to the pre-merge layout.
+- **Required on every existing database, AFTER `migrate_equipment_tables.py`, `migrate_drop_bike_detail.py` and `migrate_rename_bike_component.py`, and BEFORE the new backend or searcher runs against it** (production: Cloud SQL backup → migrate through the proxy, only on the user's explicit go → deploy backend + searcher together → the frontend is unchanged). The new searcher refuses to start on an unmerged database (it checks `equipment.name` and `equipment_component`); the OLD backend breaks on a migrated one. Unit tests (`scripts/test_migrate_merge_equipment_detail.py`) run on SQLite. The PostgreSQL branch was rehearsed 2026-10-02 on a copy of the local `biker-pg` (`migrated` → `already-migrated` → `repaired` after an old-code `create_all()`). Run 2026-10-02: local `biker-pg` 3 equipment / 3 details / 22 component rows, 0 orphans, `migrated`; `backend/cache.db` (empty equipment tables) `migrated`. Cloud SQL on-demand backup "before migrate_merge_equipment_detail" taken 2026-10-02.
 
 ## Component link flag (`bike_component.is_linkable`, ISSUE-016)
 

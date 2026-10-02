@@ -736,15 +736,13 @@ def _delete_equipment(model: str) -> None:
     """Remove fixture equipment and its rows (bike links fall back to NULL via ON DELETE SET NULL)."""
     conn = _DB()
     try:
-        ids = "(SELECT id FROM equipment WHERE model_norm = ?)"
+        ids = "(SELECT id FROM equipment WHERE name_norm = ?)"
         p = (model.strip().lower(),)
         for sql in (
             f"UPDATE bike_component SET equipment_id = NULL WHERE equipment_id IN {ids}",
-            f"DELETE FROM equipment_detail_component WHERE equipment_detail_id IN "
-            f"(SELECT id FROM equipment_detail WHERE equipment_id IN {ids})",
-            f"DELETE FROM equipment_detail WHERE equipment_id IN {ids}",
+            f"DELETE FROM equipment_component WHERE equipment_id IN {ids}",
             f"DELETE FROM equipment_detail_photos WHERE equipment_id IN {ids}",
-            "DELETE FROM equipment WHERE model_norm = ?",
+            "DELETE FROM equipment WHERE name_norm = ?",
         ):
             conn.execute(sql, p)
         conn.commit()
@@ -769,7 +767,7 @@ def case_equipment_details():
         ])])],
         short_description=FIX_EQUIP_SHORT,
     ))
-    assert eid is not None, "seeding the equipment fixture failed (is the DB migrated? scripts/migrate_equipment_tables.py)"
+    assert eid is not None, "seeding the equipment fixture failed (is the DB migrated? scripts/migrate_equipment_tables.py, then migrate_merge_equipment_detail.py)"
     key = _equipment_cache_key(FIX_EQUIP_MODEL)
     try:
         _cache_row_delete("/v1/equipment/details", key)

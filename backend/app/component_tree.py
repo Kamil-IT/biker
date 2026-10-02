@@ -1,6 +1,6 @@
 """The flat component rows <-> nested BikeCategory tree, shared by bikes and equipment.
 
-`bike_component` and `equipment_detail_component` (TODO-042) store the
+`bike_component` and `equipment_component` (TODO-042 / TODO-044) store the
 category -> subcategory -> element -> spec tree as one row per spec, each
 carrying its whole ancestry. `flatten_components` turns a tree into the column
 dicts of those rows; `rebuild_components` regroups ordered rows into the tree.
@@ -10,7 +10,7 @@ from typing import Optional
 from .schemas import BikeCategory, BikeSubcategory, ComponentElement, SpecItem
 
 
-def rebuild_components(rows) -> list[BikeCategory]:
+def rebuild_components(rows, element_links: bool = True) -> list[BikeCategory]:
     """Regroup flat component rows back into the nested response tree.
 
     `rows` must already be ordered by (component_order, element_order,
@@ -18,7 +18,9 @@ def rebuild_components(rows) -> list[BikeCategory]:
     those integers rather than off names, so two elements sharing a name inside
     one subcategory stay distinct. A row whose spec_key is NULL contributes an
     element with no specs, which is how `specs: []` round-trips. An element's
-    `equipment_id` (TODO-042, bike rows only) comes from its first row.
+    `equipment_id` (TODO-042, bike rows only) comes from its first row. An
+    `equipment_component` row's own `equipment_id` is its OWNER, not an element
+    link: its callers pass `element_links=False`.
     """
     comps: dict[int, dict] = {}
     for r in rows:
@@ -31,7 +33,7 @@ def rebuild_components(rows) -> list[BikeCategory]:
             "name": r.element_name,
             "description": r.element_description or "",
             "specs": [],
-            "equipment_id": getattr(r, "equipment_id", None),
+            "equipment_id": getattr(r, "equipment_id", None) if element_links else None,
             # ISSUE-016: bike rows carry the flag; equipment rows have no column → True (schema default).
             "is_linkable": bool(getattr(r, "is_linkable", True)),
         })
@@ -61,7 +63,7 @@ def flatten_components(components: list[BikeCategory], include_linkable: bool = 
     beneath it. An element with no specs still emits one row, with the spec_*
     columns None — that is what makes `specs: []` survive the round-trip.
     `include_linkable=True` adds each element's `is_linkable` (ISSUE-016) — only
-    `bike_component` has that column, `equipment_detail_component` does not.
+    `bike_component` has that column, `equipment_component` does not.
     """
     rows: list[dict] = []
     comp_order = 0

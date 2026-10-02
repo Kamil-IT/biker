@@ -294,11 +294,13 @@ def save_review(company: str, model: str, review: BikeReview) -> tuple[Optional[
         session.close()
 
 
-def _rebuild_components(rows) -> list[BikeCategory]:
+def _rebuild_components(rows, element_links: bool = True) -> list[BikeCategory]:
     """Regroup flat bike_component rows (ordered by component/element/spec order) into the tree.
 
     Same grouping as the backend's repository.rebuild_components: by the order
-    integers, not by names; a NULL spec_key is an element without specs.
+    integers, not by names; a NULL spec_key is an element without specs. An
+    equipment_component row's equipment_id is its OWNER, not an element link:
+    the equipment reads pass element_links=False.
     """
     comps: dict[int, dict] = {}
     for r in rows:
@@ -306,7 +308,7 @@ def _rebuild_components(rows) -> list[BikeCategory]:
         element = comp["elements"].setdefault(
             r.element_order, {"name": r.element_name, "description": r.element_description or "", "specs": [],
                               # TODO-042: the element's equipment link, from its first row (equipment rows have none)
-                              "equipment_id": getattr(r, "equipment_id", None),
+                              "equipment_id": getattr(r, "equipment_id", None) if element_links else None,
                               # ISSUE-016: bike rows carry the flag; equipment rows have no column → True
                               "is_linkable": bool(getattr(r, "is_linkable", True))},
         )
