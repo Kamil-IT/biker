@@ -67,3 +67,8 @@ oraz `DELETE` 62 martwych wierszy `endpoint_req_to_body_cache` (`/v1/bike/review
 `bike_missing_request` zostaje (pisze do niej `/v1/bike/missing`, `init_db()` i tak by ją odtworzył). Uwaga: wdrożony backend
 `0cb76c0` (sprzed #136) odtworzył puste `search_cache` / `search_bike_rating_cache` przez `create_all()` — po deployu `e2ba21c`
 trzeba odpalić `migrate_drop_search_tables.py` na Cloud SQL jeszcze raz.
+
+**Korekta (2026-10-01, późny wieczór):** drop `bike_discovery` + `bike_discovery_listing` na Cloud SQL był pomyłką w zakresie —
+użytkownik chciał tę kopię zachować. Przywrócona tego samego dnia przez `webscraper/centrumrowerowe/copy_to_db.py --allow-remote`
+z lokalnego `biker-pg` (aktualniejszy stan niż kopia z 30.09): `rows_inserted=1285 listings_inserted=1317 bikes_written=5
+bikes_kept=50 photos_written=5 photos_present=49`, 0 błędów. Cloud SQL ma więc 12 tabel.
