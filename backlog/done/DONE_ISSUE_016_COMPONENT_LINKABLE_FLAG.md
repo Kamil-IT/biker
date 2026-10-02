@@ -1,6 +1,6 @@
 # ISSUE-016 — Component names link to the equipment view even when they are not a product
 
-**Status:** implemented on `feature/issue-016-component-linkable`, awaiting manual QA + PR (moves to `backlog/done/` once merged).
+**Status:** DONE — merged to `main` in [PR #146](https://github.com/Kamil-IT/biker/pull/146) on 2026-10-02 (manual QA: `docs/testing/ISSUE_016/TEST_PLAN.md`). Production: Cloud SQL backup taken 2026-10-02, the `migrate_component_linkable.py --dry-run` on Cloud SQL showed 33216 rows → 27676 linkable / 5540 not; the real run and the deploy (backend + searcher, then frontend) are the user's step.
 **Reported:** 2026-10-02, by the user, with screenshots of the "Akcesoria" section of a details page.
 
 ## Problem
