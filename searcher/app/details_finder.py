@@ -38,7 +38,7 @@ PROMPT_FILE = config.PROMPTS_DIR / "bike_details.md"
 CATEGORIES = (
     "Frame", "Drivetrain", "Brakes", "Wheels", "Cockpit", "Saddle & Seatpost", "Lighting", "Accessories",
 )
-# Column widths of bike_detail_component (PostgreSQL rejects what SQLite stores).
+# Column widths of bike_component (PostgreSQL rejects what SQLite stores).
 CATEGORY_MAX, SUBCATEGORY_MAX, ELEMENT_NAME_MAX, SPEC_KEY_MAX, SPEC_VALUE_MAX = 255, 255, 512, 255, 1024
 DESCRIPTION_MAX, SHORT_DESCRIPTION_MAX, ELEMENT_DESCRIPTION_MAX = 4000, 1000, 1000
 TITLE_MAX, MAX_SOURCES = 255, 8

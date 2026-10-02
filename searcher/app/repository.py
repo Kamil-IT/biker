@@ -16,7 +16,7 @@ bike) + bike_review_source (its `ref` URLs in order): save_review below. A
 review is replaced only by a usable one.
 
 Bike details (/v1/search/details, TODO-041) go onto the bike row itself
-(`description` / `short_description`, updated in place) + bike_detail_component
+(`description` / `short_description`, updated in place) + bike_component
 (the flattened tree, keyed on bike_id): a port of the backend's
 repository.save_bike_details / get_bike_details. get_stored_details / save_details below.
 A re-save keeps each element's equipment_id link (TODO-042). Equipment
@@ -35,7 +35,7 @@ from .models import (
     BikeDetailPhoto,
     BikeReview as BikeReviewRow,  # aliased: schemas.BikeReview is the response shape
     BikeReviewSource,
-    BikeDetailComponent,
+    BikeComponent,
     dialect_insert,
     norm,
     get_session,
@@ -295,7 +295,7 @@ def save_review(company: str, model: str, review: BikeReview) -> tuple[Optional[
 
 
 def _rebuild_components(rows) -> list[BikeCategory]:
-    """Regroup flat bike_detail_component rows (ordered by component/element/spec order) into the tree.
+    """Regroup flat bike_component rows (ordered by component/element/spec order) into the tree.
 
     Same grouping as the backend's repository.rebuild_components: by the order
     integers, not by names; a NULL spec_key is an element without specs.
@@ -398,7 +398,7 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
     one transaction: the bike row is created if missing (caller's casing; an
     existing placeholder casing is upgraded), its details columns are updated
     IN PLACE (description JSON and short_description replaced), and its
-    bike_detail_component rows are replaced with the flattened tree
+    bike_component rows are replaced with the flattened tree
     (flatten_components). A replaced row's equipment_id link (TODO-042) is
     carried over to the new row with the same element_name.
     Photos hang off `bike` and are never touched. An unusable result writes and
@@ -429,18 +429,18 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
             # TODO-042: the replaced rows may carry equipment links; the new row of the same element keeps its
             # link. Keyed on the Python-normalised name like every link UPDATE; the first link (row order) wins.
             for r in (
-                session.query(BikeDetailComponent.element_name, BikeDetailComponent.equipment_id)
-                .filter(BikeDetailComponent.bike_id == bike_id, BikeDetailComponent.equipment_id.isnot(None))
-                .order_by(BikeDetailComponent.id)
+                session.query(BikeComponent.element_name, BikeComponent.equipment_id)
+                .filter(BikeComponent.bike_id == bike_id, BikeComponent.equipment_id.isnot(None))
+                .order_by(BikeComponent.id)
             ):
                 links.setdefault(norm(r.element_name), r.equipment_id)
-            session.query(BikeDetailComponent).filter_by(bike_id=bike_id).delete(synchronize_session=False)
+            session.query(BikeComponent).filter_by(bike_id=bike_id).delete(synchronize_session=False)
             session.expire(row, ["components"])
         session.flush()
 
         rows = 0
         for values in flatten_components(details.components if has_comps else []):
-            session.add(BikeDetailComponent(
+            session.add(BikeComponent(
                 bike_id=bike_id, equipment_id=links.get(norm(values["element_name"])), **values,
             ))
             rows += 1

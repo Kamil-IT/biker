@@ -54,7 +54,7 @@ def _page(rows, name="Rower MTB KROSS Level 1.0", brand=None, ld=None, section="
 
 
 def _specs(parsed) -> "repository._BikeSpecs":
-    """The rows find_bikes_by_details would read back from bike_detail_component."""
+    """The rows find_bikes_by_details would read back from bike_component."""
     specs = repository._BikeSpecs()
     for cat in parsed.to_details_response(parsed.brand, parsed.model).components:
         for sub in cat.subcategories:
@@ -223,7 +223,7 @@ def _limit(model, column):
 
 
 def _assert_fits_columns(p):
-    comp = models.BikeDetailComponent
+    comp = models.BikeComponent
     assert len(p.brand) <= _limit(models.Bike, "brand")
     assert len(p.model) <= _limit(models.Bike, "model")
     assert all(len(u) <= _limit(models.BikeDetailPhoto, "url") for u in p.photos)

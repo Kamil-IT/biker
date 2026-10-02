@@ -47,7 +47,7 @@ sys.path.insert(0, str(BACKEND_DIR))
 load_dotenv(BACKEND_DIR / ".env")  # DATABASE_URL selects the database, as for the server
 
 from app.models import (  # noqa: E402
-    Bike, BikeDetailComponent, BikeDetailPhoto, BikeOffer, BikePopular, BikeReview,
+    Bike, BikeComponent, BikeDetailPhoto, BikeOffer, BikePopular, BikeReview,
     configure_db, get_engine, get_session, init_db,
 )
 
@@ -125,7 +125,7 @@ def load_candidates(session) -> list[Candidate]:
     photos = dict(session.execute(
         select(BikeDetailPhoto.bike_id, func.count(BikeDetailPhoto.id)).group_by(BikeDetailPhoto.bike_id)
     ).all())
-    components = _count_per_bike(session, BikeDetailComponent, BikeDetailComponent.bike_id)
+    components = _count_per_bike(session, BikeComponent, BikeComponent.bike_id)
     offers = dict(session.execute(
         select(BikeOffer.bike_id, func.count(BikeOffer.id)).group_by(BikeOffer.bike_id)
     ).all())

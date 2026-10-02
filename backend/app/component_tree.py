@@ -1,6 +1,6 @@
 """The flat component rows <-> nested BikeCategory tree, shared by bikes and equipment.
 
-`bike_detail_component` and `equipment_detail_component` (TODO-042) store the
+`bike_component` and `equipment_detail_component` (TODO-042) store the
 category -> subcategory -> element -> spec tree as one row per spec, each
 carrying its whole ancestry. `flatten_components` turns a tree into the column
 dicts of those rows; `rebuild_components` regroups ordered rows into the tree.

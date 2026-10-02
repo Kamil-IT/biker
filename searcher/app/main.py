@@ -1,8 +1,8 @@
 """Biker Searcher — FastAPI entry point (TODO-031, TODO-032, TODO-033, photos, TODO-037, TODO-041, TODO-042).
 
-Nine routes (POST /v1/search/details, TODO-041: bike details through the CLI onto the bike row + bike_detail_component;
+Nine routes (POST /v1/search/details, TODO-041: bike details through the CLI onto the bike row + bike_component;
 POST /v1/search/equipment/details and /v1/search/equipment/photos, TODO-042: an equipment item opened from a
-bike's spec tree, into the equipment tables, linked on that bike's bike_detail_component rows): POST /v1/search/olx (X-Searcher-Key required) runs the OLX
+bike's spec tree, into the equipment tables, linked on that bike's bike_component rows): POST /v1/search/olx (X-Searcher-Key required) runs the OLX
 search through the Claude Code CLI, scrapes listing photos with Playwright and
 writes the result into bike_offer / bike_offer_photos; POST /v1/search/decathlon
 (same key) runs the Decathlon search through the CLI — no Playwright — and
@@ -400,7 +400,7 @@ async def search_equipment_details(req: EquipmentSearchRequest) -> EquipmentDeta
     element name). A usable result (components or description) is stored —
     equipment row created if missing, equipment_detail updated in place,
     components replaced — and the element is linked on THIS bike's
-    bike_detail_component rows (bike missing: stored, not linked); saved 1.
+    bike_component rows (bike missing: stored, not linked); saved 1.
     Anything less writes nothing (saved 0). Same 400 / 401 / 422 / 502 / 503 /
     500 mapping and the SAME SEARCHER_MAX_CONCURRENT slots as the other routes.
     """

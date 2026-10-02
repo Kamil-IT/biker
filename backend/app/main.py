@@ -27,7 +27,7 @@ from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
 from .store import (  # noqa: E402
     init_store, save_search,
 )
-# Details are served from the ORM tables (bike.description / short_description + bike_detail_component),
+# Details are served from the ORM tables (bike.description / short_description + bike_component),
 # not the retired bike_details_cache blob — see TODO-019.
 from .repository import (  # noqa: E402
     get_bike_details, find_bikes_by_details, record_missing_request,

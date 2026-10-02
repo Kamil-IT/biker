@@ -31,7 +31,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2] / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.models import Bike, BikeDetailComponent, BikeDetailPhoto  # noqa: E402 — needs sys.path above
+from app.models import Bike, BikeComponent, BikeDetailPhoto  # noqa: E402 — needs sys.path above
 from app.schemas import (  # noqa: E402
     BikeCategory, BikeDescription, BikeDetailsResponse, BikeSubcategory,
     ComponentElement, SpecItem, TextSegment,
@@ -51,12 +51,12 @@ def _column_len(model, column: str) -> Optional[int]:
 LIMITS = {
     "brand": _column_len(Bike, "brand"),
     "model": _column_len(Bike, "model"),
-    "category": _column_len(BikeDetailComponent, "category"),
-    "subcategory": _column_len(BikeDetailComponent, "subcategory"),
-    "element_name": _column_len(BikeDetailComponent, "element_name"),
-    "element_description": _column_len(BikeDetailComponent, "element_description"),
-    "spec_key": _column_len(BikeDetailComponent, "spec_key"),
-    "spec_value": _column_len(BikeDetailComponent, "spec_value"),
+    "category": _column_len(BikeComponent, "category"),
+    "subcategory": _column_len(BikeComponent, "subcategory"),
+    "element_name": _column_len(BikeComponent, "element_name"),
+    "element_description": _column_len(BikeComponent, "element_description"),
+    "spec_key": _column_len(BikeComponent, "spec_key"),
+    "spec_value": _column_len(BikeComponent, "spec_value"),
     "photo_url": _column_len(BikeDetailPhoto, "url"),
 }
 

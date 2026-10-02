@@ -5,11 +5,11 @@ identity: category slug + Python-normalised company/model; opened from a
 bike's spec tree, so company is "" and model is the element name) +
 equipment_detail (one row per item, updated in place) +
 equipment_detail_component (the flattened tree, same columns as
-bike_detail_component). Photos (/v1/search/equipment/photos) go into
+bike_component). Photos (/v1/search/equipment/photos) go into
 equipment_detail_photos keyed on equipment_id, written once, never replaced.
 
 A successful save also links the element on the bike it was opened from:
-link_bike_components sets bike_detail_component.equipment_id on THAT bike's
+link_bike_components sets bike_component.equipment_id on THAT bike's
 rows with that element name — never on other bikes — in the same transaction.
 A bike missing from `bike` is not created: the equipment is stored anyway and
 the link is skipped (WARNING). An unusable result writes nothing — no
@@ -22,7 +22,7 @@ from typing import Optional
 
 from .details_finder import has_components, is_usable_details
 from .models import (
-    BikeDetailComponent,
+    BikeComponent,
     Equipment,
     EquipmentDetail,
     EquipmentDetailComponent,
@@ -84,20 +84,20 @@ def get_or_create_equipment(category: str, company: str, model: str) -> int:
 
 
 def link_bike_components(session, bike_id: int, element_name: str, equipment_id: int) -> int:
-    """Set equipment_id on this bike's bike_detail_component rows whose element name matches; returns rows linked.
+    """Set equipment_id on this bike's bike_component rows whose element name matches; returns rows linked.
 
     The match is Python-normalised (strip().lower()), scoped to the one bike's
     component rows — never global. Runs in the caller's transaction (no commit).
     """
     wanted = norm(element_name)
     ids = [
-        r.id for r in session.query(BikeDetailComponent.id, BikeDetailComponent.element_name)
-        .filter(BikeDetailComponent.bike_id == bike_id)
+        r.id for r in session.query(BikeComponent.id, BikeComponent.element_name)
+        .filter(BikeComponent.bike_id == bike_id)
         if norm(r.element_name) == wanted
     ]
     if ids:
-        session.query(BikeDetailComponent).filter(BikeDetailComponent.id.in_(ids)).update(
-            {BikeDetailComponent.equipment_id: equipment_id}, synchronize_session=False,
+        session.query(BikeComponent).filter(BikeComponent.id.in_(ids)).update(
+            {BikeComponent.equipment_id: equipment_id}, synchronize_session=False,
         )
     return len(ids)
 
@@ -113,7 +113,7 @@ def _link(session, bike_company: str, bike_model: str, element_name: str, equipm
     linked = link_bike_components(session, bike_id, element_name, equipment_id)
     if not linked:
         logger.warning(
-            "no bike_detail_component row named %r on bike_id=%d — nothing linked | equipment_id=%d",
+            "no bike_component row named %r on bike_id=%d — nothing linked | equipment_id=%d",
             element_name, bike_id, equipment_id,
         )
     return linked

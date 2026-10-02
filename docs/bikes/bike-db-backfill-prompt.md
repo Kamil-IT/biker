@@ -31,7 +31,7 @@ orchestrating a 22-agent swarm.
   `{ brand, model, year, url, source, confidence, ref, price, currency, ... }`.
   Documented in `docs/README-bike-dataset.md`.
 - Component JSON shape: `backend/app/prompts/bike_details.md` — **follow it exactly**.
-- Target tables: `bike` (details in `description` / `short_description`), `bike_detail_component`, `bike_detail_photos`
+- Target tables: `bike` (details in `description` / `short_description`), `bike_component`, `bike_detail_photos`
   (ORM in `backend/app/models.py`, writer in `backend/app/repository.py`).
 
 ---
@@ -110,7 +110,7 @@ Envelope:
 | `RESULT` | researcher → coordinator | `{ "brand", "model", "source_urls": [str], "spec_file": "path", "categories": int, "spec_rows": int, "photos": int, "description_chars": int, "confidence": "high"\|"medium" }` |
 | `SKIP` | researcher → coordinator | `{ "brand", "model", "reason": "no_source"\|"not_a_bike"\|"duplicate"\|"blocked" , "detail": str }` |
 | `WRITE_REQUEST` | coordinator → db-writer | the validated `RESULT` payload, plus `"batch_seq": int` |
-| `WRITE_ACK` | db-writer → coordinator | `{ "brand", "model", "status": "stored"\|"skipped_fresh"\|"failed", "verified": bool, "db_rows": { "bike_detail_component": int, "bike_detail_photos": int }, "error": str\|null }` |
+| `WRITE_ACK` | db-writer → coordinator | `{ "brand", "model", "status": "stored"\|"skipped_fresh"\|"failed", "verified": bool, "db_rows": { "bike_component": int, "bike_detail_photos": int }, "error": str\|null }` |
 | `QUERY` | any → coordinator | `{ "question": str, "about": str }` — e.g. a researcher asking whether a near-duplicate model is already claimed |
 | `RELAY` | coordinator → any | `{ "origin": "<agent>", "question": str, "context": obj }` — how the coordinator forwards a `QUERY` on someone's behalf |
 | `ANSWER` | any → coordinator | `{ "reply_to_query": "msg_id", "answer": str, "data": obj\|null }` |
@@ -253,7 +253,7 @@ speculatively and you never accept work from a researcher.
 
 Do **not** hand-write SQL. Go through the ORM writer so the flattening, ordering and
 cascade behaviour stay identical to the live `/v1/bike/details` path
-(`repository.save_bike_details` writes `bike` (description columns) → `bike_detail_component`
+(`repository.save_bike_details` writes `bike` (description columns) → `bike_component`
 one row per spec, `component_order`/`element_order`/`spec_order` preserving order → and
 `bike_detail_photos` ordered by `display_order`).
 
@@ -318,7 +318,7 @@ def store_spool(spool_path: str) -> dict:
         "status": "stored" if ok else "failed",
         "verified": ok,
         "db_rows": {
-            "bike_detail_component": sum(len(e.specs) or 1
+            "bike_component": sum(len(e.specs) or 1
                                          for c in (check.components if ok else [])
                                          for s in c.subcategories for e in s.elements),
             # photos are not part of BikeDetailsResponse any more (TODO-035): count them via photos_repository
@@ -384,7 +384,7 @@ Responsibilities:
    - before/after DB counts:
 
 ```bash
-python -c "import sqlite3;c=sqlite3.connect('cache.db');print({t:c.execute(f'select count(*) from {t}').fetchone()[0] for t in ('bike','bike_detail_component','bike_detail_photos')})"
+python -c "import sqlite3;c=sqlite3.connect('cache.db');print({t:c.execute(f'select count(*) from {t}').fetchone()[0] for t in ('bike','bike_component','bike_detail_photos')})"
 ```
 
 ---
@@ -392,7 +392,7 @@ python -c "import sqlite3;c=sqlite3.connect('cache.db');print({t:c.execute(f'sel
 ## 8. Hard rules (all agents)
 
 - Never fabricate component names, spec values, or photo URLs — `""` / `[]` instead.
-- Never write to `bike_detail_component` or `bike_detail_photos` directly; go via
+- Never write to `bike_component` or `bike_detail_photos` directly; go via
   `repository.save_bike_details`, and only from `db-writer`.
 - **Only `db-writer` opens the database.** A researcher touching `cache.db` is a protocol
   violation — report it to the coordinator.
@@ -437,7 +437,7 @@ python -c "import sqlite3;c=sqlite3.connect('cache.db');print({t:c.execute(f'sel
 
 19 of 20 stored and verified, 0 write failures, 0 validation rejections, 1 honest
 `no_source` skip (Bike Friday Tikit — discontinued built-to-order, no model-level spec).
-DB 73 → 92 `bike`, 12 → 31 `bike_detail`, 678 → 1544 `bike_detail_component`,
+DB 73 → 92 `bike`, 12 → 31 `bike_detail`, 678 → 1544 `bike_component`,
 56 → 96 `bike_detail_photos`. ~7 minutes end to end.
 
 Two caveats for anyone reading that as a green light:

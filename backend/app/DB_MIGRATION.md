@@ -12,7 +12,7 @@ This migration moves from JSON serialization in SQLite to a proper relational da
 
 ### New Approach
 - Normalized `bike` table — single source of truth for bike identity
-- Related tables: `bike_detail_component`, `bike_offer`, `photos` (the per-search tables `search_cache` +
+- Related tables: `bike_component`, `bike_offer`, `photos` (the per-search tables `search_cache` +
   `search_bike_rating_cache` were dropped in TODO-043 — see below)
 - Foreign key constraints (enforced — on SQLite `app/models.py` sets `PRAGMA foreign_keys=ON` on every engine
   connection; PostgreSQL always enforces them)
@@ -215,11 +215,11 @@ save_search(query, old_data)
   AI-found bike exists in `bike` (the readers `get_search_by_query` / `find_bikes_by_brand`, the
   `GET /v1/bike/search-cache` endpoint and then the two per-search tables themselves were removed).
 - Details — `app.repository`: `save_bike_details`, `get_bike_details`
-  (backed by `bike.description` / `bike.short_description` + `bike_detail_component`; no TTL — stored details are returned whatever their age). Since TODO-041 `POST /v1/bike/details` is a pure read of them (normalised brand/model lookup, `short_description` included) and the live writer is the searcher (`POST /v1/bike/details/search`, `searcher/app/repository.py` `save_details`); helpers `empty_details`, `has_complete_details`, `accessory_chips`, `fill_bike_results`.
+  (backed by `bike.description` / `bike.short_description` + `bike_component`; no TTL — stored details are returned whatever their age). Since TODO-041 `POST /v1/bike/details` is a pure read of them (normalised brand/model lookup, `short_description` included) and the live writer is the searcher (`POST /v1/bike/details/search`, `searcher/app/repository.py` `save_details`); helpers `empty_details`, `has_complete_details`, `accessory_chips`, `fill_bike_results`.
 - Bike photos — `app.photos_repository`: `get_bike_photos` (`POST /v1/bike/photos`) and `save_bike_photos`
   (offline pipeline only); the searcher's photo search is the live writer (backed by `bike_detail_photos`).
 - DB-first search (TODO-024) — `app.repository.find_bikes_by_details`: matches
-  `/v1/bike/search` checkable fields against `bike` + `bike_detail_component`.
+  `/v1/bike/search` checkable fields against `bike` + `bike_component`.
 - Missing-data requests (TODO-026) — `app.repository.record_missing_request`:
   looks up an existing `bike` and upserts `bike_missing_request` (`POST /v1/bike/missing`).
 
@@ -333,7 +333,7 @@ python scripts/migrate_short_description.py --url postgresql+psycopg://biker:bik
 
 - `bike.description` — `TEXT`, **nullable**, the JSON-serialised `BikeDescription`; **NULL = the bike has no details**. "Has details" means `bike.description IS NOT NULL` everywhere (backend, searcher, discovery processor, seed script).
 - `bike.short_description` — `TEXT NOT NULL DEFAULT ''` (`server_default` too).
-- `bike_detail_component.bike_detail_id` → **`bike_id`** (FK → `bike.id` `ON DELETE CASCADE`, `NOT NULL`, indexed `ix_bike_detail_component_bike_id`), same pattern as the photos re-key. The table keeps its name.
+- `bike_detail_component.bike_detail_id` → **`bike_id`** (FK → `bike.id` `ON DELETE CASCADE`, `NOT NULL`, indexed `ix_bike_detail_component_bike_id`), same pattern as the photos re-key. The table kept its name here; the rename to `bike_component` is the next section.
 - No details timestamps carry over. `repository.save_bike_details` therefore returns a **bool** (True = committed, False = failed and rolled back) instead of the old "`bike_detail.updated_at` ≥ save start" check the discovery processor used.
 - Re-saving updates the bike row's columns in place and replaces its component rows (the searcher's `save_details` replaces only the half the run produced; a components-only run on a bike without details also writes the empty description JSON so the bike counts as having details).
 
@@ -344,6 +344,8 @@ python scripts/migrate_short_description.py --url postgresql+psycopg://biker:bik
 Local `biker-pg` (2026-10-01): 619 details, 32972 component rows, 0 orphans, verified; rerun `already-migrated`.
 
 ## Equipment tables (TODO-042)
+
+_(Written before the component table was renamed — the script addresses `bike_detail_component`, which is what it finds when run in order; next section.)_
 
 TODO-042 gives equipment (helmets, lights, locks, apparel) a DB identity, so `POST /v1/equipment/details` and
 `POST /v1/equipment/photos` become pure DB reads and the searcher writes what it finds. Models in
@@ -401,11 +403,19 @@ python scripts/migrate_equipment_tables.py --url postgresql+psycopg://biker:bike
   (32 972 rows). Production order: `migrate_drop_bike_detail.py` → `migrate_equipment_tables.py` → deploy backend + searcher
   → frontend.
 
+## `bike_detail_component` renamed to `bike_component`
+
+Keyed on `bike.id` since the bike_detail drop above, the component spec tree no longer belonged to a "detail" row, so the table is now **`bike_component`** (ORM class `BikeComponent` in `backend/app/models.py` and the searcher's copy). Columns (`equipment_id` included), constraints and data are unchanged; only names moved: table, indexes (`ix_bike_component_*`), and on PostgreSQL the `bike_component_pkey` / `bike_component_bike_id_fkey` / `bike_component_equipment_id_fkey` constraints and the `bike_component_id_seq` sequence. The leftover `bike_detail_component_orphans` table (if the drop migration created one) becomes `bike_component_orphans`. The API shapes are untouched; the frontend never saw the table name. `migrate_drop_bike_detail.py` and `migrate_equipment_tables.py` still address the old name — run them first; on a renamed database each answers `already-migrated` / `absent` and writes nothing.
+
+`scripts/migrate_rename_bike_component.py` (`--dry-run`, `--db <sqlite file>`, `--url <sqlalchemy url>`, importable `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` with `status`, `rows_before/after`, `renamed`, `verified`, `error`) does it in ONE transaction: `ALTER TABLE … RENAME` → rename the indexes (SQLite drops and recreates them, PostgreSQL `ALTER INDEX … RENAME`), the PostgreSQL constraints and sequence, and the orphans table → verify every row (every column) reads back identical from `bike_component` and nothing is left under the old name, else roll back (exit code 1). Idempotent: `already-migrated`; leftover old names are `repaired`. An empty `bike_detail_component` next to a populated `bike_component` (an OLD backend's `create_all()` recreated it) is dropped; an empty `bike_component` next to a populated old table (the NEW backend started too early) is dropped and the rename goes ahead; both populated → refused. Tests: `scripts/test_migrate_rename_bike_component.py`.
+
+**Deploy order:** (1) Cloud SQL on-demand backup, (2) run the script on Cloud SQL through the proxy — **only on the user's explicit go** — (3) deploy the backend and the searcher together, (4) the frontend is unchanged. The OLD backend breaks on a migrated database (its ORM still queries `bike_detail_component`, and its `create_all()` recreates it empty — rerun the script afterwards, it drops the empty duplicate), and the NEW searcher refuses to start on an unmigrated one (its `init_db()` names this script).
+
 ## Benefits
 
 ✅ **Data Integrity** — Foreign keys, unique constraints, cascading deletes
 ✅ **Queryability** — Rich ORM queries instead of JSON parsing
-✅ **Relationships** — One-to-many (Bike → BikeOffer, Bike → BikeDetailComponent, Bike → BikeDetailPhoto)
+✅ **Relationships** — One-to-many (Bike → BikeOffer, Bike → BikeComponent, Bike → BikeDetailPhoto)
 ✅ **Photo Management** — Proper ordering and sourcing
 ✅ **Indexed Lookups** — Brand, source, URL indices for fast queries
 ✅ **Future Extensions** — Easy to add new fields, relationships

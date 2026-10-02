@@ -11,6 +11,9 @@ migrate_photos_bike_id.py (`bike_detail_photos` must already be keyed on
 bike_id; migrate_short_description.py is optional, a missing column is read as
 '') and BEFORE the new backend / searcher run on it. The new searcher refuses
 to start on an unmigrated database; the OLD backend breaks on a migrated one.
+The component table was renamed afterwards: run
+migrate_rename_bike_component.py right after this script (it turns the
+`bike_detail_component` this one leaves into `bike_component`).
 
     # database defaults to $DATABASE_URL (backend/.env), else backend/cache.db
     python scripts/migrate_drop_bike_detail.py --dry-run

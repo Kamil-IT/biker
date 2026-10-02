@@ -106,7 +106,7 @@ def test_happy_path_stores_details(temp_db):
     assert details.components[0].subcategories[0].elements[0].specs[0].value == '28"'
     with pq.session() as s:
         assert s.query(models.BikeDetailPhoto).count() == 2
-        assert s.query(models.BikeDetailComponent).count() == 1
+        assert s.query(models.BikeComponent).count() == 1
 
 
 REAL_PAGES = [
