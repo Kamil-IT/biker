@@ -55,15 +55,18 @@ def find_equipment_id(company: str, model: str, category: Optional[str] = None) 
         session.close()
 
 
-def bike_component_name(company: str, model: str, element_name: str) -> Optional[str]:
-    """The bike's stored element name matching `element_name` (Python-normalised), None when it has none.
+def bike_component_name(company: str, model: str, element_name: str) -> Optional[tuple[str, str]]:
+    """(stored element name, its subcategory) for the bike's element matching `element_name` (Python-normalised),
+    None when it has none.
 
     The guard of the equipment search routes: a search only runs for an element
     of a known bike's stored spec tree, so anonymous traffic cannot spend
     subscription runs on arbitrary strings. The routes forward the STORED name
     (not the caller's casing / whitespace) to the searcher, so the first caller
     cannot choose the equipment row's name or the prompt text. Oldest row wins
-    should two names differ only by casing. A DB error answers None (logged).
+    should two names differ only by casing. The subcategory (e.g. "Frame") is the
+    element type the searcher puts in its prompt: a frame is often named exactly
+    like the bike. A DB error answers None (logged).
     """
     session = get_session()
     try:
@@ -71,12 +74,12 @@ def bike_component_name(company: str, model: str, element_name: str) -> Optional
         if bike_id is None:
             return None
         wanted = norm(element_name)
-        names = (
-            session.query(BikeDetailComponent.element_name)
+        rows = (
+            session.query(BikeDetailComponent.element_name, BikeDetailComponent.subcategory)
             .filter(BikeDetailComponent.bike_id == bike_id)
             .order_by(BikeDetailComponent.id)
         )
-        return next((name for (name,) in names if name and norm(name) == wanted), None)
+        return next(((name, subcategory or "") for name, subcategory in rows if name and norm(name) == wanted), None)
     except Exception as exc:  # noqa: BLE001
         logger.error("bike component lookup failed | company=%r model=%r element=%r | %s", company, model, element_name, exc)
         return None

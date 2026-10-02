@@ -209,3 +209,4 @@ dzielony przez osiem tras).
   skrypt odmawia tabeli z `bike_detail_id`, bo przebudowa SQLite w migracji z `main` gubi dodatkowe kolumny). Testy po merge'u: backend 162,
   searcher 169, webscraper 187, build frontendu ok, smoke 18 / 4 pominięte.
 - **Możliwy follow-up (spójność):** spłaszczyć `equipment_detail` do kolumn na `equipment`, tak jak rower po PR #137 — celowo nie w tym merge'u.
+- **Fix 2026-10-02: frame named after the bike.** Element Frame nazwany dokładnie jak rower (np. „Giant Revolt Advanced Pro”) dawał `found:false`, bo prompt kazał opisywać element, „nie rower”. Backend przekazuje teraz podkategorię elementu jako `element_type`, searcher dopisuje ją do wiadomości i mówi, że element nazwany jak rower to jego rama (frameset); prompt `parts` zna ramę. Sonda: `found` true, 16 tur, 0,38 USD, `equipment_id` 5, 13 specyfikacji ramy. Szczegóły: `docs/EQUIPMENT_SEARCHER_MIGRATION.md` § 13.

@@ -37,7 +37,7 @@ from .allegro_finder import ALLEGRO_SOURCE, find_allegro_offers
 from .claude_cli import cli_version
 from .decathlon_finder import DECATHLON_SOURCE, find_decathlon_offers
 from .details_finder import empty_details, find_bike_details
-from .equipment_details_finder import empty_equipment_details, find_equipment_details
+from .equipment_details_finder import empty_equipment_details, find_equipment_details, prompt_value
 from .equipment_photos_finder import find_equipment_photos
 from .equipment_repository import get_equipment_details, save_equipment_details, save_equipment_photos
 from .models import dispose_engine, get_engine, init_db
@@ -404,13 +404,16 @@ async def search_equipment_details(req: EquipmentSearchRequest) -> EquipmentDeta
     Anything less writes nothing (saved 0). Same 400 / 401 / 422 / 502 / 503 /
     500 mapping and the SAME SEARCHER_MAX_CONCURRENT slots as the other routes.
     """
-    logger.info("equipment details search request | bike=%r %r element=%r category=%r",
-                req.bike_company, req.bike_model, req.element_name, req.category)
+    logger.info("equipment details search request | bike=%r %r element=%r type=%r category=%r",
+                req.bike_company, req.bike_model, req.element_name, req.element_type, req.category)
     _claim_slot("equipment details", req)
     t_start = time.perf_counter()
     async with _semaphore:
         try:
-            slug, found = await find_equipment_details(req.bike_company, req.bike_model, req.element_name, req.category)
+            slug, found = await find_equipment_details(
+                req.bike_company, req.bike_model, req.element_name, req.category,
+                element_type=prompt_value(req.element_type or "") or None,
+            )
         except SearcherError as exc:
             logger.error("equipment details search failed | element=%r | %s", req.element_name, exc)
             raise _search_failed(exc) from exc
@@ -441,14 +444,15 @@ async def search_equipment_photos(req: EquipmentSearchRequest) -> EquipmentPhoto
     element on THIS bike; an empty one writes nothing. Same status mapping and
     the SAME SEARCHER_MAX_CONCURRENT slots as the other routes.
     """
-    logger.info("equipment photos search request | bike=%r %r element=%r category=%r",
-                req.bike_company, req.bike_model, req.element_name, req.category)
+    logger.info("equipment photos search request | bike=%r %r element=%r type=%r category=%r",
+                req.bike_company, req.bike_model, req.element_name, req.element_type, req.category)
     _claim_slot("equipment photos", req)
     t_start = time.perf_counter()
     async with _semaphore:
         try:
             slug, photos, product_url = await find_equipment_photos(
                 req.bike_company, req.bike_model, req.element_name, req.category,
+                element_type=prompt_value(req.element_type or "") or None,
             )
         except SearcherError as exc:
             logger.error("equipment photos search failed | element=%r | %s", req.element_name, exc)

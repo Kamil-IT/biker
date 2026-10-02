@@ -133,7 +133,7 @@ def client(monkeypatch):
 
 
 def _fail_with(monkeypatch, exc: Exception):
-    async def finder(*args):
+    async def finder(*args, **kwargs):
         raise exc
 
     for name in ("find_used_bikes", "find_decathlon_offers", "find_allegro_offers",

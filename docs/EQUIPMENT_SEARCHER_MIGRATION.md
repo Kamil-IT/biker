@@ -45,7 +45,7 @@ lądują w `apparel` jako koszu na wszystko — stąd piąta kategoria, patrz §
 ## 4. Kontrakt między modułami
 
 **Searcher**: `POST /v1/search/equipment/details` i `/v1/search/equipment/photos`, ciało `{bike_company, bike_model,
-element_name, category?}`, odpowiedzi `{details, equipment_id, saved}` i `{photos, equipment_id, saved}`. Jeden `claude -p`
+element_name, category?, element_type?}` (`element_type` od poprawki z 2026-10-02, patrz § 13), odpowiedzi `{details, equipment_id, saved}` i `{photos, equipment_id, saved}`. Jeden `claude -p`
 na przebieg (szczegóły: `WebSearch` + `WebFetch`, zdjęcia: tylko `WebSearch` + Playwright ze strażnikiem adresów).
 
 **Backend** (`backend/app/equipment_routes.py`, `equipment_repository.py`, `equipment_models.py`, `component_tree.py`):
@@ -216,3 +216,32 @@ Migracja przed pierwszym startem na istniejącej bazie: `python scripts/migrate_
 4. **Izolowana baza QA** (`biker_qa042`) uchroniła testy przed przebudowaną wspólną bazą innego worktree.
 5. **Przed rozdaniem pracy sprawdzić żywych agentów** — agent z poprzedniej sesji zdążył edytować plik searchera.
 6. **Dwa przeglądy o różnych soczewkach** (poprawność i bezpieczeństwo) znalazły inne klasy błędów; oba były warte kosztu.
+
+## 13. Poprawka 2026-10-02: rama nazwana jak rower
+
+**Objaw (logi produkcyjne).** Element Frame / Frame często nosi dokładnie nazwę roweru (lokalnie 31 z 619 rowerów, np.
+rower „Giant” „Revolt Advanced Pro” ma element „Giant Revolt Advanced Pro” ze specyfikacją Material / Weight / Axle / Tyre
+Clearance). Wyszukiwanie szczegółów dla takiego elementu kończyło się `found: false` (6 tur, ok. 0,09 USD, dwa razy, nic
+nie zapisane): wiadomość mówiła „use the bike only as context”, prompt „describe the item, not the bike”, kategoria spadała
+na `parts`, a prompt `parts` nie znał podkategorii Frame. Wyszukiwanie zdjęć tego samego elementu działało (jego prompt nie
+ma takiej reguły).
+
+**Zmiana.**
+
+- Backend: `bike_component_name` zwraca `(nazwa elementu, podkategoria)` z `bike_detail_component`; obie trasy
+  `/v1/equipment/*/search` przekazują podkategorię searcherowi jako `element_type` (ucięte do 255 znaków, pominięte gdy
+  puste). Klient tego pola nie ustawia — pochodzi z zapisanego drzewa. Klucz single-flight bez zmian.
+- Searcher: `EquipmentSearchRequest.element_type` (opcjonalne, ≤ 255, inaczej 422), oczyszczane przez `prompt_value`.
+  Wspólny, czysty `build_user_message` (szczegóły i zdjęcia) dopisuje `(listed under "<typ>" on the spec sheet)`, a gdy
+  `norm(element_name)` równa się `norm(bike_company + " " + bike_model)` albo `norm(bike_model)` — zdanie, że element nosi
+  nazwę roweru i jest jego częścią (rama: zestaw rama + widelec od producenta roweru), nie całym rowerem; bez typu „frame”.
+- Prompty: `equipment_details.md` mówi „describe the item, not the whole bike” i że rama nazwana jak rower to frameset;
+  `equipment_details_parts.md` zna ramę (lista części i podkategoria **Frame**); słowa kluczowe `frame` / `frameset` w
+  `_PARTS_KEYWORDS` („frame lock” zostaje zapięciem, „frame bag” i „frame pump” akcesoriami).
+
+**Sonda (lokalny searcher na 8103, lokalny `biker-pg`, jeden płatny run).** `Giant` / `Revolt Advanced Pro` / element
+`Giant Revolt Advanced Pro`, `element_type` `Frame`: `found` true, 16 tur, 180 s, 0,38 USD; jeden element Frame z 13
+specyfikacjami (Material, Weight 990 g (M), Sizes, Axle standard, Tyre clearance 42/53 mm, Seatpost diameter, Brake mount,
+Cable routing i geometria), źródła: recenzja BikeRadar i PDF frameset ze strony Giant. Zapisane: `equipment_id` 5,
+`saved` 1, 4 wiersze `bike_detail_component` roweru 40 podlinkowane. Run jest droższy niż typowy (budżet w prompcie to
+ok. 5 wyszukiwań i 2 pobrania) — do obserwacji na produkcji.

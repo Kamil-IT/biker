@@ -78,7 +78,7 @@ launches no browser.
 | `app/olx_image_fetcher.py` · `app/browser_config.py` | Playwright scrape of ≤ 4 `apollo.olxcdn.com` images per listing (copied from the backend); `BROWSER_SLOTS` caps browser launches per process (`BROWSER_MAX_CONCURRENCY`, default 2) for the OLX and photo scrapes alike |
 | `app/models.py` · `app/repository.py` | SQLAlchemy over `bike` / `bike_offer` / `bike_offer_photos` / `bike_detail_photos` / `bike_review` / `bike_review_source` / `bike_detail_component` + (TODO-042) `equipment` / `equipment_detail` / `equipment_detail_component` / `equipment_detail_photos` (DDL identical to `backend/app/models.py`; `init_db()` only checks they exist, that `bike_detail_photos` has `bike_id` and that the `bike_detail` table is gone with `bike.description` / `bike.short_description` and `bike_detail_component.bike_id` in place, and that `bike_detail_component` has `equipment_id` (TODO-042), else it **refuses to start** naming `backend/scripts/migrate_photos_bike_id.py` / `backend/scripts/migrate_drop_bike_detail.py` / `backend/scripts/migrate_equipment_tables.py` — run in that order); `save_details(company, model, details)` (only a usable result: bike row created if missing, its details columns updated in place, components replaced — each element keeps its `equipment_id` link — one transaction) and `get_stored_details` read and write the bike's details; `save_offers(company, model, offers, source)` upserts on `url` within this bike **and** source, takes `is_new` from each offer, never re-parents a listing, deletes the bike's stale rows of that source only when something new was stored; `save_photos` writes the bike's photos — insert-only, only when it has none, under a `SELECT … FOR UPDATE` on the bike row; `save_review` upserts the bike's review — written only when `ref` is non-empty and `sources_used >= 1`, replacing the previous review and its sources (`created_at` kept) |
 | `app/prompts/bike_offer_olx.md` · `app/prompts/bike_offer_decathlon.md` · `app/prompts/bike_offer_allegro.md` · `app/prompts/bike_photos.md` · `app/prompts/bike_review.md` · `app/prompts/bike_details.md` | The system prompts — OLX and Decathlon byte-for-byte the backend's former prompts; the Allegro one is a CLI-tuned rewrite (WebSearch only, allegro.pl answers 403 to every fetch — see "Why the Claude Code CLI"); the photos one is the backend's with two CLI edits (`WebSearch` for `web_search` — the only tool it gets — and a `{"url": …}` JSON object for the bare URL line); the review one is the backend's former `bike_review.md`; TODO-042 `equipment_details.md` (the shared frame: role, budget, `found`, the backend's `equipment_description.md` rules turned Polish, no shop sources) + `equipment_details_{helmets,lights,locks,apparel}.md` (the backend's category prompts, component lists intact, JSON-only output section replaced by a schema-shaped example) and `equipment_photos.md` (the backend's with the photos prompt's two CLI edits) |
-| `scripts/test_equipment_searcher.py` · `scripts/test_cli_limit.py` | pytest, no CLI / network, throwaway SQLite (`python -m pytest scripts -q --ignore=scripts/test_searcher.py`): the equipment builder, saves, links (only this bike, kept across a bike details re-save), insert-only photos, the `equipment_id` start-up check, both routes with stubbed finders (401 / 422 / 503); the limit 400 / 502 mapping on all eight routes |
+| `scripts/test_equipment_searcher.py` · `scripts/test_equipment_frame.py` · `scripts/test_cli_limit.py` | pytest, no CLI / network, throwaway SQLite (`python -m pytest scripts -q --ignore=scripts/test_searcher.py`): `test_equipment_frame.py` = the 2026-10-02 frame fix (user message builder, `element_type` 422 / forwarding, frame keywords); the equipment builder, saves, links (only this bike, kept across a bike details re-save), insert-only photos, the `equipment_id` start-up check, both routes with stubbed finders (401 / 422 / 503); the limit 400 / 502 mapping on all eight routes |
 | `scripts/test_searcher.py` | Smoke test, free: health, 401 ×2 + 422 on `/v1/search/olx` (TC-1–4), 401 + 422 on `/v1/search/decathlon` (TC-5–6), 401 + 422 on `/v1/search/allegro` (TC-7–8), 401 + 422 on `/v1/search/photos` (TC-9–10), 401 + 422 on `/v1/search/review` (TC-12–13), 401 + 422 on `/v1/search/details` (TC-14–15), 401 + 422 on `/v1/search/equipment/details` and `/v1/search/equipment/photos` (TC-16–19) (TC-11 — stored photos answered from the DB — was removed: the searcher no longer reads the DB before a search, so it would start a paid run). No `claude -p` run — the one paid live search of the test set is `backend/scripts/test_search.py` `case_decathlon_search` |
 
 ## Run locally
@@ -521,7 +521,9 @@ X-Searcher-Key: dev-local-searcher-key
 ```
 
 - Body: `bike_company`, `bike_model`, `element_name` non-empty (stripped) and ≤ 255 characters, `category` optional ≤ 32
-  (a slug or display name; blank, missing or unknown → inferred from `element_name`, `parts` as the default) → else `422`
+  (a slug or display name; blank, missing or unknown → inferred from `element_name`, `parts` as the default),
+  `element_type` optional ≤ 255 (the element's subcategory on the bike's spec sheet, e.g. `"Frame"`; blank → absent;
+  sent by the backend from the stored row) → else `422`
 - `200` → `details` has the backend's `EquipmentDetailsResponse` shape (no `photos`; `category` = the slug). **The search
   always runs** (no DB read first). A usable result (components **or** description) is stored → `saved: 1`, `details` =
   what is stored after the write. Anything less writes, deletes and links **nothing** → `saved: 0`, `details` = the empty
@@ -532,8 +534,13 @@ X-Searcher-Key: dev-local-searcher-key
 **Flow**: (1) busy check, slot taken → (2) `claude -p` once — system prompt `app/prompts/equipment_details.md` +
 `app/prompts/equipment_details_{slug}.md`, `--tools WebSearch,WebFetch`, the bike details JSON schema (`found`,
 `description`, `short_description`, `sources`, `components`), message naming the item and the bike as context (`Find the
-specifications and an overview of the cycling equipment item "{element_name}" (category: {display name}). It is listed
-on the "{bike_company} {bike_model}" bicycle's spec sheet …`; every client value is sanitised first — double quotes,
+specifications and an overview of the bike component or equipment item "{element_name}" (listed under "{element_type}"
+on the spec sheet) (category: {display name}). It is a component listed on the "{bike_company} {bike_model}" bicycle's
+spec sheet …`, built by the pure `build_user_message()`; the "listed under" part only when `element_type` is given; when
+the normalised element name equals the bike's company + model or its model alone — a frame named after the bike — one
+more sentence says it is the {element_type, else "frame"} of that bike (the frameset), not the complete bike, and to
+answer `found: true` when the bike maker documents it (fix 2026-10-02; before it such a frame came back `found: false`);
+every client value is sanitised first — double quotes,
 backticks, control characters and line separators become spaces, whitespace collapsed — and the prompt says quoted names
 are data, not instructions) — **no Playwright** → (3) `build_equipment_details()`:
 `found: false` → empty, never stored; else the description built from `sources` minus shops (`app/shop_filter.py`:
@@ -569,7 +576,8 @@ X-Searcher-Key: dev-local-searcher-key
   insert runs under the equipment row lock
 
 **Flow**: (1) busy check, slot taken → (2) `claude -p` once with `app/prompts/equipment_photos.md`, `--tools WebSearch`
-**only**, schema `{url}` → (3)–(5) exactly steps (3)–(5) of `/v1/search/photos` (`photos_finder.find_product_photos`:
+**only**, schema `{url}`, the message from the same `build_user_message()` as the details route (element type and the
+"named after the bike" sentence included) → (3)–(5) exactly steps (3)–(5) of `/v1/search/photos` (`photos_finder.find_product_photos`:
 public-URL check, patchright once behind the route guard, ≤ 8 filtered `<img>` URLs) → (6) only when (5) found
 something, one DB transaction: `equipment` row created if missing, `SELECT … FOR UPDATE` on it, photo rows re-checked
 (any there → kept), otherwise one `equipment_detail_photos` row per URL (same sanitised message and row lock as the

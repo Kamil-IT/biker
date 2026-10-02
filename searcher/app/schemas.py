@@ -143,19 +143,22 @@ class EquipmentSearchRequest(BaseModel):
     """TODO-042: an equipment item opened from a bike's spec tree. `bike_company` / `bike_model`
     name the bike (context in the prompt + whose bike_detail_component rows get linked),
     `element_name` is the element as it stands in that tree, `category` an optional slug or
-    display name (inferred from the element name when absent or unknown)."""
+    display name (inferred from the element name when absent or unknown), `element_type` the
+    element's subcategory in that tree (e.g. "Frame"), optional — it tells the prompt what kind
+    of part an element named exactly like the bike is."""
 
     bike_company: str = Field(min_length=1, max_length=255)
     bike_model: str = Field(min_length=1, max_length=255)
     element_name: str = Field(min_length=1, max_length=255)
     category: str | None = Field(default=None, max_length=32)
+    element_type: str | None = Field(default=None, max_length=255)
 
     @field_validator("bike_company", "bike_model", "element_name", mode="before")
     @classmethod
     def strip_whitespace(cls, v):
         return v.strip() if isinstance(v, str) else v
 
-    @field_validator("category", mode="before")
+    @field_validator("category", "element_type", mode="before")
     @classmethod
     def blank_category_is_none(cls, v):
         if isinstance(v, str):

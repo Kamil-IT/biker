@@ -65,24 +65,27 @@ async def equipment_photos(req: EquipmentPhotosRequest) -> EquipmentPhotosRespon
     return result
 
 
-def _check_equipment_search(req: EquipmentSearchRequest, label: str) -> str:
-    """The 404 guards of the equipment searches, before any searcher call; returns the stored element name.
+def _check_equipment_search(req: EquipmentSearchRequest, label: str) -> tuple[str, str]:
+    """The 404 guards of the equipment searches, before any searcher call; returns the stored
+    (element name, element type = its subcategory, e.g. "Frame").
 
     Only an element of a known bike's stored spec tree can be searched, so
     anonymous traffic cannot spend subscription runs on arbitrary strings. The
-    searcher gets the element name as stored on the bike, never the caller's spelling.
+    searcher gets the element name as stored on the bike, never the caller's spelling, and
+    the element type, so an element named exactly like the bike (a frame) is searched as
+    that part, not as the complete bike.
     """
     if not bike_exists(req.bike_company, req.bike_model):
         logger.warning("%s search refused: unknown bike | bike=%r %r", label, req.bike_company, req.bike_model)
         raise HTTPException(status_code=404, detail="Bike not found")
-    element_name = bike_component_name(req.bike_company, req.bike_model, req.element_name)
-    if element_name is None:
+    found = bike_component_name(req.bike_company, req.bike_model, req.element_name)
+    if found is None:
         logger.warning(
             "%s search refused: unknown component | bike=%r %r element=%r",
             label, req.bike_company, req.bike_model, req.element_name,
         )
         raise HTTPException(status_code=404, detail="Component not found")
-    return element_name
+    return found
 
 
 def _equipment_searcher_error(exc: Exception, label: str, name: str) -> HTTPException:
@@ -121,10 +124,12 @@ async def equipment_details_search(req: EquipmentSearchRequest) -> EquipmentDeta
         "equipment details search request | bike=%r %r element=%r category=%r",
         req.bike_company, req.bike_model, req.element_name, req.category,
     )
-    element_name = _check_equipment_search(req, "equipment details")
+    element_name, element_type = _check_equipment_search(req, "equipment details")
     t_start = time.perf_counter()
     try:
-        result = await search_equipment_details(req.bike_company, req.bike_model, element_name, req.category)
+        result = await search_equipment_details(
+            req.bike_company, req.bike_model, element_name, req.category, element_type=element_type,
+        )
     except _PROXIED_ERRORS as exc:
         raise _equipment_searcher_error(exc, "equipment details", "Equipment details") from exc
     logger.info(
@@ -147,10 +152,12 @@ async def equipment_photos_search(req: EquipmentSearchRequest) -> EquipmentPhoto
         "equipment photos search request | bike=%r %r element=%r category=%r",
         req.bike_company, req.bike_model, req.element_name, req.category,
     )
-    element_name = _check_equipment_search(req, "equipment photos")
+    element_name, element_type = _check_equipment_search(req, "equipment photos")
     t_start = time.perf_counter()
     try:
-        result = await search_equipment_photos(req.bike_company, req.bike_model, element_name, req.category)
+        result = await search_equipment_photos(
+            req.bike_company, req.bike_model, element_name, req.category, element_type=element_type,
+        )
     except _PROXIED_ERRORS as exc:
         raise _equipment_searcher_error(exc, "equipment photos", "Equipment photos") from exc
     logger.info(

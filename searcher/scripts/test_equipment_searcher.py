@@ -261,7 +261,7 @@ def client(db, monkeypatch):
 def test_details_route_stores_links_and_answers_stored(client, monkeypatch):
     canyon = _bike()
 
-    async def finder(bike_company, bike_model, element_name, category):
+    async def finder(bike_company, bike_model, element_name, category, element_type=None):
         return "helmets", build_equipment_details(element_name, "helmets", _data())
 
     monkeypatch.setattr(searcher_main, "find_equipment_details", finder)
@@ -273,7 +273,7 @@ def test_details_route_stores_links_and_answers_stored(client, monkeypatch):
     assert body["details"] == get_equipment_details(eid).model_dump(mode="json")
     assert _links(canyon)[0][1] == eid
 
-    async def nothing(bike_company, bike_model, element_name, category):
+    async def nothing(bike_company, bike_model, element_name, category, element_type=None):
         return "locks", empty_equipment_details(element_name, "locks")
 
     monkeypatch.setattr(searcher_main, "find_equipment_details", nothing)
@@ -286,7 +286,7 @@ def test_details_route_stores_links_and_answers_stored(client, monkeypatch):
 def test_photos_route(client, monkeypatch):
     _bike()
 
-    async def finder(bike_company, bike_model, element_name, category):
+    async def finder(bike_company, bike_model, element_name, category, element_type=None):
         return "helmets", ["https://a/1.jpg"], "https://www.abus.com/hyban"
 
     monkeypatch.setattr(searcher_main, "find_equipment_photos", finder)
@@ -301,7 +301,7 @@ def test_photos_route(client, monkeypatch):
     {"category": "c" * 33},
 ])
 def test_validation_422(client, monkeypatch, path, bad):
-    async def boom(*args):
+    async def boom(*args, **kwargs):
         raise AssertionError("no search for an invalid body")
 
     monkeypatch.setattr(searcher_main, "find_equipment_details", boom)
