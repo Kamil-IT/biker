@@ -3,7 +3,7 @@
 Zapis całego procesu — od stanu wyjściowego, przez wywiad, sondy, implementację i przeglądy, aż po testy ręczne — z datą
 2026-10-01. Kolejna powtórka schematu z `docs/OLX_SEARCHER_MIGRATION.md` (TODO-031), `docs/DECATHLON_SEARCHER_MIGRATION.md`
 (TODO-032) i `docs/ALLEGRO_SEARCHER_MIGRATION.md` (TODO-033), ale z własnymi tabelami i migracją schematu jak w TODO-041.
-Branch `feature/042-equipment-searcher`, zadanie `backlog/TODO_042_EQUIPMENT_SEARCHER.md`, sondy
+Branch `feature/042-equipment-searcher`, zadanie `backlog/done/DONE_042_EQUIPMENT_SEARCHER.md`, sondy
 `docs/testing/TODO_042/PROBES.md`, plan i wyniki testów `docs/testing/TODO_042/TEST_PLAN.md`.
 
 ## 1. Punkt wyjścia
@@ -107,12 +107,30 @@ ok. 0,36 USD.
 
 ## 7. Commit i PR
 
-Na dzień pisania tego dokumentu commit i PR jeszcze nie istnieją; lead otwiera PR zaraz po tym dokumencie. Merge i
-przeniesienie zadania do `backlog/done/` dopiero po merge'u (merged is the bar).
+Commit `04359db` na `feature/042-equipment-searcher`, PR [#138](https://github.com/Kamil-IT/biker/pull/138) (otwarty
+2026-10-01). Przed merge'em gałąź scaliła `origin/main` (PR #136, #137, #139 — patrz niżej; merge `9bfdb5d`, po nim backend
+162 / searcher 169 / webscraper 187 testów, smoke 18 + 4 skip, frontend build OK). **Zmergowany 2026-10-02 jako `e0ee89a`.**
+Przeniesienie do `backlog/done/` + plan QA całej aplikacji na scalonym `main` (46 zaliczonych, 0 niezaliczonych, 4 płatne
+runy za 0,67 $, `docs/testing/MAIN_2026-10-02_FULL_APP/`) w PR [#141](https://github.com/Kamil-IT/biker/pull/141).
 
-## 8. Wdrożenie GCP — NIE wykonane
+## 8. Wdrożenie GCP — wykonane 2026-10-02
 
-Wdrożenie wyłącznie na wyraźne „go” użytkownika, w tej kolejności:
+Przebieg (migracja przez użytkownika przez `!`, bo klasyfikator blokuje Claude'owi proxy Cloud SQL; deploy przez Claude'a):
+
+1. Backup on-demand Cloud SQL `biker-pg` (`before-042-equipment`).
+2. `cloud-sql-proxy --gcloud-auth --port 6543 …`, potem `migrate_equipment_tables.py --url postgresql+psycopg://biker@127.0.0.1:6543/biker`:
+   dry-run `RESULT: dry-run` (33216 wierszy `bike_detail_component`, układ już po PR #137), potem `RESULT: migrated`, 33216 wierszy
+   zachowanych. Migracja `migrate_drop_bike_detail.py` była już na prod (searcher `0cb76c0` działał), choć repo tego nie odnotowało.
+3. `scripts/deploy.ps1 -Only searcher -Tag 7b7955a` z czystego worktree `biker-wt/deploy-7b7955a` (`7b7955a` = `e0ee89a` + PR #140,
+   tylko docs) → `biker-searcher-00008-bzn`; potem `-Only backend` → `biker-backend-00015-lqk`; potem `-Only frontend` →
+   `biker-frontend-00011-rp6`.
+4. Smoke na prod zaraz po deployu: `popular`, `bike/details`, `bike/photos`, `bike/review`, `equipment/details`, `equipment/photos`
+   200 w 0,1–0,3 s, `equipment/details/search` nieznany rower → 404 `"Bike not found"`, `bike/search` po marce/modelu → trafienie z DB.
+   Pełne QA produkcji: `docs/testing/PROD_2026-10-02_7b7955a/TEST_PLAN.md`.
+5. Do zrobienia po deployu (notatka z TODO-043): ponowny `migrate_drop_search_tables.py` na Cloud SQL, bo stary backend odtworzył
+   puste tabele cache przez `create_all()`.
+
+Planowana kolejność (zachowana):
 
 1. Ręczny backup Cloud SQL `biker-pg`.
 2. `migrate_drop_bike_detail.py` z `main` (PR #137), jeśli Cloud SQL jeszcze go nie przeszedł, potem
