@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 OLX_SOURCE = "olx.pl"
 DECATHLON_SOURCE = "decathlon.pl"
 ALLEGRO_SOURCE = "allegro.pl"
+CENTRUMROWEROWE_SOURCE = "centrumrowerowe.pl"
 
 
 def bike_exists(company: str, model: str) -> bool:
@@ -117,3 +118,13 @@ def get_allegro_offers(company: str, model: str) -> BikeOfferResponse:
     `is_new` comes from the row, as the search result described the listing.
     """
     return BikeOfferResponse(offers=_get_stored_offers(company, model, ALLEGRO_SOURCE), info="")
+
+
+def get_centrumrowerowe_offers(company: str, model: str) -> BikeOfferResponse:
+    """Stored centrumrowerowe.pl offers of one bike (source 'centrumrowerowe.pl') — see _get_stored_offers.
+
+    Written only by the local discovery enrichment (webscraper/centrumrowerowe/enrich.py,
+    one shop listing per row, is_new true, no photos, no AI); there is no search behind
+    them — the data is either stored or not.
+    """
+    return BikeOfferResponse(offers=_get_stored_offers(company, model, CENTRUMROWEROWE_SOURCE), info="")
