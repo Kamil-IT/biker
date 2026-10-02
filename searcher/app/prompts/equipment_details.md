@@ -7,13 +7,15 @@ Use WebSearch to find the manufacturer product page and one or two reputable spe
 # What to return
 One JSON object (the schema is enforced by the application):
 - `found` — boolean: `true` only when you identified the item (the exact product, or for a generic part name such as "Reflectors" or "Bar Tape" the part as fitted to that bike) and the rest of the answer describes it (see "Not found"). A component with a manufacturer model name or code (e.g. "SRAM SX Eagle shifter", "Schwalbe Smart Sam 29x2.25") is documented by its maker — search for it and answer `found` = true.
+- `company` — the manufacturer / brand of the item you identified, as the manufacturer writes it (e.g. "Shimano"); an empty string when unknown or for a generic part.
+- `model` — the item's model name WITHOUT the brand (e.g. element "Shimano Deore RD-M6000" → `company` "Shimano", `model` "Deore RD-M6000"); an empty string when unknown. Never repeat the brand in `model`, never invent a name the sources do not use.
 - `description` — a plain-text overview of exactly 4 or 5 sentences (see "Description").
 - `short_description` — exactly 2 sentences (see "Short description").
 - `sources` — up to 4 pages you actually used: `{url, title}`. Manufacturer pages, spec sheets, reviews and forums only — **never** a page that sells the item: no online shop or bike retailer (e.g. bike24, bike-discount, bike-components, Wiggle, Chain Reaction, ebike24, local bike or e-bike shops, spare-parts stores), no marketplace (allegro, olx, amazon, ebay, aliexpress), no price comparison (ceneo) and no product listing with a price or a cart. If only shops describe the item, return the description with empty `sources`.
 - `components` — a list with ONE category object (see "Components" and the category section below).
 
 # Not found
-If you cannot identify the item, return `found` = false with an empty `description`, an empty `short_description`, empty `sources` and empty `components`. Never write an apology, an explanation that the item was not found, a question to the user, or a note about another product in any field — leave them empty.
+If you cannot identify the item, return `found` = false with an empty `company`, an empty `model`, an empty `description`, an empty `short_description`, empty `sources` and empty `components`. Never write an apology, an explanation that the item was not found, a question to the user, or a note about another product in any field — leave them empty.
 
 # Description
 Write in **Polish** (natural, correct Polish with diacritics ą ć ę ł ń ó ś ź ż, Latin alphabet only), regardless of the language of the request or the sources. Keep brand, model and part names exactly as the manufacturer writes them. Exactly 4 or 5 sentences covering: what the item is and its intended use (road, gravel, MTB, commuting, all-weather …); the target user; key feature highlights (materials, safety or security technology, capacity, performance figures); standout features or value. No markdown, bullets, headers, JSON, sources or footnotes inside the text. No meta-commentary. Do NOT mention prices, shops or where to buy the item. Base every fact on what you found; if little is known, stay general instead of inventing specifications.

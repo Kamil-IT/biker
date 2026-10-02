@@ -20,7 +20,7 @@ subskrypcją Claude Code.
 ## 2. Wywiad i decyzje (4 pytania)
 
 1. Odczyty z bazy (`POST /v1/equipment/details`, `POST /v1/equipment/photos`) plus nowe trasy `/search` w searcherze.
-2. Tabele: `equipment`, `equipment_detail`, `equipment_detail_component`, `equipment_detail_photos` oraz nullowalna
+2. Tabele: `equipment`, `equipment_detail`, `equipment_detail_component`, `equipment_detail_photos` (stan z TODO-042; `equipment_detail` wchłonęło `equipment`, a komponenty to teraz `equipment_component` — TODO-044) oraz nullowalna
    `bike_detail_component.equipment_id` — link dotyczy wyłącznie wiersza tego roweru.
 3. Klik w element roweru otwiera widok wyposażenia; przycisk „Poproś o dane” tylko wtedy, gdy nic nie zapisano.
 4. Migracja i wdrażanie jak w TODO-041: backup → migracja → backend + searcher razem → frontend, tylko na wyraźne „go”.
@@ -203,8 +203,9 @@ Migracja przed pierwszym startem na istniejącej bazie: `python scripts/migrate_
 - Brak TTL i odświeżania; stare wiersze `/v1/equipment/details` w generycznym cache są martwe (nic ich nie czyta).
 - Rygor `found:false`: nieistniejący kod części (RD-M315) nie daje zmyślonych danych — to zamierzone.
 - Brak limitu zapytań na anonimowe wyzwalacze searcha (jak w pozostałych trasach `/search`).
-- Wyposażenie zachowuje osobny wiersz `equipment_detail` (opis + krótki opis), choć rower po PR #137 trzyma je na `bike`.
-  Spłaszczenie `equipment_detail` do `equipment` dla spójności to możliwe zadanie na później, celowo nie w tym merge'u.
+- Wyposażenie zachowało osobny wiersz `equipment_detail` (opis + krótki opis), choć rower po PR #137 trzyma je na `bike`.
+  Spłaszczenie zrobiono później (TODO-044, `backlog/TODO_044_MERGE_EQUIPMENT_DETAIL.md`): `equipment_detail` wchłonięte przez `equipment`,
+  `equipment_detail_component` → `equipment_component`, a `company` / `model` uzupełnia dopiero wynik wyszukiwania.
 
 ## 12. Lekcje
 

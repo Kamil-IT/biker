@@ -386,7 +386,7 @@ endpoint_req_to_body_cache = Table(
 
 
 # --- Equipment (TODO-042) -------------------------------------------------
-# equipment / equipment_detail / equipment_detail_component /
+# equipment (with its details since TODO-044) / equipment_component /
 # equipment_detail_photos live in equipment_models.py (keeps this file short);
 # importing it here registers them on Base, so init_db() creates them too.
 from . import equipment_models  # noqa: E402,F401

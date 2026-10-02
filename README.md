@@ -56,6 +56,8 @@ python scripts/migrate_equipment_tables.py --dry-run     # once per existing dat
 python scripts/migrate_equipment_tables.py               # ... then create equipment tables and add bike_detail_component.equipment_id (idempotent)
 python scripts/migrate_rename_bike_component.py --dry-run # once per existing database (after the two above): rename bike_detail_component ...
 python scripts/migrate_rename_bike_component.py           # ... to bike_component (table, indexes, PostgreSQL constraints + sequence; idempotent)
+python scripts/migrate_merge_equipment_detail.py --dry-run # once per existing database (TODO-044, after the rename): merge equipment_detail into equipment ...
+python scripts/migrate_merge_equipment_detail.py         # ... and rename equipment_detail_component to equipment_component (idempotent)
 python scripts/migrate_component_linkable.py --dry-run   # once per existing database (ISSUE-016, after the rename): show the true/false split of the component link flag ...
 python scripts/migrate_component_linkable.py             # ... then add bike_component.is_linkable and backfill it with the regex heuristic (idempotent)
 python scripts/purge_details_cache.py --dry-run          # once per database (TODO-041): count the dead '/v1/bike/details' generic-cache rows ... (then without --dry-run; production only on an explicit go)
@@ -82,9 +84,11 @@ uvicorn app.main:app --reload --port 8000
 
 > **Run `migrate_drop_bike_detail.py` once on every existing database** (after the two migrations above; `--dry-run` first, idempotent, `--url` / `--db`). The `bike_detail` table is gone: the description and short description now live on `bike` (`bike.description IS NOT NULL` = the bike has details) and the component table is keyed on `bike_id`. The new searcher refuses to start on an unmigrated database and the **old** backend breaks on a migrated one. Production order: Cloud SQL backup, migration through the proxy (only on the user's explicit go), deploy backend + searcher together; the frontend is unchanged. Details: `backend/app/DB_MIGRATION.md` § bike_detail dropped.
 
-> **Also run `migrate_equipment_tables.py` once on every existing database** (TODO-042, same options; **after** `migrate_drop_bike_detail.py` — it refuses a database still keyed on `bike_detail_id`). Equipment now has its own DB identity (`equipment`, `equipment_detail`, `equipment_detail_component`, `equipment_detail_photos` tables) and `bike_component.equipment_id` links spec-tree elements to equipment rows; `create_all()` never alters a table. The searcher refuses to start without the column. On production Cloud SQL: backup, migrate, then deploy backend + searcher together, then the frontend (the old backend keeps working on the migrated database — the column is nullable, new tables are ignored). Details: `backend/app/DB_MIGRATION.md`.
+> **Also run `migrate_equipment_tables.py` once on every existing database** (TODO-042, same options; **after** `migrate_drop_bike_detail.py` — it refuses a database still keyed on `bike_detail_id`). Equipment now has its own DB identity (the `equipment`, `equipment_component`, `equipment_detail_photos` tables; `equipment_detail` was merged into `equipment` by TODO-044, below) and `bike_component.equipment_id` links spec-tree elements to equipment rows; `create_all()` never alters a table. The searcher refuses to start without the column. On production Cloud SQL: backup, migrate, then deploy backend + searcher together, then the frontend (the old backend keeps working on the migrated database — the column is nullable, new tables are ignored). Details: `backend/app/DB_MIGRATION.md`.
 >
 > **Then run `migrate_rename_bike_component.py` once on every existing database** (`--dry-run` first, idempotent, `--url` / `--db`): `bike_detail_component` is now `bike_component` (same columns and data; the indexes and the PostgreSQL constraints + sequence are renamed with it). Run it after `migrate_drop_bike_detail.py` and `migrate_equipment_tables.py` (both still address the old name). Same consequences and production order as those — the new searcher refuses to start until it has run, the old backend breaks afterwards. Details: `backend/app/DB_MIGRATION.md` § `bike_detail_component` renamed to `bike_component`.
+>
+> **Then run `migrate_merge_equipment_detail.py` once on every existing database** (TODO-044, after the rename; `--dry-run` first, idempotent, `--url` / `--db`): `equipment_detail` is merged into `equipment` (new `description`, `short_description`, `updated_at`, and the lookup `name` / `name_norm` = the element name from the bike's spec tree, unique with the category) and `equipment_detail_component` is renamed `equipment_component` (keyed on `equipment_id`). `company` / `model` of an equipment row are now the researched brand and model: empty (model = the name) until an equipment details search fills them, and only where missing. The new searcher refuses to start until it has run, the old backend breaks afterwards and its `create_all()` recreates the empty old tables (rerun the script: `repaired`). Production order: Cloud SQL backup, migration through the proxy (only on the user's explicit go), backend + searcher together, frontend. Details: `backend/app/DB_MIGRATION.md` § equipment_detail merged into equipment.
 >
 > **Then run `migrate_component_linkable.py` once on every existing database** (ISSUE-016, after the rename; `--dry-run` first — it prints the true/false distribution and the most frequent names of each class — idempotent, `--url` / `--db`). Component element names in the details view are links to the equipment view only when the new flag `bike_component.is_linkable` is true: the searcher's model decides for new searches, the regex heuristic `backend/app/linkable.py` backfills the stored rows and classifies the discovery scraper's rows ("None included", "Owner's Manual", "Alloy Platform Pedals" → no link). The new searcher refuses to start without the column and the new backend's details reads fail without it; the old backend keeps working on a migrated database (server default true). Production order: Cloud SQL backup, migration through the proxy (only on the user's explicit go), deploy backend + searcher together, then the frontend. Details: `backend/app/DB_MIGRATION.md` § Component link flag.
 
@@ -442,7 +446,7 @@ biker/
 │   │   ├── photos_repository.py       # Stored bike photos: get_bike_photos (POST /v1/bike/photos) — bike_detail_photos keyed on bike_id
 │   │   ├── equipment_routes.py        # Four POST /v1/equipment/* endpoints (TODO-042): /details, /photos (DB reads); /details/search, /photos/search (searcher proxies)
 │   │   ├── equipment_repository.py    # Equipment data access (get_equipment_details, get_equipment_photos, save_equipment_details, save_equipment_photos, bike_has_component)
-│   │   ├── equipment_models.py        # Equipment ORM: equipment, equipment_detail, equipment_detail_component, equipment_detail_photos; equipment_id FK on bike_component
+│   │   ├── equipment_models.py        # Equipment ORM: equipment (item + details), equipment_component, equipment_detail_photos; equipment_id FK on bike_component
 │   │   ├── component_tree.py          # Shared tree builder for bike and equipment spec trees
 │   │   ├── equipment_review_finder.py      # Equipment review (review/forum links only)
 │   │   └── prompts/
@@ -453,11 +457,13 @@ biker/
 │   └── scripts/
 │       ├── migrate_drop_search_tables.py  # One-off, idempotent: drop search_cache + search_bike_rating_cache (write-only per-search tables, TODO-043); --dry-run, --db, --url
 │       ├── migrate_equipment_tables.py    # One-off, idempotent: create equipment tables and add bike_component.equipment_id (TODO-042); --dry-run, --db, --url
+│       ├── migrate_merge_equipment_detail.py # One-off, idempotent: equipment_detail merged into equipment, equipment_detail_component renamed equipment_component (TODO-044); --dry-run, --db, --url
 │       ├── seed_popular_bikes.py      # Fill bike_popular (home page "Najpopularniejsze rowery") with 3 bikes that have details + photos + a stored review; --dry-run, --count, --bike "Brand|Model"
 │       ├── test_search.py             # Smoke tests for all backend endpoints (bike search/details, offers, photos, review; equipment details/photos x2) — one happy path per endpoint, no AI
 │       ├── copy_review_cache_to_table.py  # One-off: generic-cache reviews -> bike_review tables (TODO-037)
 │       ├── test_equipment_repository.py   # pytest: get/save equipment details + photos, link preservation after bike re-save, insert-only photos (TODO-042)
 │       ├── test_migrate_equipment_tables.py # pytest: idempotent migration (TODO-042)
+│       ├── test_migrate_merge_equipment_detail.py # pytest: the equipment merge on temp SQLite (TODO-044)
 │       ├── test_searcher_client_equipment.py # pytest: searcher client routes for equipment details + photos (TODO-042)
 └── frontend/
     └── src/

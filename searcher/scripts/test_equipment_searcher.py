@@ -14,7 +14,7 @@ from sqlalchemy import text
 
 from app import config, models
 from app import main as searcher_main
-from app.details_finder import build_details, is_usable_details
+from app.details_finder import DETAILS_SCHEMA, build_details, is_usable_details
 from app.equipment_categories import resolve_category
 from app.equipment_details_finder import (
     EQUIPMENT_DETAILS_SCHEMA,
@@ -135,7 +135,11 @@ def test_prompt_and_message():
     assert "Polish" in p and "Lights & electronics" in p and "never" in p.lower()
     m = user_message("Canyon", "Grizl  CF", "Lezyne  Micro", "lights")
     assert '"Lezyne Micro"' in m and "Canyon Grizl CF" in m
-    assert EQUIPMENT_DETAILS_SCHEMA["required"] == ["found", "description", "short_description", "sources", "components"]
+    assert EQUIPMENT_DETAILS_SCHEMA["required"] == [
+        "found", "description", "short_description", "sources", "components", "company", "model"]
+    assert {"company", "model"} <= set(EQUIPMENT_DETAILS_SCHEMA["properties"])
+    assert "company" not in DETAILS_SCHEMA["properties"], "the bike details schema is unchanged"
+    assert "`company`" in p and "`model`" in p, "the prompt asks for the identified brand and model"
 
 
 # ── repository (throwaway SQLite) ─────────────────────────────────────────
@@ -180,6 +184,71 @@ def test_save_creates_equipment_and_links_only_this_bike(db):
         ("Construction", ["ABS hardshell"]), ("Safety", ["LED rear light"])]
 
 
+def test_builder_reads_company_and_model_from_the_answer():
+    d = build_equipment_details("Shimano Deore RD-M6000", "parts", _data(company=" Shimano ", model="Deore RD-M6000"))
+    assert (d.found_company, d.found_model) == ("Shimano", "Deore RD-M6000")
+    assert (d.company, d.model) == ("", "Shimano Deore RD-M6000"), "the answer's own identity stays the element name"
+    assert "found_company" not in d.model_dump(mode="json"), "never part of the API answer"
+    for bad in ({}, {"company": None, "model": 5}):
+        d = build_equipment_details("X", "parts", _data(**bad))
+        assert (d.found_company, d.found_model) == ("", "")
+    assert build_equipment_details("X", "parts", _data(found=False, company="Shimano")) == empty_equipment_details("X", "parts")
+    long = build_equipment_details("X", "parts", _data(company="c" * 400, model="m" * 700))
+    assert (len(long.found_company), len(long.found_model)) == (255, 512)
+
+
+def _item():
+    return _q("SELECT name, company, model, company_norm, model_norm FROM equipment")
+
+
+def test_save_fills_missing_company_and_model_by_name(db):
+    _bike()
+    first = build_equipment_details("Abus Hyban 2.0", "helmets", _data())  # nothing identified
+    eid, _ = save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", first)
+    assert _item() == [("Abus Hyban 2.0", "", "Abus Hyban 2.0", "", "abus hyban 2.0")]
+    found = build_equipment_details("Abus Hyban 2.0", "helmets", _data(company=" Abus ", model=" Hyban 2.0 "))
+    assert save_equipment_details("Canyon", "Grizl", "abus hyban 2.0", "helmets", found) == (eid, True)
+    assert _item() == [("Abus Hyban 2.0", "Abus", "Hyban 2.0", "abus", "hyban 2.0")], "found by name, norms in step"
+    stored = get_equipment_details(eid)
+    assert (stored.company, stored.model) == ("Abus", "Hyban 2.0")
+
+
+def test_save_never_overwrites_researched_values_nor_blanks_them(db):
+    _bike()
+    eid, _ = save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", build_equipment_details(
+        "Abus Hyban 2.0", "helmets", _data(company="Abus", model="Hyban 2.0")))
+    for over in ({}, {"company": "Other", "model": "Other model"}, {"company": "", "model": ""}):
+        save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets",
+                               build_equipment_details("Abus Hyban 2.0", "helmets", _data(**over)))
+    assert _item() == [("Abus Hyban 2.0", "Abus", "Hyban 2.0", "abus", "hyban 2.0")]
+    # only the missing half is filled: company empty, model researched
+    save_equipment_details("Canyon", "Grizl", "Lezyne Lite Drive", "lights", build_equipment_details(
+        "Lezyne Lite Drive", "lights", _data(company="", model="Lite Drive")))
+    save_equipment_details("Canyon", "Grizl", "Lezyne Lite Drive", "lights", build_equipment_details(
+        "Lezyne Lite Drive", "lights", _data(company="Lezyne", model="Lite Drive 2")))
+    assert _q("SELECT company, model FROM equipment WHERE category = 'lights'") == [("Lezyne", "Lite Drive")]
+    assert eid is not None
+
+
+def test_two_names_may_resolve_to_one_brand_and_model(db):
+    for name in ("Abus Hyban 2.0", "ABUS Hyban 2.0 helmet"):
+        save_equipment_details("Canyon", "Grizl", name, "helmets", build_equipment_details(
+            name, "helmets", _data(company="Abus", model="Hyban 2.0")))
+    assert _q("SELECT name, company, model FROM equipment ORDER BY id") == [
+        ("Abus Hyban 2.0", "Abus", "Hyban 2.0"), ("ABUS Hyban 2.0 helmet", "Abus", "Hyban 2.0")]
+
+
+def test_photos_save_leaves_company_and_model_alone(db):
+    _bike()
+    save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", build_equipment_details(
+        "Abus Hyban 2.0", "helmets", _data(company="Abus", model="Hyban 2.0")))
+    save_equipment_photos("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", ["https://a/1.jpg"])
+    save_equipment_photos("Canyon", "Grizl", "Fresh item", "locks", ["https://a/2.jpg"])
+    assert _q("SELECT name, company, model, description IS NULL FROM equipment ORDER BY id") == [
+        ("Abus Hyban 2.0", "Abus", "Hyban 2.0", 0), ("Fresh item", "", "Fresh item", 1)]
+    assert get_equipment_details(_q("SELECT id FROM equipment WHERE name = 'Fresh item'")[0][0]) is None, "photos only: no details"
+
+
 def test_unusable_result_writes_and_links_nothing(db):
     canyon = _bike()
     empty = build_equipment_details("Abus Hyban 2.0", "helmets", _data(found=False))
@@ -192,12 +261,12 @@ def test_resave_in_place_keeps_other_half(db):
     _bike()
     eid, _ = save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets",
                                     build_equipment_details("Abus Hyban 2.0", "helmets", _data()))
-    detail_id = _q("SELECT id FROM equipment_detail")[0][0]
+    updated_before = _q("SELECT updated_at FROM equipment")[0][0]
     comps_only = build_equipment_details("Abus Hyban 2.0", "helmets", _data(description="", short_description=""))
     assert save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", comps_only) == (eid, True)
-    assert _q("SELECT id FROM equipment_detail") == [(detail_id,)]
+    assert _q("SELECT id FROM equipment") == [(eid,)] and _q("SELECT updated_at FROM equipment")[0][0] >= updated_before
     assert get_equipment_details(eid).description.text.startswith("Kask miejski")
-    assert _q("SELECT COUNT(*) FROM equipment_detail_component")[0][0] == 2  # replaced, not appended
+    assert _q("SELECT COUNT(*) FROM equipment_component")[0][0] == 2  # replaced, not appended
 
 
 def test_missing_bike_stores_but_does_not_link(db):
@@ -227,6 +296,35 @@ def test_photos_insert_only_and_link(db):
     again = save_equipment_photos("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", ["https://b/9.jpg"])
     assert again == (eid, ["https://a/1.jpg", "https://a/2.jpg"], 0)  # never replaced
     assert get_equipment_photos(eid) == ["https://a/1.jpg", "https://a/2.jpg"]
+
+
+def test_init_db_refuses_an_unmerged_equipment_layout(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "DATABASE_URL", f"sqlite:///{tmp_path / 'old.db'}")
+    monkeypatch.delenv("SEARCHER_CREATE_TABLES", raising=False)
+    models.dispose_engine()
+    try:
+        engine = models.get_engine()
+        models.Base.metadata.create_all(engine, tables=[
+            t for t in models.Base.metadata.sorted_tables if t.name not in ("equipment", "equipment_component")])
+        with engine.begin() as conn:  # the pre-TODO-044 layout: no name, an equipment_detail table
+            conn.execute(text("CREATE TABLE equipment (id INTEGER PRIMARY KEY, category VARCHAR(32), company VARCHAR(255), "
+                              "model VARCHAR(512), company_norm VARCHAR(255), model_norm VARCHAR(512), created_at DATETIME)"))
+            conn.execute(text("CREATE TABLE equipment_detail (id INTEGER PRIMARY KEY, equipment_id INTEGER)"))
+        with pytest.raises(RuntimeError, match="migrate_merge_equipment_detail.py"):
+            models.init_db()
+        with engine.begin() as conn:  # merged equipment but a leftover old table
+            conn.execute(text("DROP TABLE equipment"))
+            models.Base.metadata.create_all(engine, tables=[models.Base.metadata.tables["equipment"]])
+        with pytest.raises(RuntimeError, match="migrate_merge_equipment_detail.py"):  # equipment_component missing too
+            models.init_db()
+        models.Base.metadata.create_all(engine, tables=[models.Base.metadata.tables["equipment_component"]])
+        with pytest.raises(RuntimeError, match="migrate_merge_equipment_detail.py"):  # equipment_detail still there
+            models.init_db()
+        with engine.begin() as conn:
+            conn.execute(text("DROP TABLE equipment_detail"))
+        models.init_db()  # merged -> starts
+    finally:
+        models.dispose_engine()
 
 
 def test_init_db_refuses_without_equipment_id(tmp_path, monkeypatch):
@@ -266,7 +364,7 @@ def test_details_route_stores_links_and_answers_stored(client, monkeypatch):
     canyon = _bike()
 
     async def finder(bike_company, bike_model, element_name, category, element_type=None):
-        return "helmets", build_equipment_details(element_name, "helmets", _data())
+        return "helmets", build_equipment_details(element_name, "helmets", _data(company="Shimano", model="Deore RD-M6000"))
 
     monkeypatch.setattr(searcher_main, "find_equipment_details", finder)
     r = client.post("/v1/search/equipment/details", json=BODY, headers=KEY)
@@ -274,6 +372,8 @@ def test_details_route_stores_links_and_answers_stored(client, monkeypatch):
     body = r.json()
     eid = body["equipment_id"]
     assert body["saved"] == 1 and eid is not None and body["details"]["equipment_id"] == eid
+    assert (body["details"]["company"], body["details"]["model"]) == ("Shimano", "Deore RD-M6000"), "the researched pair"
+    assert "found_company" not in body["details"]
     assert body["details"] == get_equipment_details(eid).model_dump(mode="json")
     assert _links(canyon)[0][1] == eid
 
@@ -414,13 +514,13 @@ def test_failed_write_leaves_no_orphan_equipment_row(db, monkeypatch):
     with pytest.raises(RuntimeError):
         save_equipment_photos("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", ["https://a/1.jpg"])
     assert _q("SELECT COUNT(*) FROM equipment")[0][0] == 0
-    assert _q("SELECT COUNT(*) FROM equipment_detail")[0][0] == 0
+    assert _q("SELECT COUNT(*) FROM equipment_component")[0][0] == 0
 
 
 def test_existing_item_and_concurrent_create_reuse_one_row(db):
     with models.get_engine().begin() as conn:  # another writer created the identity first
-        conn.execute(text("INSERT INTO equipment (category, company, model, company_norm, model_norm) "
-                          "VALUES ('helmets', '', 'ABUS Hyban 2.0', '', 'abus hyban 2.0')"))
+        conn.execute(text("INSERT INTO equipment (category, name, name_norm, company, model, company_norm, model_norm) "
+                          "VALUES ('helmets', 'ABUS Hyban 2.0', 'abus hyban 2.0', '', 'ABUS Hyban 2.0', '', 'abus hyban 2.0')"))
     eid, saved = save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets",
                                         build_equipment_details("Abus Hyban 2.0", "helmets", _data()))
     assert saved and _q("SELECT id FROM equipment") == [(eid,)]

@@ -1,11 +1,12 @@
 """Persistence of equipment search results (TODO-042).
 
-Equipment details (/v1/search/equipment/details) go into equipment (the
-identity: category slug + Python-normalised company/model; opened from a
-bike's spec tree, so company is "" and model is the element name) +
-equipment_detail (one row per item, updated in place) +
-equipment_detail_component (the flattened tree, same columns as
-bike_component). Photos (/v1/search/equipment/photos) go into
+Equipment details (/v1/search/equipment/details) go into equipment (the item
+AND its details since TODO-044: lookup identity = category slug + the
+Python-normalised `name`, the element name from a bike's spec tree, the only
+source of an equipment row; `company` / `model` are the researched brand and
+model - "" and the name until a details search fills them; `description` /
+`short_description` are updated in place) + equipment_component (the
+flattened tree, same columns as bike_component, keyed on equipment_id). Photos (/v1/search/equipment/photos) go into
 equipment_detail_photos keyed on equipment_id, written once, never replaced.
 
 A successful save also links the element on the bike it was opened from:
@@ -24,8 +25,7 @@ from .details_finder import has_components, is_usable_details
 from .models import (
     BikeComponent,
     Equipment,
-    EquipmentDetail,
-    EquipmentDetailComponent,
+    EquipmentComponent,
     EquipmentDetailPhoto,
     dialect_insert,
     get_session,
@@ -37,46 +37,62 @@ from .schemas import BikeDescription, EquipmentDetails
 logger = logging.getLogger("searcher.equipment.repository")
 
 
-def _find_equipment_id(session, category: str, company: str, model: str) -> Optional[int]:
-    """Identity lookup on the stored norm columns, compared with Python-normalised values (never SQL lower())."""
+def _find_equipment_id(session, category: str, name: str) -> Optional[int]:
+    """Identity lookup on the stored `name_norm`, compared with the Python-normalised name (never SQL lower())."""
     return session.query(Equipment.id).filter(
         Equipment.category == category,
-        Equipment.company_norm == norm(company),
-        Equipment.model_norm == norm(model),
+        Equipment.name_norm == norm(name),
     ).order_by(Equipment.id).limit(1).scalar()
 
 
-def _get_or_create_equipment(session, category: str, company: str, model: str) -> int:
+def _get_or_create_equipment(session, category: str, name: str) -> int:
     """The item's id, inserting the row (caller's casing) when it is new, then LOCKING it (SELECT … FOR UPDATE).
 
     Runs inside the caller's transaction and never commits, so a write that
     fails later rolls the new row back with everything else (no orphan rows).
-    The insert is INSERT … ON CONFLICT DO NOTHING on uq_equipment_identity
-    (SQLite and PostgreSQL alike): a concurrent creator makes it a no-op — on
+    The insert is INSERT … ON CONFLICT DO NOTHING on uq_equipment_name
+    (category, name_norm; SQLite and PostgreSQL alike): a concurrent creator makes it a no-op — on
     PostgreSQL it waits for that transaction — and the re-read finds its row.
     The row lock then serialises every save of this item (details and photos;
     a no-op on SQLite, whose writers are serialised anyway). Norms are set
     here because a Core insert bypasses @validates.
     """
-    equipment_id = _find_equipment_id(session, category, company, model)
+    equipment_id = _find_equipment_id(session, category, name)
     if equipment_id is None:
         stmt = dialect_insert(Equipment).values(
-            category=category, company=company.strip(), model=model.strip(),
-            company_norm=norm(company), model_norm=norm(model), created_at=datetime.now(timezone.utc),
-        ).on_conflict_do_nothing(index_elements=["category", "company_norm", "model_norm"])
+            category=category, name=name.strip(), name_norm=norm(name), company="", company_norm="",
+            model=name.strip(), model_norm=norm(name), short_description="",
+            created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        ).on_conflict_do_nothing(index_elements=["category", "name_norm"])
         if session.execute(stmt).rowcount:
-            logger.info("equipment created | category=%r company=%r model=%r", category, company, model)
-        equipment_id = _find_equipment_id(session, category, company, model)
+            logger.info("equipment created | category=%r name=%r", category, name)
+        equipment_id = _find_equipment_id(session, category, name)
         if equipment_id is None:  # pragma: no cover - the insert or the conflicting row must be visible
-            raise RuntimeError(f"equipment row missing after insert | category={category!r} model={model!r}")
+            raise RuntimeError(f"equipment row missing after insert | category={category!r} name={name!r}")
     session.query(Equipment.id).filter(Equipment.id == equipment_id).with_for_update().one()
     return equipment_id
 
 
-def get_or_create_equipment(category: str, company: str, model: str) -> int:
+def fill_missing_identity(item: Equipment, company: str, model: str) -> None:
+    """Fill the researched company / model only where missing; a "" never overwrites a stored value.
+
+    company is set when the stored one is empty; model when the stored one is
+    empty or still the element name (never researched). Stored casing as the
+    search returned it, stripped, cut to the column length. The ORM
+    assignment keeps the norm columns in step (@validates).
+    """
+    company = (company or "").strip()[:255]
+    model = (model or "").strip()[:512]
+    if company and not item.company:
+        item.company = company
+    if model and (not item.model or item.model_norm == item.name_norm):
+        item.model = model
+
+
+def get_or_create_equipment(category: str, name: str) -> int:
     session = get_session()
     try:
-        equipment_id = _get_or_create_equipment(session, category, company, model)
+        equipment_id = _get_or_create_equipment(session, category, name)
         session.commit()
         return equipment_id
     finally:
@@ -125,10 +141,13 @@ def save_equipment_details(
     """Store `details` as the item's details when usable; returns (equipment_id, saved).
 
     Usable = a non-empty component tree or a non-empty description. Then, in
-    one transaction: the equipment row (company "", model = element name)
-    created if missing, its equipment_detail row updated IN PLACE or inserted,
-    its components replaced — only the half this run produced (same rule as
-    repository.save_details) — and the element linked on the bike, all under
+    one transaction: the equipment row found by (category, name = the element
+    name) - NOT by company / model - or created (company "", model = name),
+    its description / short_description updated IN PLACE, its components
+    replaced - only the half this run produced (same rule as
+    repository.save_details) - the researched company / model filled where
+    missing (fill_missing_identity: a stored value is never overwritten, a ""
+    from the run never counts) and the element linked on the bike, all under
     the equipment row lock (_get_or_create_equipment), so two bikes saving the
     same item at once run one after the other. An unusable result writes,
     deletes and links nothing and answers (None, False) — no id the caller
@@ -140,28 +159,22 @@ def save_equipment_details(
         if not is_usable_details(details):
             logger.warning("no usable equipment details - nothing written | element=%r category=%r", element_name, category)
             return None, False
-        equipment_id = _get_or_create_equipment(session, category, "", element_name)
+        equipment_id = _get_or_create_equipment(session, category, element_name)
+        item = session.get(Equipment, equipment_id)
         has_desc = bool(details.description.text.strip())
         has_comps = has_components(details)
-        row = session.query(EquipmentDetail).filter_by(equipment_id=equipment_id).first()
-        if row is not None:
-            if has_desc:
-                row.description = details.description.model_dump_json()
-                row.short_description = details.short_description
-            row.updated_at = datetime.now(timezone.utc)
-            if has_comps:
-                session.query(EquipmentDetailComponent).filter_by(equipment_detail_id=row.id).delete(synchronize_session=False)
-                session.expire(row, ["components"])
-        else:
-            row = EquipmentDetail(
-                equipment_id=equipment_id, description=details.description.model_dump_json(),
-                short_description=details.short_description,
-            )
-            session.add(row)
+        if has_desc or item.description is None:
+            item.description = details.description.model_dump_json()
+            item.short_description = details.short_description
+        item.updated_at = datetime.now(timezone.utc)
+        fill_missing_identity(item, details.found_company, details.found_model)
+        if has_comps:
+            session.query(EquipmentComponent).filter_by(equipment_id=equipment_id).delete(synchronize_session=False)
+            session.expire(item, ["components"])
         session.flush()
         rows = 0
         for values in flatten_components(details.components if has_comps else []):
-            session.add(EquipmentDetailComponent(equipment_detail_id=row.id, **values))
+            session.add(EquipmentComponent(equipment_id=equipment_id, **values))
             rows += 1
         linked = _link(session, bike_company, bike_model, element_name, equipment_id)
         session.commit()
@@ -179,21 +192,22 @@ def save_equipment_details(
 
 
 def get_equipment_details(equipment_id: int) -> Optional[EquipmentDetails]:
-    """The stored details of an item (stored casing), or None when the item or its details row is missing."""
+    """The stored details of an item (stored casing, the researched company / model), or None when the item is
+    missing or has no details (`description` NULL)."""
     session = get_session()
     try:
         item = session.get(Equipment, equipment_id)
-        if item is None or item.details is None:
+        if item is None or item.description is None:
             return None
         try:
-            description = BikeDescription.model_validate_json(item.details.description)
+            description = BikeDescription.model_validate_json(item.description)
         except Exception as exc:  # noqa: BLE001 - an unreadable blob must not break the request
             logger.warning("stored equipment description unreadable | equipment_id=%d | %s", equipment_id, exc)
             description = BikeDescription()
         return EquipmentDetails(
             company=item.company, model=item.model, category=item.category, description=description,
-            components=_rebuild_components(item.details.components),
-            short_description=item.details.short_description or "", equipment_id=equipment_id,
+            components=_rebuild_components(item.components, element_links=False),
+            short_description=item.short_description or "", equipment_id=equipment_id,
         )
     finally:
         session.close()
@@ -234,7 +248,7 @@ def save_equipment_photos(
         if not photos:
             logger.warning("no equipment photos to store - nothing written | element=%r category=%r", element_name, category)
             return None, [], 0
-        equipment_id = _get_or_create_equipment(session, category, "", element_name)  # row locked
+        equipment_id = _get_or_create_equipment(session, category, element_name)  # row locked
         stored = _photo_urls(session, equipment_id)
         saved = 0
         if stored:

@@ -1,9 +1,9 @@
-"""SQLAlchemy engine helpers and the eleven tables the searcher touches.
+"""SQLAlchemy engine helpers and the ten tables the searcher touches.
 
 The DDL below is a verbatim copy of `bike`, `bike_offer`, `bike_offer_photos`,
 `bike_detail_photos`, `bike_review`, `bike_review_source`,
-`bike_component` and (TODO-042) `equipment`, `equipment_detail`,
-`equipment_detail_component`, `equipment_detail_photos` in
+`bike_component` and (TODO-042 / TODO-044) `equipment`, `equipment_component`,
+`equipment_detail_photos` in
 backend/app/models.py — same names, columns, constraints and index names —
 because both services share one database. Change it there first, then here.
 init_db() only checks that the tables exist — the backend creates them.
@@ -90,7 +90,7 @@ def get_session():
 REQUIRED_TABLES = (
     "bike", "bike_offer", "bike_offer_photos", "bike_detail_photos", "bike_review", "bike_review_source",
     "bike_component",
-    "equipment", "equipment_detail", "equipment_detail_component", "equipment_detail_photos",
+    "equipment", "equipment_component", "equipment_detail_photos",
 )
 
 
@@ -114,6 +114,20 @@ def init_db():
         raise RuntimeError(
             "the database still has the bike_detail_component table (bike_component missing) — run "
             "backend/scripts/migrate_rename_bike_component.py on this database first"
+        )
+    # TODO-044: equipment_detail was merged into equipment (description / short_description / name) and
+    # its component table renamed equipment_component; create_all() never ALTERs, so an older database
+    # lacks the columns and the equipment saves would fail.
+    if inspector.has_table("equipment") and (
+        "name" not in {c["name"] for c in inspector.get_columns("equipment")}
+        or inspector.has_table("equipment_detail")
+        or inspector.has_table("equipment_detail_component")
+        or not inspector.has_table("equipment_component")
+    ):
+        raise RuntimeError(
+            "the database still has the equipment_detail / equipment_detail_component tables (equipment has no "
+            "name column / equipment_component is missing) — run backend/scripts/migrate_merge_equipment_detail.py "
+            "on this database first"
         )
     missing = [t for t in REQUIRED_TABLES if not inspector.has_table(t)]
     if missing:
@@ -328,72 +342,63 @@ class BikeComponent(Base):
 
 
 class Equipment(Base):
-    """One equipment item (TODO-042): helmet, light, lock, apparel/bag/accessory.
+    """One equipment item (TODO-042, merged with its details in TODO-044): helmet, light, lock, apparel/bag/accessory.
 
-    Identity = (category, company_norm, model_norm). Opened from a bike's spec
-    tree, so company is usually "" and model is the element name. The norm
-    columns follow company/model through @validates (construction and
-    assignment); a Core update() must set them itself.
+    Lookup identity = (category, name_norm): `name` is the element name from a
+    bike's spec tree, the only source of an equipment row. `company` / `model`
+    are the RESEARCHED brand and model: "" and the name until a details search
+    fills them. `description` (JSON BikeDescription) is NULL until details are
+    stored - "has details" = `description IS NOT NULL`, like `bike.description`.
+    The norm columns follow company / model / name through @validates
+    (construction and assignment); a Core update() must set them itself.
     """
 
     __tablename__ = "equipment"
 
     id = Column(Integer, primary_key=True)
     category = Column(String(32), nullable=False)
+    name = Column(String(512), nullable=False)
+    name_norm = Column(String(512), nullable=False)
     company = Column(String(255), nullable=False, default="")
     model = Column(String(512), nullable=False)
     company_norm = Column(String(255), nullable=False)
     model_norm = Column(String(512), nullable=False)
-    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-
-    # Relationships
-    details = relationship("EquipmentDetail", back_populates="equipment", cascade="all, delete-orphan", uselist=False)
-    photos = relationship(
-        "EquipmentDetailPhoto", back_populates="equipment", cascade="all, delete-orphan",
-        order_by="EquipmentDetailPhoto.display_order, EquipmentDetailPhoto.id",
-    )
-
-    __table_args__ = (UniqueConstraint("category", "company_norm", "model_norm", name="uq_equipment_identity"),)
-
-    @validates("company", "model")
-    def _sync_norm(self, key, value):
-        setattr(self, f"{key}_norm", norm(value))
-        return value
-
-
-class EquipmentDetail(Base):
-    """An equipment item's description + short description (one row per item, updated in place)."""
-
-    __tablename__ = "equipment_detail"
-
-    id = Column(Integer, primary_key=True)
-    equipment_id = Column(Integer, ForeignKey("equipment.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
-    description = Column(Text, nullable=False)  # JSON serialized BikeDescription
+    description = Column(Text, nullable=True)  # JSON serialized BikeDescription; NULL = no details
     short_description = Column(Text, nullable=False, default="", server_default="")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
-    equipment = relationship("Equipment", back_populates="details")
     components = relationship(
-        "EquipmentDetailComponent",
-        back_populates="details",
+        "EquipmentComponent",
+        back_populates="equipment",
         cascade="all, delete-orphan",
         order_by=(
-            "EquipmentDetailComponent.component_order, "
-            "EquipmentDetailComponent.element_order, "
-            "EquipmentDetailComponent.spec_order"
+            "EquipmentComponent.component_order, "
+            "EquipmentComponent.element_order, "
+            "EquipmentComponent.spec_order"
         ),
     )
+    photos = relationship(
+        "EquipmentDetailPhoto", back_populates="equipment", cascade="all, delete-orphan",
+        order_by="EquipmentDetailPhoto.display_order, EquipmentDetailPhoto.id",
+    )
+
+    __table_args__ = (UniqueConstraint("category", "name_norm", name="uq_equipment_name"),)
+
+    @validates("name", "company", "model")
+    def _sync_norm(self, key, value):
+        setattr(self, f"{key}_norm", norm(value))
+        return value
 
 
-class EquipmentDetailComponent(Base):
-    """One spec row of an equipment item — the flat shape of bike_component."""
+class EquipmentComponent(Base):
+    """One spec row of an equipment item - the flat shape of bike_component, keyed on the item."""
 
-    __tablename__ = "equipment_detail_component"
+    __tablename__ = "equipment_component"
 
     id = Column(Integer, primary_key=True)
-    equipment_detail_id = Column(Integer, ForeignKey("equipment_detail.id", ondelete="CASCADE"), nullable=False, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id", ondelete="CASCADE"), nullable=False, index=True)
 
     category = Column(String(255), nullable=False, index=True)
     subcategory = Column(String(255), nullable=False, index=True)
@@ -408,7 +413,7 @@ class EquipmentDetailComponent(Base):
     spec_order = Column(Integer, nullable=True)
 
     # Relationships
-    details = relationship("EquipmentDetail", back_populates="components")
+    equipment = relationship("Equipment", back_populates="components")
 
 
 class EquipmentDetailPhoto(Base):

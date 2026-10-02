@@ -398,7 +398,7 @@ async def search_equipment_details(req: EquipmentSearchRequest) -> EquipmentDeta
     Always runs a search (no DB read first). One CLI run (WebSearch + WebFetch,
     no Playwright) under the category prompt (`category` or inferred from the
     element name). A usable result (components or description) is stored —
-    equipment row created if missing, equipment_detail updated in place,
+    equipment row created if missing, description columns updated in place (company / model filled where missing),
     components replaced — and the element is linked on THIS bike's
     bike_component rows (bike missing: stored, not linked); saved 1.
     Anything less writes nothing (saved 0). Same 400 / 401 / 422 / 502 / 503 /

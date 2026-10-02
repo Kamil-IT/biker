@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import equipment_repository as er, models, repository  # noqa: E402
-from app.equipment_models import Equipment, EquipmentDetail, EquipmentDetailComponent, EquipmentDetailPhoto  # noqa: E402
+from app.equipment_models import Equipment, EquipmentComponent, EquipmentDetailPhoto  # noqa: E402
 from app.schemas import (  # noqa: E402
     BikeCategory, BikeDescription, BikeDetailsResponse, BikeSubcategory, ComponentElement,
     EquipmentDetailsRequest, EquipmentDetailsResponse, EquipmentPhotosRequest, EquipmentSearchRequest, SpecItem,
@@ -122,7 +122,7 @@ def test_unusable_result_writes_nothing(db):
     assert er.save_equipment_details("", HELMET, "helmets", shells, bike_id, HELMET) is None
     assert er.save_equipment_photos("", HELMET, "helmets", [], bike_id, HELMET) == (None, 0)
     assert er.save_equipment_photos("", HELMET, "helmets", ["ftp://x/1.jpg", "/local.png"]) == (None, 0)
-    assert _count(Equipment) == 0 and _count(EquipmentDetail) == 0
+    assert _count(Equipment) == 0 and _count(EquipmentComponent) == 0
     assert all(eid is None for _, eid in _links(bike_id))
 
 
@@ -139,7 +139,7 @@ def test_only_the_produced_half_is_replaced(db):
     assert got.description.text == "Nowy opis.", "a components-only result keeps the description"
     assert got.components[0].subcategories[0].elements[0].name == "Strap"
     assert got.components[0].subcategories[0].elements[0].specs == []
-    assert _count(EquipmentDetail) == 1 and _count(EquipmentDetailComponent) == 1
+    assert _count(Equipment) == 1 and _count(EquipmentComponent) == 1
 
 
 def test_link_touches_only_that_bike_and_that_element(db):
@@ -181,7 +181,7 @@ def test_deleting_equipment_unlinks_the_bike_rows(db):
         s.delete(s.get(Equipment, eid))
         s.commit()
     assert all(link is None for _, link in _links(bike_id)), "ON DELETE SET NULL"
-    assert _count(EquipmentDetail) == 0 and _count(EquipmentDetailComponent) == 0
+    assert _count(Equipment) == 0 and _count(EquipmentComponent) == 0, "components cascade with the item"
 
 
 def test_photos_are_insert_only_and_ordered(db):
@@ -202,6 +202,59 @@ def test_photos_only_equipment_reads_empty_details_with_its_id(db):
     eid, _ = er.save_equipment_photos("", HELMET, "helmets", ["https://a/1.jpg"])
     got = er.get_equipment_details(EquipmentDetailsRequest(model=HELMET))
     assert got.equipment_id == eid and got.category == "helmets" and got.components == []
+
+
+def _row(eid):
+    with models.get_session() as s:
+        e = s.get(Equipment, eid)
+        return e.name, e.company, e.model, e.company_norm, e.model_norm, e.description is not None
+
+
+def test_new_row_has_name_company_empty_model_the_name(db):
+    eid = er.save_equipment_details("", HELMET, "helmets", _equip())
+    assert _row(eid) == (HELMET, "", HELMET, "", "abus hyban 2.0", True)
+    only_photos, _ = er.save_equipment_photos("", "Plain Lock", "locks", ["https://a/1.jpg"])
+    assert _row(only_photos) == ("Plain Lock", "", "Plain Lock", "", "plain lock", False), "no details: description NULL"
+
+
+def test_save_fills_company_and_model_where_missing(db):
+    eid = er.save_equipment_details("", HELMET, "helmets", _equip())
+    again = er.save_equipment_details(" Abus ", " Hyban 2.0 ", "helmets", _equip(text="Nowy."), element_name=HELMET)
+    assert again == eid, "found by (category, name), not by company / model"
+    assert _row(eid) == (HELMET, "Abus", "Hyban 2.0", "abus", "hyban 2.0", True), "norms follow the assignment"
+    assert _count(Equipment) == 1
+
+
+def test_save_never_overwrites_researched_values_nor_blanks(db):
+    eid = er.save_equipment_details("Abus", "Hyban 2.0", "helmets", _equip(), element_name=HELMET)
+    assert _row(eid)[1:3] == ("Abus", "Hyban 2.0")
+    er.save_equipment_details("", "", "helmets", _equip(text="Inny."), element_name=HELMET)
+    er.save_equipment_details("Other", "Other model", "helmets", _equip(text="Inny 2."), element_name=HELMET)
+    assert _row(eid)[1:3] == ("Abus", "Hyban 2.0"), "researched values stay"
+    # company empty but model researched: only the missing company is filled
+    eid2 = er.save_equipment_details("", "Hyban X", "helmets", _equip(), element_name="Other helmet")
+    er.save_equipment_details("Abus", "Hyban Y", "helmets", _equip(), element_name="Other helmet")
+    assert _row(eid2)[1:3] == ("Abus", "Hyban X")
+
+
+def test_by_name_lookup_still_finds_the_row_after_company_and_model_were_filled(db):
+    eid = er.save_equipment_details("Abus", "Hyban 2.0", "helmets", _equip(), element_name=HELMET)
+    # the spec-tree click: company "" + model = the element name
+    assert er.get_equipment_details(EquipmentDetailsRequest(model=" ABUS hyban 2.0 ")).equipment_id == eid
+    # the researched brand + model, and brand + model joined back into the name
+    assert er.get_equipment_details(EquipmentDetailsRequest(company="abus", model="HYBAN 2.0")).equipment_id == eid
+    assert er.get_equipment_details(EquipmentDetailsRequest(company="Abus", model="Hyban 2.0")).equipment_id == eid
+    got = er.get_equipment_details(EquipmentDetailsRequest(model=HELMET))
+    assert (got.company, got.model, got.equipment_id) == ("Abus", "Hyban 2.0", eid), "the response shows the researched pair"
+    assert er.get_equipment_photos(EquipmentPhotosRequest(model=HELMET)).equipment_id == eid
+
+
+def test_photos_save_leaves_company_and_model_alone(db):
+    eid = er.save_equipment_details("Abus", "Hyban 2.0", "helmets", _equip(), element_name=HELMET)
+    same, _ = er.save_equipment_photos("Zzz", "Yyy", "helmets", ["https://a/1.jpg"], element_name=HELMET)
+    assert same == eid and _row(eid)[1:3] == ("Abus", "Hyban 2.0")
+    fresh, _ = er.save_equipment_photos("Zzz", "Yyy", "locks", ["https://a/2.jpg"], element_name="Chain lock")
+    assert _row(fresh)[:3] == ("Chain lock", "", "Chain lock")
 
 
 def test_request_validation():
