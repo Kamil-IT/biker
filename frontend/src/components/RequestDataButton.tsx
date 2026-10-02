@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import type { MissingDataRequest, MissingType } from '../types'
+import type { MissingType } from '../types'
+import { recordMissing } from '../api'
 
 type RequestStatus = 'idle' | 'sending' | 'searching' | 'requested' | 'empty'
 
@@ -65,13 +66,7 @@ export default function RequestDataButton({
     setStatus('sending')
     if (missingType) {
       try {
-        const body: MissingDataRequest = { company, model, missing_type: missingType }
-        const res = await fetch('/v1/bike/missing', {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify(body),
-        })
-        if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
+        await recordMissing({ company, model, missing_type: missingType })
       } catch {
         // Let the user try again — unless a search follows, then the counter is secondary.
         if (!onRequested) {

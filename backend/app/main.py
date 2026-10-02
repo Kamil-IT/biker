@@ -34,7 +34,8 @@ from .repository import (  # noqa: E402
     empty_details, fill_bike_results,
 )
 from .offers_repository import (  # noqa: E402
-    get_used_offers, get_decathlon_offers, get_allegro_offers, bike_exists,
+    get_used_offers, get_decathlon_offers, get_allegro_offers, get_centrumrowerowe_offers,
+    bike_exists,
 )
 from .popular_repository import get_popular_bikes  # noqa: E402
 from .photos_repository import get_bike_photos  # noqa: E402
@@ -462,6 +463,23 @@ async def bike_decathlon(req: BikeOfferRequest) -> BikeOfferResponse:
     result = get_decathlon_offers(req.company, req.model)
     elapsed = time.perf_counter() - t_start
     logger.info("decathlon served from DB | offers=%d elapsed=%.3fs", len(result.offers), elapsed)
+    return result
+
+
+@app.post("/v1/bike/centrumrowerowe", response_model=BikeOfferResponse)
+async def bike_centrumrowerowe(req: BikeOfferRequest) -> BikeOfferResponse:
+    """Stored centrumrowerowe.pl offers for the bike — a pure DB read.
+
+    No AI call, no generic cache and no search route: the bike's
+    'centrumrowerowe.pl' rows in bike_offer are written only by the local
+    discovery enrichment (webscraper/centrumrowerowe/enrich.py). Nothing
+    stored → 200 with an empty list.
+    """
+    logger.info("centrumrowerowe request | company=%r model=%r", req.company, req.model)
+    t_start = time.perf_counter()
+    result = get_centrumrowerowe_offers(req.company, req.model)
+    elapsed = time.perf_counter() - t_start
+    logger.info("centrumrowerowe served from DB | offers=%d elapsed=%.3fs", len(result.offers), elapsed)
     return result
 
 

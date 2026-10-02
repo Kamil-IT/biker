@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
 import { ArrowLeft } from '@phosphor-icons/react'
-import type { Bike, BikeCategory, BikeDescription, ComponentElement, BikeReviewResponse, BikeOffer, BikeOfferResponse, UsedBikeResponse } from '../types'
+import type { Bike, BikeCategory, BikeDescription, ComponentElement, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse } from '../types'
 import { MissingType } from '../types'
 import { PhotoGallery, DescriptionCard, ReviewSection, LoadingSkeleton, CategorySection } from './BikeDetailsShared'
 import RequestDataButton from './RequestDataButton'
+import MergedOffersSection from './OffersSection'
 import { useLoadingGrace } from '../hooks/useLoadingGrace'
 
 type ReviewState = 'loading' | 'loaded' | 'error'
@@ -26,14 +27,18 @@ interface BikeDetailsViewProps {
   usedBikeState: 'loading' | 'loaded' | 'error'
   decathlonOffers: BikeOfferResponse | null
   decathlonState: 'loading' | 'loaded' | 'error'
+  // Stored centrumrowerowe.pl offers — a DB read only, no search behind them.
+  centrumOffers: BikeOfferResponse | null
+  centrumState: 'loading' | 'loaded' | 'error'
   onBack: () => void
   onRetry: () => void
   onEquipmentSelect: (element: ComponentElement) => void
   // On-demand OLX search behind the Used card's "Request data" button (TODO-031).
   onSearchUsed: () => Promise<void>
-  // On-demand Decathlon + Allegro searches (run in parallel) behind the New card's
-  // "Request data" button (TODO-032 / TODO-033).
-  onSearchNew: () => Promise<void>
+  // On-demand Allegro and Decathlon searches, one button each in the New card
+  // (TODO-032 / TODO-033); each resolves to the search's `info`.
+  onSearchAllegro: () => Promise<string>
+  onSearchDecathlon: () => Promise<string>
   // On-demand photo search behind the gallery's "Request data" button.
   onSearchPhotos: () => Promise<void>
   // On-demand review search behind the Review section's "Request data" button (TODO-037).
@@ -58,11 +63,14 @@ export default function BikeDetailsView({
   usedBikeState,
   decathlonOffers,
   decathlonState,
+  centrumOffers,
+  centrumState,
   onBack,
   onRetry,
   onEquipmentSelect,
   onSearchUsed,
-  onSearchNew,
+  onSearchAllegro,
+  onSearchDecathlon,
   onSearchPhotos,
   onSearchReview,
   onSearchDetails,
@@ -184,10 +192,13 @@ export default function BikeDetailsView({
           offerState={offerState}
           decathlonOffers={decathlonOffers}
           decathlonState={decathlonState}
+          centrumOffers={centrumOffers}
+          centrumState={centrumState}
           usedBikes={usedBikes}
           usedBikeState={usedBikeState}
           onSearchUsed={onSearchUsed}
-          onSearchNew={onSearchNew}
+          onSearchAllegro={onSearchAllegro}
+          onSearchDecathlon={onSearchDecathlon}
         />
 
         {/* Review */}
@@ -263,262 +274,5 @@ export default function BikeDetailsView({
         )}
       </div>
     </div>
-  )
-}
-
-/* ── Offers (all sources merged, split by is_new) ───── */
-
-type OfferState = 'loading' | 'loaded' | 'error'
-
-// Parse a free-text price ("3 499 zł") into a number for sorting; unparseable sorts last.
-function priceValue(p: string): number {
-  const n = Number((p ?? '').replace(/[^\d]/g, ''))
-  return Number.isFinite(n) && n > 0 ? n : Infinity
-}
-
-interface MergedOffersSectionProps {
-  company: string
-  model: string
-  offers: BikeOfferResponse | null
-  offerState: OfferState
-  decathlonOffers: BikeOfferResponse | null
-  decathlonState: OfferState
-  usedBikes: UsedBikeResponse | null
-  usedBikeState: OfferState
-  onSearchUsed: () => Promise<void>
-  onSearchNew: () => Promise<void>
-}
-
-function MergedOffersSection({
-  company,
-  model,
-  offers,
-  offerState,
-  decathlonOffers,
-  decathlonState,
-  usedBikes,
-  usedBikeState,
-  onSearchUsed,
-  onSearchNew,
-}: MergedOffersSectionProps) {
-  // Pool every offer from all three sources (Allegro, Decathlon, OLX), then split purely on the is_new flag.
-  const allOffers: BikeOffer[] = [
-    ...(offers?.offers ?? []),
-    ...(decathlonOffers?.offers ?? []),
-    ...(usedBikes?.offers ?? []),
-  ]
-
-  const byPrice = (a: BikeOffer, b: BikeOffer) => priceValue(a.price) - priceValue(b.price)
-  const usedList = allOffers.filter(o => o.is_new === false).sort(byPrice)
-  const newList = allOffers.filter(o => o.is_new === true).sort(byPrice)
-
-  // A late source can still add rows to either category, so both cards show their
-  // skeleton for the first 5 s while any source is loading; after that each card
-  // shows whatever rows it has, or its own "Request data" button (TODO-027). In both
-  // cards that button also runs an on-demand search: OLX in the Used card (TODO-031);
-  // Decathlon (TODO-032) and Allegro (TODO-033) in parallel in the New card. The rows
-  // each search returns land in `usedBikes` / `decathlonOffers` / `offers` and take
-  // the button's place. The New card offers its searches only while NEITHER source
-  // has a stored row: a used Allegro listing or a Decathlon outlet row (`is_new:
-  // false`) sits in the Used card while the New card stays empty, and re-searching
-  // would cost two paid runs per click for nothing.
-  const hasNewSourceRows =
-    (decathlonOffers?.offers.length ?? 0) > 0 || (offers?.offers.length ?? 0) > 0
-  const anyLoading =
-    offerState === 'loading' ||
-    decathlonState === 'loading' ||
-    usedBikeState === 'loading'
-  const grace = useLoadingGrace(anyLoading)
-
-  return (
-    <div className="mt-5 bg-card rounded-2xl border border-border overflow-hidden">
-      <div className="px-5 py-4 md:px-6 md:py-5 border-b border-border">
-        <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
-          Oferty
-        </span>
-      </div>
-      <div className="p-4 md:p-5 space-y-4">
-        <OfferCategoryCard
-          title="Używane"
-          list={usedList}
-          loading={grace}
-          company={company}
-          model={model}
-          missingType={MissingType.OffersUsed}
-          onRequested={onSearchUsed}
-          pendingLabel="Szukam na OLX…"
-        />
-        <OfferCategoryCard
-          title="Nowe"
-          list={newList}
-          loading={grace}
-          company={company}
-          model={model}
-          missingType={MissingType.OffersNew}
-          onRequested={hasNewSourceRows ? undefined : onSearchNew}
-          // Not gated: a used Allegro listing arriving mid-search fills the Used card and
-          // flips hasNewSourceRows while this button is still showing its spinner.
-          pendingLabel="Szukam na Allegro i Decathlon…"
-        />
-      </div>
-    </div>
-  )
-}
-
-interface OfferCategoryCardProps {
-  title: string
-  list: BikeOffer[]
-  loading: boolean
-  company: string
-  model: string
-  missingType: MissingType
-  // The search the button runs after the click + its label. Used: OLX (TODO-031);
-  // New: Decathlon and Allegro together (TODO-032 / TODO-033).
-  onRequested?: () => Promise<void>
-  pendingLabel?: string
-}
-
-function OfferCategoryCard({
-  title,
-  list,
-  loading,
-  company,
-  model,
-  missingType,
-  onRequested,
-  pendingLabel,
-}: OfferCategoryCardProps) {
-  // Skeleton during the loading grace period; afterwards the rows, or a
-  // "Request data" button while the category is still empty.
-  return (
-    <div className="bg-card rounded-xl border border-border overflow-hidden">
-      <div className="px-5 py-3 md:px-6 border-b border-border">
-        <span className="font-mono text-[10px] text-muted uppercase tracking-widest">
-          {title}
-        </span>
-      </div>
-      {loading ? (
-        <div className="px-5 py-4 md:px-6 md:py-5 space-y-3">
-          {[0, 1, 2].map(i => (
-            <div key={i} className="flex items-center justify-between gap-4">
-              <div className="space-y-1.5 flex-1">
-                <div className="shimmer h-2.5 w-16 rounded" style={{ animationDelay: `${i * 40}ms` }} />
-                <div className="shimmer h-3.5 w-40 rounded" style={{ animationDelay: `${i * 40 + 20}ms` }} />
-                <div className="shimmer h-2.5 w-20 rounded" style={{ animationDelay: `${i * 40 + 30}ms` }} />
-              </div>
-              <div className="shimmer h-4 w-20 rounded" style={{ animationDelay: `${i * 40 + 40}ms` }} />
-            </div>
-          ))}
-        </div>
-      ) : list.length > 0 ? (
-        <div className="divide-y divide-border">
-          {list.map((offer, i) => (
-            <OfferRow key={i} offer={offer} />
-          ))}
-        </div>
-      ) : (
-        <RequestDataButton
-          variant="inline"
-          company={company}
-          model={model}
-          missingType={missingType}
-          onRequested={onRequested}
-          pendingLabel={pendingLabel}
-        />
-      )}
-    </div>
-  )
-}
-
-function OfferImageGallery({ photos }: { photos: string[] }) {
-  const [idx, setIdx] = useState(0)
-  if (!photos.length) return null
-
-  const visible = photos.slice(idx, idx + 4)
-  const canPrev = idx > 0
-  const canNext = idx + 4 < photos.length
-
-  const prev = (e: React.MouseEvent) => {
-    e.preventDefault(); e.stopPropagation()
-    setIdx(i => Math.max(0, i - 1))
-  }
-  const next = (e: React.MouseEvent) => {
-    e.preventDefault(); e.stopPropagation()
-    setIdx(i => Math.min(photos.length - 1, i + 1))
-  }
-
-  return (
-    <div className="shrink-0 flex items-center gap-1">
-      <button
-        onClick={prev}
-        disabled={!canPrev}
-        className="font-mono text-[13px] text-terra disabled:opacity-20 hover:text-terra-dark transition-colors leading-none px-0.5"
-        aria-label="Poprzednie zdjęcie"
-      >
-        ‹
-      </button>
-      <div className="flex gap-1">
-        {visible.map((src, i) => (
-          <img
-            key={idx + i}
-            src={src}
-            alt=""
-            className={`w-9 h-9 object-cover rounded-sm border transition-all ${
-              i === 0 ? 'border-terra ring-1 ring-terra' : 'border-border opacity-75'
-            }`}
-          />
-        ))}
-      </div>
-      <button
-        onClick={next}
-        disabled={!canNext}
-        className="font-mono text-[13px] text-terra disabled:opacity-20 hover:text-terra-dark transition-colors leading-none px-0.5"
-        aria-label="Następne zdjęcie"
-      >
-        ›
-      </button>
-    </div>
-  )
-}
-
-function OfferRow({ offer }: { offer: BikeOffer }) {
-  return (
-    <a
-      href={offer.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="flex items-center gap-4 px-5 py-4 md:px-6 group hover:bg-sand transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/40"
-    >
-      <div className="flex-1 min-w-0">
-        <p className="font-mono text-[10px] text-muted mb-0.5">{offer.source}</p>
-        <p className="font-display font-bold text-charcoal text-[14px] leading-tight truncate">
-          {offer.brand} {offer.model}
-        </p>
-        {offer.city && (
-          <p className="font-mono text-[10px] text-muted mt-0.5">{offer.city}</p>
-        )}
-      </div>
-      <OfferImageGallery photos={offer.photos} />
-      <div className="shrink-0 flex items-center gap-2">
-        <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded-full border leading-4 ${
-          offer.is_new
-            ? 'text-green-700 border-green-300 bg-green-50'
-            : 'text-muted border-border bg-sand'
-        }`}>
-          {offer.is_new ? 'Nowy' : 'Używany'}
-        </span>
-        {/* An Allegro offer found from search results alone may carry no price (TODO-033). */}
-        {offer.price ? (
-          <span className="font-display font-bold text-terra tabular-nums text-[15px]">
-            {offer.price}
-          </span>
-        ) : (
-          <span className="font-mono text-[10px] text-muted">cena w ofercie</span>
-        )}
-      </div>
-      <span className="shrink-0 font-mono text-[13px] text-terra group-hover:text-terra-dark transition-colors duration-150" aria-hidden="true">
-        →
-      </span>
-    </a>
   )
 }

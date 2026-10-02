@@ -97,6 +97,9 @@ export default function App() {
   const [offers, setOffers]                 = useState<BikeOfferResponse | null>(null)
   const [decathlonState, setDecathlonState] = useState<OfferState>('loading')
   const [decathlonOffers, setDecathlonOffers] = useState<BikeOfferResponse | null>(null)
+  // centrumrowerowe.pl offers: stored by the discovery enrichment, read only — no search.
+  const [centrumState, setCentrumState]     = useState<OfferState>('loading')
+  const [centrumOffers, setCentrumOffers]   = useState<BikeOfferResponse | null>(null)
 
   // Used bikes (OLX) state
   const [usedBikeState, setUsedBikeState]   = useState<UsedBikeState>('loading')
@@ -246,9 +249,10 @@ export default function App() {
     }
   }
 
-  // Stored offers of one marketplace, read when the details view opens. All three
-  // (/v1/bike/allegro, /v1/bike/used/olx, /v1/bike/decathlon) are fast DB reads of the
-  // rows the searcher wrote — no AI call (TODO-031 / TODO-032 / TODO-033) — and differ
+  // Stored offers of one marketplace, read when the details view opens. All four
+  // (/v1/bike/allegro, /v1/bike/used/olx, /v1/bike/decathlon, /v1/bike/centrumrowerowe)
+  // are fast DB reads — no AI call (TODO-031 / TODO-032 / TODO-033); the searcher writes
+  // the first three, the discovery enrichment the centrumrowerowe.pl rows — and differ
   // only in path and state pair, hence one reader. The stored photos (/v1/bike/photos)
   // are read the same way. An answer (or failure) that lands after another bike was
   // opened is dropped, like the on-demand searches' — it would show the previous bike's
@@ -278,9 +282,9 @@ export default function App() {
     }
   }
 
-  // On-demand searches behind the offer cards' "Poproś o dane" buttons — three of
-  // them: OLX in the Used card (TODO-031), Decathlon (TODO-032) and Allegro (TODO-033)
-  // together in the New card. The card's state is deliberately not set to 'loading':
+  // On-demand searches behind the offer cards' buttons — three of them: OLX in the
+  // Used card (TODO-031), and one button each for Decathlon (TODO-032) and Allegro
+  // (TODO-033) in the New card. The card's state is deliberately not set to 'loading':
   // the button shows its own spinner, and 'loading' would restart the 5 s skeleton
   // grace in the offers section. Throws on failure (with the backend's `detail`) so
   // the button can return to clickable. A search can take minutes; if another bike is
@@ -298,40 +302,25 @@ export default function App() {
     setUsedBikeState('loaded')
   }
 
-  // For a non-Decathlon brand the backend answers at once with no offers (no searcher run).
-  // Resolves to whether any offer came back — searchNew needs that to tell "no offers"
-  // from "the search never ran".
-  const searchDecathlon = async (bike: Bike): Promise<boolean> => {
+  // For a non-Decathlon brand the backend answers at once with no offers (no searcher run)
+  // and a Polish `info` naming the house brands. Both searches resolve to their `info`,
+  // which the button shows next to its "nothing found" label.
+  const searchDecathlon = async (bike: Bike): Promise<string> => {
     const data = await postOnDemandSearch<BikeOfferResponse>('/v1/bike/decathlon/search', bike)
-    if (!data) return false
+    if (!data) return ''
     setDecathlonOffers(data)
     setDecathlonState('loaded')
-    return data.offers.length > 0
+    return data.info
   }
 
   // Allegro listings can be used (`is_new: false`) — the returned rows land in
   // whichever card their flag says, through the same `offers` state the DB read fills.
-  const searchAllegro = async (bike: Bike): Promise<boolean> => {
+  const searchAllegro = async (bike: Bike): Promise<string> => {
     const data = await postOnDemandSearch<BikeOfferResponse>('/v1/bike/allegro/search', bike)
-    if (!data) return false
+    if (!data) return ''
     setOffers(data)
     setOfferState('loaded')
-    return data.offers.length > 0
-  }
-
-  // The New card's button runs Decathlon and Allegro at the same time (TODO-033). Each
-  // search sets its own state the moment it returns, so rows from either source
-  // replace the button as they arrive rather than after both finish. Rejects — the
-  // button becomes clickable again, with the first failure's error — whenever a search
-  // failed and no search brought rows: both failed, or one failed (e.g. 503 busy) while
-  // the other came back empty (for a non-Decathlon brand Decathlon is always instantly
-  // empty, so an Allegro failure must not read as "no offers"). A failure next to real
-  // rows from the other source is swallowed — those rows are on screen.
-  const searchNew = async (bike: Bike) => {
-    const results = await Promise.allSettled([searchDecathlon(bike), searchAllegro(bike)])
-    const failures = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
-    const gotRows = results.some(r => r.status === 'fulfilled' && r.value)
-    if (failures.length > 0 && !gotRows) throw failures[0].reason
+    return data.info
   }
 
   // The gallery's "Poproś o dane" button. The searcher only writes photos for a bike
@@ -393,6 +382,7 @@ export default function App() {
     fetchStoredOffers<BikeOfferResponse>('/v1/bike/allegro', bike, setOffers, setOfferState)
     fetchStoredOffers<UsedBikeResponse>('/v1/bike/used/olx', bike, setUsedBikes, setUsedBikeState)
     fetchStoredOffers<BikeOfferResponse>('/v1/bike/decathlon', bike, setDecathlonOffers, setDecathlonState)
+    fetchStoredOffers<BikeOfferResponse>('/v1/bike/centrumrowerowe', bike, setCentrumOffers, setCentrumState)
     fetchStoredOffers<BikePhotosResponse>('/v1/bike/photos', bike, setBikePhotos, setPhotosState)
   }
 
@@ -427,6 +417,10 @@ export default function App() {
     setOffers(null)
     setUsedBikeState('loading')
     setUsedBikes(null)
+    setDecathlonState('loading')
+    setDecathlonOffers(null)
+    setCentrumState('loading')
+    setCentrumOffers(null)
     equipment.reset()
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -654,11 +648,14 @@ export default function App() {
             usedBikeState={usedBikeState}
             decathlonOffers={decathlonOffers}
             decathlonState={decathlonState}
+            centrumOffers={centrumOffers}
+            centrumState={centrumState}
             onBack={handleBackToResults}
             onRetry={() => fetchDetails(selectedBike)}
             onEquipmentSelect={handleEquipmentSelect}
             onSearchUsed={() => searchUsedBikes(selectedBike)}
-            onSearchNew={() => searchNew(selectedBike)}
+            onSearchAllegro={() => searchAllegro(selectedBike)}
+            onSearchDecathlon={() => searchDecathlon(selectedBike)}
             onSearchPhotos={() => searchPhotos(selectedBike)}
             onSearchReview={() => searchReview(selectedBike)}
             onSearchDetails={() => searchDetails(selectedBike)}

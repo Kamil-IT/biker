@@ -62,6 +62,7 @@ USED_SEARCH_URL = f"{BASE}/v1/bike/used/search"
 PARSE_URL = f"{BASE}/v1/bike/parse"
 CENEO_URL = f"{BASE}/v1/bike/ceneo"
 DECATHLON_URL = f"{BASE}/v1/bike/decathlon"
+CENTRUMROWEROWE_URL = f"{BASE}/v1/bike/centrumrowerowe"
 DECATHLON_SEARCH_URL = f"{BASE}/v1/bike/decathlon/search"
 ALLEGRO_URL = f"{BASE}/v1/bike/allegro"
 ALLEGRO_SEARCH_URL = f"{BASE}/v1/bike/allegro/search"
@@ -487,6 +488,55 @@ def case_decathlon():
         _delete_bike(FIX_DEC_BRAND, FIX_DEC_MODEL)
 
 
+FIX_CR_BRAND, FIX_CR_MODEL = "Smoke Fixture", "Centrumrowerowe Bike"
+
+
+def case_centrumrowerowe():
+    """/v1/bike/centrumrowerowe serves only the stored centrumrowerowe.pl offers from bike_offer (no AI, no cache)."""
+    _delete_bike(FIX_CR_BRAND, FIX_CR_MODEL)
+    url = "https://www.centrumrowerowe.pl/rower-smoke-fixture-pd99999/"
+    conn = _DB()
+    try:
+        bike_id = conn.execute(
+            "INSERT INTO bike (brand, model, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (FIX_CR_BRAND, FIX_CR_MODEL, _now(), _now()),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO bike_offer (bike_id, price, is_new, url, source, city, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (bike_id, "1 099 zł", True, url, "centrumrowerowe.pl", None, _now()),
+        )
+        # A row of another source must not leak into this endpoint.
+        conn.execute(
+            "INSERT INTO bike_offer (bike_id, price, is_new, url, source, city, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (bike_id, "999 zł", True, "https://www.decathlon.pl/p/smoke-fixture-cr/_/R-p-000099", "decathlon.pl", None, _now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    body = {"company": FIX_CR_BRAND, "model": FIX_CR_MODEL}
+    key = _norm_key(body)
+    try:
+        _cache_row_delete("/v1/bike/centrumrowerowe", key)
+        t0 = time.perf_counter()
+        resp = _post(CENTRUMROWEROWE_URL, {"company": "  smoke FIXTURE ", "model": "centrumrowerowe bike"}, timeout=10)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        data = resp.json()
+        assert data["info"] == "" and len(data["offers"]) == 1, data
+        offer = data["offers"][0]
+        assert (offer["url"], offer["price"], offer["city"], offer["photos"]) == (url, "1 099 zł", None, []), offer
+        assert offer["is_new"] is True and offer["source"] == "centrumrowerowe.pl", offer
+        assert offer["brand"] == FIX_CR_BRAND and offer["model"] == FIX_CR_MODEL, offer  # stored casing
+        assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
+        assert not _cache_row_exists("/v1/bike/centrumrowerowe", key), "/v1/bike/centrumrowerowe must not write a generic-cache row"
+        resp = _post(CENTRUMROWEROWE_URL, {"company": "FakeBrand", "model": "NoSuchModel XYZ999"}, timeout=10)
+        assert resp.status_code == 200 and resp.json() == {"offers": [], "info": ""}, resp.text[:200]
+        resp = _post(CENTRUMROWEROWE_URL, {"company": "", "model": FIX_CR_MODEL}, timeout=10)
+        assert resp.status_code == 422, f"Expected 422 for an empty company, got {resp.status_code}"
+    finally:
+        _delete_bike(FIX_CR_BRAND, FIX_CR_MODEL)
+
+
 FIX_FOREIGN_BRAND, FIX_FOREIGN_MODEL = "Smoke Fixture", "Foreign Brand Bike"
 LIVE_DEC_BRAND, LIVE_DEC_MODEL = "Decathlon", "Rockrider ST 100"
 
@@ -902,6 +952,7 @@ CASES = [
     (case_used, False),
     (case_used_search, False),
     (case_decathlon, False),
+    (case_centrumrowerowe, False),
     (case_decathlon_search, False),
     (case_allegro, False),
     (case_allegro_search, False),

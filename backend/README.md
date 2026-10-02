@@ -98,15 +98,15 @@ uvicorn app.main:app --reload --port 8000
 `POST /v1/bike/allegro/search`, `POST /v1/bike/photos/search`, `POST /v1/bike/review/search` and `POST /v1/bike/details/search` (TODO-037/041) at the on-demand searcher (top-level `searcher/`, `http://localhost:8100` locally; the key
 is sent as `X-Searcher-Key` and must equal the searcher's own `SEARCHER_API_KEY`). `SEARCHER_TIMEOUT` (seconds, default 600)
 bounds one search. `SEARCHER_MAX_INFLIGHT` (default **10**, was 2) is how many distinct searches this backend lets run at once across
-all six routes — the "Nowe" card fires the Decathlon and Allegro searches together and a details page can add OLX, photos, details and a review — and must never exceed the searcher's
+all six routes — the "Nowe" card's Decathlon and Allegro buttons can run at the same time and a details page can add OLX, photos, details and a review — and must never exceed the searcher's
 capacity (`SEARCHER_MAX_CONCURRENT`, locally 10; on Cloud Run `--max-instances 10` with `--concurrency 1`); an eleventh search is
 refused with 503, nothing queues. The cap is per backend process: two backend instances admit up to 20 between them. Leave `SEARCHER_URL` unset to run without the searcher — all six routes then answer 503,
-while `POST /v1/bike/used/olx`, `POST /v1/bike/decathlon`, `POST /v1/bike/allegro`, `POST /v1/bike/photos`, `POST /v1/bike/review` and `POST /v1/bike/details` keep serving whatever is stored in
+while `POST /v1/bike/used/olx`, `POST /v1/bike/decathlon`, `POST /v1/bike/allegro`, `POST /v1/bike/centrumrowerowe`, `POST /v1/bike/photos`, `POST /v1/bike/review` and `POST /v1/bike/details` keep serving whatever is stored in
 the database.
 
 ```bash
 # In a second terminal:
-python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit), details, details/search (404 only), missing, popular, used, used/search, decathlon, decathlon/search, allegro, allegro/search, photos, photos/search, review, review/search; add --ai for the API cases
+python scripts/test_search.py   # one happy path per endpoint without an Anthropic call: search (DB hit), details, details/search (404 only), missing, popular, used, used/search, decathlon, decathlon/search, allegro, allegro/search, centrumrowerowe, photos, photos/search, review, review/search; add --ai for the API cases
 ```
 
 ```bash
@@ -927,7 +927,7 @@ Content-Type: application/json
 
 - **404** `"Bike not found"` when the bike is not in the `bike` table (Python-normalised brand/model compare, like `/v1/bike/used/search`) — checked **before** any searcher call, so anonymous traffic can neither mint `bike` rows nor spend a subscription run.
 - **200** `{ "offers": [], "info": "Decathlon nie sprzedaje marki Trek — w sklepie są tylko marki własne (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt)." }` **immediately, with no searcher call**, when `company` is not a Decathlon house brand (`app/decathlon_brands.py`: `rockrider`, `btwin`, `triban`, `vanrysel`, `elops`, `riverside`, `stilus`, `tilt`, `decathlon`, compared lower-cased with apostrophes, hyphens, dots and whitespace removed, so `B'Twin` / `b-twin` / `VAN RYSEL` all match). Decathlon sells only its own brands, so this is what closes `TODO_ISSUE_010` (Decathlon offers always empty for foreign brands).
-- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Decathlon searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Decathlon searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"Decathlon searcher is busy — try again in a moment"`): the `SEARCHER_MAX_INFLIGHT` slots (default 10) are **shared with the OLX, Allegro and photo searches** — they mirror the searcher's capacity, and the "Nowe" card fires this search together with `/v1/bike/allegro/search` — and the searcher answers 503 itself when its slots are taken (Cloud Run's 429 at `--max-instances` counts as busy too); nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
+- **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Decathlon searcher is not configured"`), when the searcher cannot be reached / does not answer within `SEARCHER_TIMEOUT` (default 600 s; connect timeout 10 s) (`"Decathlon searcher unavailable"` — the exception text stays in the log), or when a search is already running (`"Decathlon searcher is busy — try again in a moment"`): the `SEARCHER_MAX_INFLIGHT` slots (default 10) are **shared with the OLX, Allegro and photo searches** — they mirror the searcher's capacity, and the "Nowe" card's separate Decathlon and Allegro buttons can both be running — and the searcher answers 503 itself when its slots are taken (Cloud Run's 429 at `--max-instances` counts as busy too); nothing queues. A second request for the same `company`/`model` while one is running joins that search instead of starting another.
 - **400** `{"detail": "<the CLI's notice>"}` when the searcher's `claude -p` run was refused because the Claude subscription limit is used up (TODO-038) — the searcher answers 400 with the CLI's own text (e.g. *"You've hit your session limit · resets 1am (Europe/Warsaw)"*), `searcher_client` raises `SearcherLimitReached`, and the app-wide handler `searcher_limit_reached` in `app/main.py` relays it — the same shape as the Anthropic credit-balance 400. Not a 502 / 503.
 - **502** when the searcher answers with a non-200/400/503/429 — its `detail` (≤ 300 chars) is passed through (e.g. `401` for a wrong `SEARCHER_API_KEY`, `502` when the `claude` CLI fails) — or with a malformed body.
 - `company` / `model` must be non-empty and at most 255 characters (422) — they reach the searcher's CLI prompt and its `bike` row.
@@ -936,6 +936,28 @@ Content-Type: application/json
 1. `POST {SEARCHER_URL}/v1/search/decathlon` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), which runs the `claude` CLI once (`WebSearch`/`WebFetch`, no Playwright) and writes the rows. The backend itself makes no Anthropic call. — **or none** when the brand is not a Decathlon house brand (answered from the allowlist).
 
 **Tests:** `scripts/test_search.py` `case_decathlon_search` — an unknown bike is a **404** whatever the searcher's state; a seeded fixture bike of a foreign brand is a 200 with `offers: []` and an `info` naming Decathlon in < 5 s with no searcher call and no generic-cache row; then, only when `GET {SEARCHER_URL}/health` answers (otherwise SKIP), it runs a live `Decathlon` / `Rockrider ST 100` search — the identity the DB-first search already carries, not a fresh `Rockrider` / `ST 100` row, because a decathlon.pl product URL is globally unique in `bike_offer` and a duplicate identity would capture it (the `bike` row is seeded if missing and kept; 200, every `url` on `https://www.decathlon.pl/`, `source = "decathlon.pl"`, `photos: []`, no generic-cache row) and, when at least one offer came back, checks that `POST /v1/bike/decathlon` then returns the same `(url, price)` set (DB round-trip; 0 offers prints a WARNING — the stored rows are kept, so only their shape is checked).
+
+---
+
+### `POST /v1/bike/centrumrowerowe`
+
+Return the centrumrowerowe.pl offers **stored in the database** for a specific bike model — a pure read of `bike_offer` (`source = 'centrumrowerowe.pl'`, `ORDER BY id`, via `offers_repository.get_centrumrowerowe_offers` on the shared `_get_stored_offers`). **No** AI call, **no** generic cache, no TTL, and **no search route**: the rows (one per shop listing, `is_new` true, price like `"1 099 zł"`, no photos) are written only by the local discovery enrichment in `webscraper/centrumrowerowe/`. Unknown bike / nothing stored / DB error → 200 with an empty list.
+
+```http
+POST http://localhost:8000/v1/bike/centrumrowerowe
+Content-Type: application/json
+
+{
+  "company": "Kross",
+  "model": "Hexagon 1.0"
+}
+```
+
+**Response:** `{ "offers": [{ "brand", "model", "price", "is_new", "url", "photos": [], "source": "centrumrowerowe.pl", "city": null }], "info": "" }` — `brand` / `model` are the `bike` row's. `company` / `model` must be non-empty and at most 255 characters (422).
+
+**Flow:** none — pure DB read of `bike` / `bike_offer` / `bike_offer_photos`, no outbound call.
+
+**Tests:** `scripts/test_search.py` `case_centrumrowerowe` — a fixture bike with a `centrumrowerowe.pl` row and a `decathlon.pl` row → only the centrumrowerowe row is returned (stored casing echoed, casing/whitespace-insensitive lookup), no generic-cache row, < 5 s; an unknown bike → 200 `{ "offers": [], "info": "" }`; an empty `company` → 422.
 
 ---
 
