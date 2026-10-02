@@ -33,7 +33,7 @@ DETAILS = {
         "citations": [{"url": "https://abus.example/1", "title": "Abus", "cited_text": ""}],
     },
     "components": [{"category": "Helmet", "subcategories": [
-        {"subcategory": "Shell", "elements": [{"name": "In-mold", "description": "", "specs": [{"key": "Weight", "value": "390 g"}], "equipment_id": None}]},
+        {"subcategory": "Shell", "elements": [{"name": "In-mold", "description": "", "specs": [{"key": "Weight", "value": "390 g"}], "equipment_id": None, "is_linkable": True}]},
     ]}],
     "short_description": "Kask miejski. Z lampką.",
     "equipment_id": 7,

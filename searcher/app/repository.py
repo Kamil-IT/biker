@@ -306,7 +306,9 @@ def _rebuild_components(rows) -> list[BikeCategory]:
         element = comp["elements"].setdefault(
             r.element_order, {"name": r.element_name, "description": r.element_description or "", "specs": [],
                               # TODO-042: the element's equipment link, from its first row (equipment rows have none)
-                              "equipment_id": getattr(r, "equipment_id", None)},
+                              "equipment_id": getattr(r, "equipment_id", None),
+                              # ISSUE-016: bike rows carry the flag; equipment rows have no column → True
+                              "is_linkable": bool(getattr(r, "is_linkable", True))},
         )
         if r.spec_key is not None:
             element["specs"].append(SpecItem(key=r.spec_key, value=r.spec_value or ""))
@@ -323,12 +325,14 @@ def _rebuild_components(rows) -> list[BikeCategory]:
     return [BikeCategory(category=name, subcategories=subs) for name, subs in grouped.items()]
 
 
-def flatten_components(components: list[BikeCategory]):
+def flatten_components(components: list[BikeCategory], include_linkable: bool = False):
     """The component tree -> one dict of *_detail_component column values per spec (no FK).
 
     An element without specs gives one row with NULL spec_*; component_order
     counts subcategories across the whole tree. Shared by the bike and the
     equipment details saves (TODO-042) — both tables have these columns.
+    `include_linkable=True` adds the element's `is_linkable` (ISSUE-016) — only
+    `bike_component` has that column.
     """
     comp_order = 0
     for category in components:
@@ -339,6 +343,8 @@ def flatten_components(components: list[BikeCategory]):
                     component_order=comp_order, element_name=element.name,
                     element_description=element.description, element_order=e_idx,
                 )
+                if include_linkable:
+                    base["is_linkable"] = element.is_linkable
                 if not element.specs:
                     yield dict(base, spec_key=None, spec_value=None, spec_order=None)
                     continue
@@ -439,7 +445,7 @@ def save_details(company: str, model: str, details: BikeDetails) -> tuple[Option
         session.flush()
 
         rows = 0
-        for values in flatten_components(details.components if has_comps else []):
+        for values in flatten_components(details.components if has_comps else [], include_linkable=True):
             session.add(BikeComponent(
                 bike_id=bike_id, equipment_id=links.get(norm(values["element_name"])), **values,
             ))

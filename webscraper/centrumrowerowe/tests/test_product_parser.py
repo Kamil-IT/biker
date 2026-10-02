@@ -349,3 +349,17 @@ def test_to_details_response_is_the_backend_schema():
 def test_parse_error_on_junk(html):
     with pytest.raises(ParseError):
         parse_product(html, BASE + "/x/")
+
+
+def test_is_linkable_set_by_the_shared_heuristic():
+    # ISSUE-016: the scraper has no model to ask, so app.linkable decides per element —
+    # a branded motor links, a generic frame / Polish "brak" value does not.
+    p = _parse("ebike_haibike_trekking_3_high.html")
+    subs = dict(_elements(p, "Electric / Powertrain"))
+    assert subs["Motor"].is_linkable is True
+    rows = [("Pedały", "brak w zestawie"), ("Wyświetlacz", "Sigma BC 5.0"), ("Błotniki", "stalowe")]
+    p = parse_product(_page(rows, section="Komponenty"), BASE + "/x/")
+    flags = {e.name: e.is_linkable for _s, e in _elements(p, "Accessories")}
+    assert flags["brak w zestawie"] is False
+    assert flags["Sigma BC 5.0"] is True
+    assert flags["stalowe"] is False

@@ -305,6 +305,9 @@ def case_details():
         assert data["description"]["text"] == "Opis testowy.", data
         assert [c["category"] for c in data["components"]] == ["Frame", "Drivetrain", "Brakes"], data["components"]
         assert "photos" not in data
+        # ISSUE-016: every element carries the stored is_linkable flag (a bool, never null)
+        flags = [el["is_linkable"] for c in data["components"] for s in c["subcategories"] for el in s["elements"]]
+        assert flags and all(isinstance(f, bool) for f in flags), data["components"]
         assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
         assert not _cache_row_exists("/v1/bike/details", key), "/v1/bike/details must not write a generic-cache row"
         for company, model in ((FIX_DETAILS_BRAND, bare_model), ("FakeBrand", "NoSuchModel XYZ999")):

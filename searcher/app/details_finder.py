@@ -77,6 +77,7 @@ DETAILS_SCHEMA = {
                                         "properties": {
                                             "name": _STR,
                                             "description": _STR,
+                                            "is_linkable": {"type": "boolean"},
                                             "specs": {
                                                 "type": "array",
                                                 "items": {
@@ -86,7 +87,7 @@ DETAILS_SCHEMA = {
                                                 },
                                             },
                                         },
-                                        "required": ["name", "description", "specs"],
+                                        "required": ["name", "description", "is_linkable", "specs"],
                                     },
                                 },
                             },
@@ -175,6 +176,8 @@ def parse_categories(raw, shells: tuple[str, ...] = ()) -> list[BikeCategory]:
                 ]
                 elements.append(ComponentElement(
                     name=el_name, description=_text(el.get("description"), ELEMENT_DESCRIPTION_MAX), specs=specs,
+                    # ISSUE-016: only a literal true counts; a missing or malformed flag is "not a product".
+                    is_linkable=el.get("is_linkable") is True,
                 ))
             if elements:
                 target.subcategories.append(BikeSubcategory(subcategory=sub_name, elements=elements))

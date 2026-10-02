@@ -244,6 +244,10 @@ def test_init_db_refuses_without_equipment_id(tmp_path, monkeypatch):
             models.init_db()
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE bike_component ADD COLUMN equipment_id INTEGER REFERENCES equipment(id)"))
+        with pytest.raises(RuntimeError, match="migrate_component_linkable.py"):  # ISSUE-016 check comes next
+            models.init_db()
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE bike_component ADD COLUMN is_linkable BOOLEAN NOT NULL DEFAULT 1"))
         models.init_db()  # migrated -> starts
     finally:
         models.dispose_engine()

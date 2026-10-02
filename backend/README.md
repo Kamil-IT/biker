@@ -139,6 +139,12 @@ python scripts/migrate_equipment_tables.py
 python scripts/migrate_rename_bike_component.py --dry-run
 python scripts/migrate_rename_bike_component.py
 
+# One-off per existing database (ISSUE-016, AFTER migrate_rename_bike_component.py): add bike_component.is_linkable and backfill it with the regex heuristic of app/linkable.py.
+# REQUIRED before the new backend or searcher runs against the database (the searcher refuses to start without the column; the new backend's details reads fail). --dry-run prints the true/false distribution and the most frequent names of each class.
+python scripts/migrate_component_linkable.py --dry-run
+python scripts/migrate_component_linkable.py
+python scripts/migrate_component_linkable.py --reclassify   # only to re-run tuned regexes over every row — overwrites the flags the searcher's model wrote
+
 # Once per database (TODO-041): delete the dead generic-cache rows of POST /v1/bike/details (--dry-run counts; production only on an explicit go)
 python scripts/purge_details_cache.py --dry-run
 python scripts/purge_details_cache.py
@@ -495,7 +501,7 @@ Content-Type: application/json
 }
 ```
 
-**Response:** `company`, `model` (the caller's casing), `description` (`{text, segments, citations}` — the 4–5 sentence Polish overview), `components` (category tree — each element `description` is Polish, while category/subcategory/spec keys, element names and spec values stay English) and `short_description` (the two-sentence Polish summary written by the searcher; `""` when none). **No `photos`** since TODO-035 — they come from [`POST /v1/bike/photos`](#post-v1bikephotos).
+**Response:** `company`, `model` (the caller's casing), `description` (`{text, segments, citations}` — the 4–5 sentence Polish overview), `components` (category tree — each element `description` is Polish, while category/subcategory/spec keys, element names and spec values stay English; each element carries `is_linkable: bool`, ISSUE-016 — `true` only when the name is a specific product the UI may link to the equipment view, `false` for "None included", paperwork and generic parts; stored per row in `bike_component.is_linkable`, decided by the searcher's model, or by the regex heuristic `app/linkable.py` for scraper rows and the backfill) and `short_description` (the two-sentence Polish summary written by the searcher; `""` when none). **No `photos`** since TODO-035 — they come from [`POST /v1/bike/photos`](#post-v1bikephotos).
 
 - Unknown bike or nothing stored → **200** with the empty response `{"company": …, "model": …, "description": {"text": "", "segments": [], "citations": []}, "components": [], "short_description": ""}`, never an error. The frontend reads "description text empty **and** no components" as "no data" and shows the **Poproś o dane** button in the Opis and Komponenty sections.
 - The lookup is on the normalised `brand_norm` / `model_norm` columns, so casing and surrounding whitespace do not matter.
@@ -509,7 +515,7 @@ Content-Type: application/json
 
 ### `POST /v1/bike/details/search`
 
-Run the bike-details search **on demand** through the separate searcher service (`searcher/`, TODO-041) and wait for it. The searcher runs the Claude Code CLI once (subscription OAuth token — no Anthropic API key, `WebSearch` + `WebFetch`, no browser) and collects the Polish 4–5 sentence description, a Polish 2-sentence `short_description` and the 8-category component tree (Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories — an empty category is kept as an empty shell). It stores the result **only when usable** (non-empty components or description text): bike row created if missing, `bike_detail` updated in place, `bike_component` rows replaced, photos untouched; an empty or degenerate result writes and deletes nothing. Triggered by the frontend's **Poproś o dane** button in the Opis / Komponenty sections (alongside `POST /v1/bike/missing`); also usable from `curl`. Never cached.
+Run the bike-details search **on demand** through the separate searcher service (`searcher/`, TODO-041) and wait for it. The searcher runs the Claude Code CLI once (subscription OAuth token — no Anthropic API key, `WebSearch` + `WebFetch`, no browser) and collects the Polish 4–5 sentence description, a Polish 2-sentence `short_description` and the 8-category component tree (Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories — an empty category is kept as an empty shell; every element carries the model's `is_linkable` verdict, ISSUE-016). It stores the result **only when usable** (non-empty components or description text): bike row created if missing, `bike_detail` updated in place, `bike_component` rows replaced, photos untouched; an empty or degenerate result writes and deletes nothing. Triggered by the frontend's **Poproś o dane** button in the Opis / Komponenty sections (alongside `POST /v1/bike/missing`); also usable from `curl`. Never cached.
 
 ```http
 POST http://localhost:8000/v1/bike/details/search

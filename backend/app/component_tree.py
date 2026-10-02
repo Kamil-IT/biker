@@ -32,6 +32,8 @@ def rebuild_components(rows) -> list[BikeCategory]:
             "description": r.element_description or "",
             "specs": [],
             "equipment_id": getattr(r, "equipment_id", None),
+            # ISSUE-016: bike rows carry the flag; equipment rows have no column → True (schema default).
+            "is_linkable": bool(getattr(r, "is_linkable", True)),
         })
         if r.spec_key is not None:
             element["specs"].append(SpecItem(key=r.spec_key, value=r.spec_value or ""))
@@ -51,13 +53,15 @@ def rebuild_components(rows) -> list[BikeCategory]:
     ]
 
 
-def flatten_components(components: list[BikeCategory]) -> list[dict]:
+def flatten_components(components: list[BikeCategory], include_linkable: bool = False) -> list[dict]:
     """The tree as one column dict per row (no parent FK, no equipment_id).
 
     `component_order` is a running counter across the tree so rows sharing a
     category stay contiguous; element_order and spec_order order the levels
     beneath it. An element with no specs still emits one row, with the spec_*
     columns None — that is what makes `specs: []` survive the round-trip.
+    `include_linkable=True` adds each element's `is_linkable` (ISSUE-016) — only
+    `bike_component` has that column, `equipment_detail_component` does not.
     """
     rows: list[dict] = []
     comp_order = 0
@@ -72,6 +76,8 @@ def flatten_components(components: list[BikeCategory]) -> list[dict]:
                     element_description=element.description,
                     element_order=e_idx,
                 )
+                if include_linkable:
+                    base["is_linkable"] = element.is_linkable
                 specs: list[Optional[SpecItem]] = list(element.specs) or [None]
                 for s_idx, spec in enumerate(specs):
                     rows.append({

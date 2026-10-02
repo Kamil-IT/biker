@@ -17,6 +17,8 @@ export interface ComponentElement {
   // TODO-042: id of the stored equipment row this element was linked to by a search;
   // null / absent until then (the equipment view then reads by name).
   equipment_id?: number | null
+  /** ISSUE-016: true = a specific product; the bike details view links the name only then. */
+  is_linkable: boolean
 }
 
 export interface BikeSubcategory {

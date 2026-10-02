@@ -129,6 +129,10 @@ class ComponentElement(BaseModel):
     specs: list[SpecItem] = []
     # TODO-042: the equipment row this bike element was searched as (bike trees only).
     equipment_id: Optional[int] = None
+    # ISSUE-016: True when `name` is a specific product the UI may link to the
+    # equipment view; False for "None included", paperwork and generic parts.
+    # Stored per row in bike_component.is_linkable (bike trees only).
+    is_linkable: bool = True
 
 
 class BikeSubcategory(BaseModel):
