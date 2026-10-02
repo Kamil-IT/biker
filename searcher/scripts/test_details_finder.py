@@ -181,7 +181,7 @@ def test_resave_updates_in_place_and_keeps_photos(db):
     with models.get_engine().connect() as conn:
         assert conn.execute(text("SELECT id FROM bike")).scalar_one() == bike_id  # in place
         assert conn.execute(text("SELECT short_description FROM bike")).scalar_one() == "Nowy opis."
-    assert _count("bike_detail_component") == 1  # replaced, not appended
+    assert _count("bike_component") == 1  # replaced, not appended
     assert _count("bike_detail_photos") == 1  # photos untouched
 
 
@@ -190,9 +190,9 @@ def test_unusable_result_writes_and_deletes_nothing(db):
     assert save_details("Canyon", "Grizl", empty) == (None, False)
     assert _count("bike") == 0  # not even a bike row
     bike_id, _ = save_details("Canyon", "Grizl", build_details("Canyon", "Grizl", _data()))
-    rows = _count("bike_detail_component")
+    rows = _count("bike_component")
     assert save_details("Canyon", "Grizl", empty) == (bike_id, False)
-    assert _count("bike_detail_component") == rows  # stored details kept
+    assert _count("bike_component") == rows  # stored details kept
 
 
 def test_description_only_is_stored(db):
@@ -253,11 +253,11 @@ def test_components_only_run_keeps_stored_description(db):
 
 def test_description_only_run_keeps_stored_components(db):
     save_details("Canyon", "Grizl", build_details("Canyon", "Grizl", _data(description="", short_description="")))
-    rows = _count("bike_detail_component")
+    rows = _count("bike_component")
     assert rows > 0
     _, saved = save_details("Canyon", "Grizl", build_details("Canyon", "Grizl", _data(components=[])))
     assert saved
-    assert _count("bike_detail_component") == rows
+    assert _count("bike_component") == rows
     _, stored = get_stored_details("Canyon", "Grizl")
     assert stored.description.text.startswith("Rower do jazdy") and has_components(stored)
 

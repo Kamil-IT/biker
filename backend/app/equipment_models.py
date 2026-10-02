@@ -3,7 +3,7 @@
 Registered on the shared `Base` of models.py, which imports this module at its
 bottom, so `init_db()`'s create_all() builds these tables on a fresh database.
 An existing database needs scripts/migrate_equipment_tables.py once (the four
-tables + `bike_detail_component.equipment_id`). The searcher carries a verbatim
+tables + `bike_component.equipment_id`). The searcher carries a verbatim
 copy of this DDL in searcher/app/models.py — change it here first, then there.
 
 Import the classes from here (`from app.equipment_models import Equipment`).
@@ -77,7 +77,7 @@ class EquipmentDetail(Base):
 
 
 class EquipmentDetailComponent(Base):
-    """One spec row of an equipment item — the flat shape of bike_detail_component (no equipment_id)."""
+    """One spec row of an equipment item — the flat shape of bike_component (no equipment_id)."""
 
     __tablename__ = "equipment_detail_component"
 

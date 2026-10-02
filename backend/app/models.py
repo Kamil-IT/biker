@@ -136,13 +136,13 @@ class Bike(Base):
     # table); the search_cache / search_bike_rating_cache tables were dropped in
     # TODO-043. Components, offers, photos and the review hang off this row.
     components = relationship(
-        "BikeDetailComponent",
+        "BikeComponent",
         back_populates="bike",
         cascade="all, delete-orphan",
         order_by=(
-            "BikeDetailComponent.component_order, "
-            "BikeDetailComponent.element_order, "
-            "BikeDetailComponent.spec_order"
+            "BikeComponent.component_order, "
+            "BikeComponent.element_order, "
+            "BikeComponent.spec_order"
         ),
     )
     offers = relationship("BikeOffer", back_populates="bike", cascade="all, delete-orphan")
@@ -183,7 +183,7 @@ class BikeDetailPhoto(Base):
 # running a Shimano GRX rear derailleur") without any join.
 
 
-class BikeDetailComponent(Base):
+class BikeComponent(Base):
     """One spec row, with its whole ancestry denormalised onto it.
 
     ('Frame', 'Fork', 'Canyon FK0143 CF', 'Weight', '580 g')
@@ -197,7 +197,7 @@ class BikeDetailComponent(Base):
     round-trip. NULL means "no spec here", distinct from a spec whose key is "".
     """
 
-    __tablename__ = "bike_detail_component"
+    __tablename__ = "bike_component"
 
     id = Column(Integer, primary_key=True)
     bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)

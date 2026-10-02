@@ -1,7 +1,7 @@
 """Storing bike data the way the backend reads it (TODO-036), shared by process_queue and copy_to_db.
 
 Two places, two readers:
-- `bike` (description, short_description) + `bike_detail_component` — DB-first search, POST /v1/bike/details and GET /v1/bike/details-cache;
+- `bike` (description, short_description) + `bike_component` — DB-first search, POST /v1/bike/details and GET /v1/bike/details-cache;
 - the generic cache under POST /v1/bike/details — the only thing the details view's details call reads;
 - `bike_detail_photos` keyed on `bike_id` — POST /v1/bike/photos (the details view's photo gallery).
 

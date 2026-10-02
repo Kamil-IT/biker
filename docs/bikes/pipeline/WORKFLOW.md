@@ -11,7 +11,7 @@ the DB write) lives in the services, so it is testable and cheap.
 | Service | Port | Role |
 |---|---:|---|
 | `coordinator` | 9101 | Owns the queue (from `bikes.txt`). Hands out one bike at a time, aggregates both researchers, drives validator → db_saver. |
-| `researcher_details` | 9102 | bike details (bike.description) + bike_detail_component. Mirrors `app/bike_details_finder.py`: 8 categories, same per-category prompts, same `extract_json` + tolerant `_parse_*` coercion. |
+| `researcher_details` | 9102 | bike details (bike.description) + bike_component. Mirrors `app/bike_details_finder.py`: 8 categories, same per-category prompts, same `extract_json` + tolerant `_parse_*` coercion. |
 | `researcher_photos` | 9103 | bike_detail_photos. Mirrors the former `app/bike_photos_finder.py` (moved to `searcher/app/photos_finder.py`, TODO-035): LLM finds the product URL, the service scrapes images itself with the same `_IMG_SRC`/`_SKIP` regexes. |
 | `validator` | 9104 | Checks everything needed to save is present, and says **which side to re-fetch**. |
 | `db_saver` | 9105 | The only writer. Goes through `repository.save_bike_details`, then reads the row back. |

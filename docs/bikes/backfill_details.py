@@ -89,7 +89,7 @@ def store_spool(spool_path: str | Path) -> dict:
         "status": "stored" if ok else "failed",
         "verified": ok,
         "db_rows": {
-            "bike_detail_component": sum(
+            "bike_component": sum(
                 len(e.specs) or 1
                 for c in (check.components if ok else [])
                 for s in c.subcategories

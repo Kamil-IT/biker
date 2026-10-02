@@ -2,7 +2,7 @@
 
 The DDL below is a verbatim copy of `bike`, `bike_offer`, `bike_offer_photos`,
 `bike_detail_photos`, `bike_review`, `bike_review_source`,
-`bike_detail_component` and (TODO-042) `equipment`, `equipment_detail`,
+`bike_component` and (TODO-042) `equipment`, `equipment_detail`,
 `equipment_detail_component`, `equipment_detail_photos` in
 backend/app/models.py — same names, columns, constraints and index names —
 because both services share one database. Change it there first, then here.
@@ -88,7 +88,7 @@ def get_session():
 
 REQUIRED_TABLES = (
     "bike", "bike_offer", "bike_offer_photos", "bike_detail_photos", "bike_review", "bike_review_source",
-    "bike_detail_component",
+    "bike_component",
     "equipment", "equipment_detail", "equipment_detail_component", "equipment_detail_photos",
 )
 
@@ -107,6 +107,13 @@ def init_db():
         Base.metadata.create_all(engine)
         return
     inspector = inspect(engine)
+    # The component table was renamed; create_all() never renames, so an older database
+    # still has bike_detail_component and every details write / read would miss it.
+    if inspector.has_table("bike_detail_component") and not inspector.has_table("bike_component"):
+        raise RuntimeError(
+            "the database still has the bike_detail_component table (bike_component missing) — run "
+            "backend/scripts/migrate_rename_bike_component.py on this database first"
+        )
     missing = [t for t in REQUIRED_TABLES if not inspector.has_table(t)]
     if missing:
         raise RuntimeError(
@@ -121,26 +128,26 @@ def init_db():
             "bike_detail_photos has no bike_id column — run backend/scripts/migrate_photos_bike_id.py "
             "on this database first"
         )
-    # Details moved onto `bike` (description / short_description) and bike_detail_component was
+    # Details moved onto `bike` (description / short_description) and the component table was
     # re-keyed to bike_id; create_all() never ALTERs, so an older database lacks both and every
     # details write would fail.
     bike_columns = {c["name"] for c in inspector.get_columns("bike")}
-    comp_columns = {c["name"] for c in inspector.get_columns("bike_detail_component")}
+    comp_columns = {c["name"] for c in inspector.get_columns("bike_component")}
     if (
         not {"description", "short_description"} <= bike_columns
         or "bike_id" not in comp_columns
         or inspector.has_table("bike_detail")
     ):
         raise RuntimeError(
-            "the database still has the bike_detail table / bike_detail_component.bike_detail_id (bike has no "
-            "description / short_description) — run backend/scripts/migrate_drop_bike_detail.py "
+            "the database still has the bike_detail table / the component table keyed on bike_detail_id "
+            "(bike has no description / short_description) — run backend/scripts/migrate_drop_bike_detail.py "
             "on this database first"
         )
-    # TODO-042: bike_detail_component gained equipment_id (the link to an equipment row); the
+    # TODO-042: bike_component gained equipment_id (the link to an equipment row); the
     # bike details save re-applies it and the equipment save sets it, so both would fail without it.
     if "equipment_id" not in comp_columns:
         raise RuntimeError(
-            "bike_detail_component has no equipment_id column — run backend/scripts/migrate_equipment_tables.py "
+            "bike_component has no equipment_id column — run backend/scripts/migrate_equipment_tables.py "
             "on this database first"
         )
 
@@ -168,13 +175,13 @@ class Bike(Base):
 
     # Relationships
     components = relationship(
-        "BikeDetailComponent",
+        "BikeComponent",
         back_populates="bike",
         cascade="all, delete-orphan",
         order_by=(
-            "BikeDetailComponent.component_order, "
-            "BikeDetailComponent.element_order, "
-            "BikeDetailComponent.spec_order"
+            "BikeComponent.component_order, "
+            "BikeComponent.element_order, "
+            "BikeComponent.spec_order"
         ),
     )
     offers = relationship("BikeOffer", back_populates="bike", cascade="all, delete-orphan")
@@ -283,10 +290,10 @@ class BikeReviewSource(Base):
     review = relationship("BikeReview", back_populates="sources")
 
 
-class BikeDetailComponent(Base):
+class BikeComponent(Base):
     """One spec row, with its whole ancestry denormalised onto it (see backend/app/models.py)."""
 
-    __tablename__ = "bike_detail_component"
+    __tablename__ = "bike_component"
 
     id = Column(Integer, primary_key=True)
     bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -371,7 +378,7 @@ class EquipmentDetail(Base):
 
 
 class EquipmentDetailComponent(Base):
-    """One spec row of an equipment item — the flat shape of bike_detail_component."""
+    """One spec row of an equipment item — the flat shape of bike_component."""
 
     __tablename__ = "equipment_detail_component"
 

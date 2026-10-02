@@ -170,7 +170,7 @@ def log_round(conn: sqlite3.Connection) -> dict:
     """Snapshot DB counts and append to rounds.json."""
     counts = {
         t: conn.execute(f"select count(*) from {t}").fetchone()[0]
-        for t in ("bike", "bike_detail_component", "bike_detail_photos")
+        for t in ("bike", "bike_component", "bike_detail_photos")
     }
     # bike_detail was dropped (details live on bike.description): keep the old key's meaning.
     counts["bike_detail"] = conn.execute("select count(*) from bike where description is not null").fetchone()[0]

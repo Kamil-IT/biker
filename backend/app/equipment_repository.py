@@ -11,7 +11,7 @@ The live writer is the searcher (searcher/app/repository.py); the save
 helpers here mirror its rules: a result is stored only when usable, the
 details row is updated in place and only the half the result produced is
 replaced, photos are insert-only, and the bike link touches only that bike's
-`bike_detail_component` rows with that element name — never globally.
+`bike_component` rows with that element name — never globally.
 """
 import logging
 from datetime import datetime, timezone
@@ -19,7 +19,7 @@ from typing import Optional
 
 from .component_tree import flatten_components, has_components, rebuild_components
 from .equipment_models import Equipment, EquipmentDetail, EquipmentDetailComponent, EquipmentDetailPhoto
-from .models import BikeDetailComponent, get_session, norm
+from .models import BikeComponent, get_session, norm
 from .repository import _find_bike_id
 from .schemas import (
     BikeDescription,
@@ -75,9 +75,9 @@ def bike_component_name(company: str, model: str, element_name: str) -> Optional
             return None
         wanted = norm(element_name)
         rows = (
-            session.query(BikeDetailComponent.element_name, BikeDetailComponent.subcategory)
-            .filter(BikeDetailComponent.bike_id == bike_id)
-            .order_by(BikeDetailComponent.id)
+            session.query(BikeComponent.element_name, BikeComponent.subcategory)
+            .filter(BikeComponent.bike_id == bike_id)
+            .order_by(BikeComponent.id)
         )
         return next(((name, subcategory or "") for name, subcategory in rows if name and norm(name) == wanted), None)
     except Exception as exc:  # noqa: BLE001
@@ -192,13 +192,13 @@ def _link_bike_components(session, bike_id: int, element_name: str, equipment_id
     """Set equipment_id on THIS bike's component rows whose element name matches (normalised); rows updated."""
     wanted = norm(element_name)
     ids = [
-        row_id for row_id, name in session.query(BikeDetailComponent.id, BikeDetailComponent.element_name)
-        .filter(BikeDetailComponent.bike_id == bike_id)
+        row_id for row_id, name in session.query(BikeComponent.id, BikeComponent.element_name)
+        .filter(BikeComponent.bike_id == bike_id)
         if norm(name) == wanted
     ]
     if ids:
-        session.query(BikeDetailComponent).filter(BikeDetailComponent.id.in_(ids)).update(
-            {BikeDetailComponent.equipment_id: equipment_id}, synchronize_session=False,
+        session.query(BikeComponent).filter(BikeComponent.id.in_(ids)).update(
+            {BikeComponent.equipment_id: equipment_id}, synchronize_session=False,
         )
     return len(ids)
 

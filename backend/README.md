@@ -130,9 +130,14 @@ python scripts/migrate_drop_bike_detail.py --dry-run
 python scripts/migrate_drop_bike_detail.py
 
 # One-off per existing database (TODO-042, AFTER migrate_drop_bike_detail.py — it refuses a table still keyed on bike_detail_id):
-# create the equipment tables and add bike_detail_component.equipment_id. REQUIRED before the new backend or searcher runs (the searcher refuses to start without it).
+# create the equipment tables and add bike_component.equipment_id. REQUIRED before the new backend or searcher runs (the searcher refuses to start without it).
 python scripts/migrate_equipment_tables.py --dry-run
 python scripts/migrate_equipment_tables.py
+
+# One-off per existing database (schema refactor, AFTER the two above): rename bike_detail_component to bike_component (table, indexes, PostgreSQL constraints + sequence).
+# REQUIRED before the new backend or searcher runs against the database (the searcher refuses to start without it; the OLD backend breaks on a migrated one).
+python scripts/migrate_rename_bike_component.py --dry-run
+python scripts/migrate_rename_bike_component.py
 
 # Once per database (TODO-041): delete the dead generic-cache rows of POST /v1/bike/details (--dry-run counts; production only on an explicit go)
 python scripts/purge_details_cache.py --dry-run
@@ -215,7 +220,7 @@ One queryable layer sits **on top of** the generic response cache (`app/cache.py
 
 | Layer | Tables | Key | TTL |
 |-------|--------|-----|-----|
-| Details | `bike` (`description`, `short_description`) + `bike_detail_component` | `bike.(brand_norm, model_norm)` — `.strip().lower()` of brand+model | none (TODO-035) |
+| Details | `bike` (`description`, `short_description`) + `bike_component` | `bike.(brand_norm, model_norm)` — `.strip().lower()` of brand+model | none (TODO-035) |
 
 A bike found by search and a bike with stored details are the same `bike` row.
 
@@ -234,7 +239,7 @@ Bike details used to live in a `bike_details_cache` JSON-blob table in `app/stor
 - **Do not replace this with SQL `lower()`.** SQLite's built-in `lower()` is ASCII-only and Python's is not; they diverge only when an **uppercase non-ASCII** character is involved — `RIESE & MÜLLER` lowercases to `riese & mÜller` in SQLite but `riese & müller` in Python, and `Škoda` stays `Škoda` in SQLite against Python's `škoda`. The canonical spelling `Riese & Müller` is unaffected, which is what makes this easy to miss. When it does hit, the lookup misses and `save_bike_details` mints a duplicate `bikes` identity — precisely the case-split problem this migration exists to fix.
 - The response echoes the **caller's** casing, not the stored row's — same as the blob path did. `get_bike_details` finds the bike on the normalised columns (TODO-041; it used to match the exact stored casing).
 - **Photos are not part of the details response any more** (TODO-035): `BikeDetailsResponse` has no `photos` field. They live in `bike_detail_photos`, keyed on `bike_id` (not on the details row), are read by `POST /v1/bike/photos` (`app/photos_repository.py`, `display_order, id`) and written only by the searcher's photo search — insert-only, for a bike that has none. `save_bike_details` neither writes nor deletes them.
-- Details live on the `bike` row: `bike.description` (`TEXT`, nullable — the JSON `BikeDescription`; NULL = no details) and `bike.short_description` (`TEXT NOT NULL DEFAULT ''`, TODO-041, the two-sentence summary); the components are `bike_detail_component` rows keyed on `bike_id`. The former `bike_detail` table is dropped by `scripts/migrate_drop_bike_detail.py`. Rows are written by the searcher (`POST /v1/bike/details/search`, a port of this save logic in `searcher/app/repository.py`) and the discovery processor; `POST /v1/bike/details` only reads them.
+- Details live on the `bike` row: `bike.description` (`TEXT`, nullable — the JSON `BikeDescription`; NULL = no details) and `bike.short_description` (`TEXT NOT NULL DEFAULT ''`, TODO-041, the two-sentence summary); the components are `bike_component` rows keyed on `bike_id`. The former `bike_detail` table is dropped by `scripts/migrate_drop_bike_detail.py`. Rows are written by the searcher (`POST /v1/bike/details/search`, a port of this save logic in `searcher/app/repository.py`) and the discovery processor; `POST /v1/bike/details` only reads them.
 - `save_bike_details` updates the bike row's `description` / `short_description` **in place** and replaces its component rows (delete + re-insert), in one transaction. It returns **True** when committed and **False** when it failed and rolled back (errors are still swallowed and logged as a WARNING) — callers that need certainty (the discovery processor) use the return value. `bike.updated_at` is set on every save, but nothing reads it for freshness.
 
 See [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md) for the full schema and what is still pending (search).
@@ -283,7 +288,7 @@ python scripts/migrate_short_description.py --url postgresql+psycopg://biker:bik
 
 #### bike_detail dropped (`scripts/migrate_drop_bike_detail.py`)
 
-The `bike_detail` table is gone: `bike` gained `description` (`TEXT`, nullable — NULL = the bike has no details) and `short_description` (`TEXT NOT NULL DEFAULT ''`); `bike_detail_component.bike_detail_id` became `bike_id` (FK → `bike.id` `ON DELETE CASCADE`, `NOT NULL`, indexed). The detail timestamps are not carried over.
+The `bike_detail` table is gone: `bike` gained `description` (`TEXT`, nullable — NULL = the bike has no details) and `short_description` (`TEXT NOT NULL DEFAULT ''`); `bike_detail_component.bike_detail_id` became `bike_id` (FK → `bike.id` `ON DELETE CASCADE`, `NOT NULL`, indexed). The detail timestamps are not carried over. (The table was renamed to `bike_component` afterwards — next section.)
 
 ```bash
 cd backend
@@ -297,6 +302,22 @@ python scripts/migrate_drop_bike_detail.py --url postgresql+psycopg://biker:bike
 - Component rows without a detail row / bike are copied whole into `bike_detail_component_orphans` and left out of the migrated table, never dropped silently. Verified before commit (descriptions identical, every component row keeps id, bike and content); any mismatch rolls back, exit code 1.
 - Idempotent: `already-migrated` (a missing piece is repaired); a database without `bike` is left to `init_db()`. Refuses while `bike_detail_photos` still has `bike_detail_id` (run `migrate_photos_bike_id.py` first). Importable as `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `details_before/after`, `rows_before/after`, `orphans`, `verified`, `gaps`, `error`). Tests: `scripts/test_migrate_drop_bike_detail.py`.
 - **Required on every existing database, BEFORE the new backend or searcher runs against it** (production: Cloud SQL backup → migrate through the proxy, only on the user's explicit go → deploy backend + searcher together → the frontend is unchanged). The old backend breaks on a migrated database; the new searcher refuses to start on an unmigrated one.
+
+#### `bike_detail_component` renamed to `bike_component` (`scripts/migrate_rename_bike_component.py`)
+
+The component spec tree is keyed on `bike.id`, so its table is now `bike_component` (ORM `BikeComponent`). Columns and data are unchanged; only the names move — table, indexes (`ix_bike_component_*`), the PostgreSQL `bike_component_pkey` / `bike_component_bike_id_fkey` / `bike_component_equipment_id_fkey` constraints and `bike_component_id_seq` sequence, and `bike_detail_component_orphans` → `bike_component_orphans` when it exists.
+
+```bash
+cd backend
+python scripts/migrate_rename_bike_component.py --dry-run     # report only; database: $DATABASE_URL (backend/.env), else cache.db
+python scripts/migrate_rename_bike_component.py               # migrate
+python scripts/migrate_rename_bike_component.py --db path/to/copy.db
+python scripts/migrate_rename_bike_component.py --url postgresql+psycopg://biker:biker@localhost:5432/<db>
+```
+
+- One transaction on both dialects: `ALTER TABLE … RENAME` → rename the indexes (SQLite drops and recreates them) and, on PostgreSQL, the constraints and sequence → rename the orphans table. Verified before commit (every row reads back identical from `bike_component`, nothing left under the old name); any mismatch rolls back, exit code 1.
+- Idempotent: `already-migrated`; leftover old names are `repaired`. An empty `bike_detail_component` beside a populated `bike_component` (recreated by an OLD backend's `create_all()`) is dropped; an empty `bike_component` beside a populated old table (the NEW backend started too early) is dropped and the rename goes ahead; both populated → refused, nothing written. A database with neither table is left to `init_db()`. Importable as `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` (`status`, `rows_before/after`, `renamed`, `verified`, `error`). Tests: `scripts/test_migrate_rename_bike_component.py`.
+- **Required on every existing database, AFTER `migrate_drop_bike_detail.py` and `migrate_equipment_tables.py` (both still address the old name) and BEFORE the new backend or searcher runs against it** (production: Cloud SQL backup → migrate through the proxy, only on the user's explicit go → deploy backend + searcher together → the frontend is unchanged). The old backend breaks on a migrated database; the new searcher refuses to start on an unmigrated one.
 
 #### Details generic-cache purge (`scripts/purge_details_cache.py`)
 
@@ -395,7 +416,7 @@ All fields except `search` default to `null` (no constraint). The backend assemb
 `explanation` is `""` and `accessories` `[]` for a bike without stored details (typical for an AI-found bike) — the UI hides both. No `match_score` (removed in TODO-040): a DB hit is sorted by brand/model, an AI answer keeps the model's order, and the UI re-orders the cards by expert rating.
 
 **Flow:**
-0. DB reads only — the DB details search over `bike` + `bike_detail_component` (skipped when no checkable field is set). **A hit returns immediately, making zero outbound HTTP calls.** No generic-cache lookup. See [Search Cache](#search-cache)
+0. DB reads only — the DB details search over `bike` + `bike_component` (skipped when no checkable field is set). **A hit returns immediately, making zero outbound HTTP calls.** No generic-cache lookup. See [Search Cache](#search-cache)
 1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns every matching bike as a JSON array (`brand` + `model` only since TODO-041 — min 1: when nothing meets every filter, the closest bike, no longer with an explanation of the missed filter; `max_tokens=8000`, a warning is logged on `stop_reason == "max_tokens"`), parsed with `app/json_extract.extract_json()`; the result is then filled from stored details (`repository.fill_bike_results`, DB only). Runs only on a DB miss
 
 A response with no parseable JSON returns `bikes: []` (never a 502) and nothing is stored; an upstream API error is a 502, except an Anthropic 400, which is a 400 with Anthropic's message. When the AI returns bikes, `store.save_search` makes sure each one exists in `bike` (nothing per-search is stored since TODO-043) — never the generic cache. A DB-served result is not written anywhere — see [Search Cache](#search-cache).
@@ -462,7 +483,7 @@ GET http://localhost:8000/v1/bike/popular
 
 ### `POST /v1/bike/details`
 
-Return the details **stored in the database** for a specific bike model (TODO-041) — a pure read of `bike` (`description`, `short_description`) + `bike_detail_component` through `repository.get_bike_details`. **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/bike/details/search`](#post-v1bikedetailssearch)) and by the discovery processor (`webscraper/centrumrowerowe`). The old in-backend pipeline (8 `web_search` calls + 1 description call, `app/bike_details_finder.py`, `app/bike_description_finder.py` and their prompts) is gone; the generic-cache rows it wrote under `'/v1/bike/details'` are dead and can be deleted with `scripts/purge_details_cache.py`.
+Return the details **stored in the database** for a specific bike model (TODO-041) — a pure read of `bike` (`description`, `short_description`) + `bike_component` through `repository.get_bike_details`. **No** AI call, **no** generic cache, no TTL: the rows are written only by the on-demand searcher service (see [`POST /v1/bike/details/search`](#post-v1bikedetailssearch)) and by the discovery processor (`webscraper/centrumrowerowe`). The old in-backend pipeline (8 `web_search` calls + 1 description call, `app/bike_details_finder.py`, `app/bike_description_finder.py` and their prompts) is gone; the generic-cache rows it wrote under `'/v1/bike/details'` are dead and can be deleted with `scripts/purge_details_cache.py`.
 
 ```http
 POST http://localhost:8000/v1/bike/details
@@ -480,7 +501,7 @@ Content-Type: application/json
 - The lookup is on the normalised `brand_norm` / `model_norm` columns, so casing and surrounding whitespace do not matter.
 - `company` / `model` must be non-empty and at most 255 characters (422).
 
-**Flow:** none — no outbound HTTP calls; one DB read of `bike` + `bike_detail_component`.
+**Flow:** none — no outbound HTTP calls; one DB read of `bike` + `bike_component`.
 
 **Tests:** `scripts/test_search.py` `case_details` — a seeded fixture bike with components and a `short_description` → the stored values, no `photos` key, no generic-cache row, under 5 s; a bike without details and an unknown bike → a fast empty 200. `scripts/test_details_repository.py` (pytest) covers the repository helpers.
 
@@ -488,7 +509,7 @@ Content-Type: application/json
 
 ### `POST /v1/bike/details/search`
 
-Run the bike-details search **on demand** through the separate searcher service (`searcher/`, TODO-041) and wait for it. The searcher runs the Claude Code CLI once (subscription OAuth token — no Anthropic API key, `WebSearch` + `WebFetch`, no browser) and collects the Polish 4–5 sentence description, a Polish 2-sentence `short_description` and the 8-category component tree (Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories — an empty category is kept as an empty shell). It stores the result **only when usable** (non-empty components or description text): bike row created if missing, `bike_detail` updated in place, `bike_detail_component` rows replaced, photos untouched; an empty or degenerate result writes and deletes nothing. Triggered by the frontend's **Poproś o dane** button in the Opis / Komponenty sections (alongside `POST /v1/bike/missing`); also usable from `curl`. Never cached.
+Run the bike-details search **on demand** through the separate searcher service (`searcher/`, TODO-041) and wait for it. The searcher runs the Claude Code CLI once (subscription OAuth token — no Anthropic API key, `WebSearch` + `WebFetch`, no browser) and collects the Polish 4–5 sentence description, a Polish 2-sentence `short_description` and the 8-category component tree (Frame, Drivetrain, Brakes, Wheels, Cockpit, Saddle & Seatpost, Lighting, Accessories — an empty category is kept as an empty shell). It stores the result **only when usable** (non-empty components or description text): bike row created if missing, `bike_detail` updated in place, `bike_component` rows replaced, photos untouched; an empty or degenerate result writes and deletes nothing. Triggered by the frontend's **Poproś o dane** button in the Opis / Komponenty sections (alongside `POST /v1/bike/missing`); also usable from `curl`. Never cached.
 
 ```http
 POST http://localhost:8000/v1/bike/details/search
@@ -511,7 +532,7 @@ Content-Type: application/json
 
 **Flow:**
 1. DB read of `bike` (404 when missing) — `bike_exists`, nothing else is read.
-2. Always `POST {SEARCHER_URL}/v1/search/details` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once and writes the bike row's details columns and `bike_detail_component`. The backend itself makes no Anthropic call.
+2. Always `POST {SEARCHER_URL}/v1/search/details` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{company, model}`), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once and writes the bike row's details columns and `bike_component`. The backend itself makes no Anthropic call.
 
 **Tests:** `scripts/test_search.py` `case_details_search` — an unknown bike is a **404** before any searcher call (no paid run); `scripts/test_searcher_client_details.py` covers the client with a mocked transport; `searcher/scripts/test_searcher.py` covers the searcher route without a paid run.
 
@@ -955,7 +976,7 @@ Content-Type: application/json
 
 ### `POST /v1/equipment/details/search`
 
-Run the equipment details search **on demand** through the separate searcher service (`searcher/`, TODO-042) and wait for it. The request names the **bike** and the element of its spec tree that was clicked; the searcher runs the Claude Code CLI once (subscription OAuth token, `WebSearch` + `WebFetch`, the category's `equipment_details_{slug}.md` prompt — category inferred when not given — no browser), stores the result **only when usable** (non-empty components or description): `equipment` row created if missing, `equipment_detail` updated in place, components replaced, and `equipment_id` set on **that bike's** `bike_detail_component` rows with that element name (never globally). An empty result writes nothing. Triggered by the equipment view's **Poproś o dane** button in the Opis / Komponenty sections (one shared run fills both); also usable from `curl`. Never cached.
+Run the equipment details search **on demand** through the separate searcher service (`searcher/`, TODO-042) and wait for it. The request names the **bike** and the element of its spec tree that was clicked; the searcher runs the Claude Code CLI once (subscription OAuth token, `WebSearch` + `WebFetch`, the category's `equipment_details_{slug}.md` prompt — category inferred when not given — no browser), stores the result **only when usable** (non-empty components or description): `equipment` row created if missing, `equipment_detail` updated in place, components replaced, and `equipment_id` set on **that bike's** `bike_component` rows with that element name (never globally). An empty result writes nothing. Triggered by the equipment view's **Poproś o dane** button in the Opis / Komponenty sections (one shared run fills both); also usable from `curl`. Never cached.
 
 ```http
 POST http://localhost:8000/v1/equipment/details/search
@@ -972,13 +993,13 @@ Content-Type: application/json
 **Response:** the same shape as `/v1/equipment/details` — the details now stored, **including `equipment_id`** (the frontend links the spec-tree element with it); the searcher's wrapper `equipment_id` / `saved` are dropped. A search that found nothing usable is a **200** with the empty response.
 
 - `bike_company`, `bike_model`, `element_name` non-empty, ≤ 255; `category` optional, ≤ 32 (422 otherwise).
-- Order of checks, all **before** any searcher call: **404** `"Bike not found"` when the bike is not in `bike` (`offers_repository.bike_exists`), then **404** `"Component not found"` when that bike has no `bike_detail_component` row whose element name matches (Python-normalised; `equipment_repository.bike_component_name`) — anonymous traffic cannot spend subscription runs on arbitrary strings. The searcher receives the element name **as stored on the bike**, not the caller's casing or whitespace, so a caller cannot choose the equipment row's name or the prompt text, plus that row's subcategory as `element_type` (≤ 255; the request has no such field, so the caller cannot set it). Fix 2026-10-02: a frame is often named exactly like the bike ("Giant Revolt Advanced Pro"), and without its type the searcher answered `found: false`. Stored equipment data is **not** read first; the UI offers the button only while nothing is stored.
+- Order of checks, all **before** any searcher call: **404** `"Bike not found"` when the bike is not in `bike` (`offers_repository.bike_exists`), then **404** `"Component not found"` when that bike has no `bike_component` row whose element name matches (Python-normalised; `equipment_repository.bike_component_name`) — anonymous traffic cannot spend subscription runs on arbitrary strings. The searcher receives the element name **as stored on the bike**, not the caller's casing or whitespace, so a caller cannot choose the equipment row's name or the prompt text, plus that row's subcategory as `element_type` (≤ 255; the request has no such field, so the caller cannot set it). Fix 2026-10-02: a frame is often named exactly like the bike ("Giant Revolt Advanced Pro"), and without its type the searcher answered `found: false`. Stored equipment data is **not** read first; the UI offers the button only while nothing is stored.
 - **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Equipment details searcher is not configured"`), the searcher is unreachable / does not answer within `SEARCHER_TIMEOUT` (`"Equipment details searcher unavailable"`), or no search slot is free (`"Equipment details searcher is busy — try again in a moment"`; the in-flight cap `SEARCHER_MAX_INFLIGHT` and the searcher's slots are shared with **all eight** searcher routes, Cloud Run's 429 maps to the same 503) — nothing queues. Identical concurrent requests for the same bike + element share one search (single-flight key: path, bike company, bike model, element name — normalised; neither the category nor the element type is part of it).
 - **400** `{"detail": "<the CLI's notice>"}` when the Claude subscription limit is used up (TODO-038, the app-wide `searcher_limit_reached` handler).
 - **502** with the searcher's `detail` (≤ 300 chars) when it fails or answers with a malformed body.
 
 **Flow:**
-1. DB reads of `bike` (404 when missing) and of that bike's `bike_detail_component` element names (keyed on `bike_id`) (404 when the element is missing).
+1. DB reads of `bike` (404 when missing) and of that bike's `bike_component` element names (keyed on `bike_id`) (404 when the element is missing).
 2. `POST {SEARCHER_URL}/v1/search/equipment/details` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{bike_company, bike_model, element_name, category?, element_type?}` — `element_type` = the element's stored subcategory, e.g. `"Frame"`, left out when empty), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once and writes the equipment tables + the bike link. The backend itself makes no Anthropic call.
 
 **Tests:** `scripts/test_search.py` `case_equipment_details_search` — an unknown bike and a known bike with an unknown element are **404** before any searcher call (no paid run); `scripts/test_searcher_client_equipment.py` (pytest) covers the client and both search routes with a mocked transport (request, unwrapping, single-flight, busy 503/429, shared cap, 502, 400, 404 guards, 422).

@@ -161,7 +161,7 @@ def _bike(company="Canyon", model="Grizl", element="Abus Hyban 2.0"):
 
 
 def _links(bike_id):
-    return _q("SELECT element_name, equipment_id FROM bike_detail_component WHERE bike_id = :b ORDER BY id", b=bike_id)
+    return _q("SELECT element_name, equipment_id FROM bike_component WHERE bike_id = :b ORDER BY id", b=bike_id)
 
 
 def test_save_creates_equipment_and_links_only_this_bike(db):
@@ -236,14 +236,14 @@ def test_init_db_refuses_without_equipment_id(tmp_path, monkeypatch):
     try:
         engine = models.get_engine()
         models.Base.metadata.create_all(engine, tables=[
-            t for t in models.Base.metadata.sorted_tables if t.name != "bike_detail_component"])
+            t for t in models.Base.metadata.sorted_tables if t.name != "bike_component"])
         with engine.begin() as conn:
-            conn.execute(text("CREATE TABLE bike_detail_component (id INTEGER PRIMARY KEY, bike_id INTEGER, "
+            conn.execute(text("CREATE TABLE bike_component (id INTEGER PRIMARY KEY, bike_id INTEGER, "
                               "element_name VARCHAR(512))"))
         with pytest.raises(RuntimeError, match="migrate_equipment_tables.py"):
             models.init_db()
         with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE bike_detail_component ADD COLUMN equipment_id INTEGER REFERENCES equipment(id)"))
+            conn.execute(text("ALTER TABLE bike_component ADD COLUMN equipment_id INTEGER REFERENCES equipment(id)"))
         models.init_db()  # migrated -> starts
     finally:
         models.dispose_engine()

@@ -141,7 +141,7 @@ class DetailsResponse(BaseModel):
 
 class EquipmentSearchRequest(BaseModel):
     """TODO-042: an equipment item opened from a bike's spec tree. `bike_company` / `bike_model`
-    name the bike (context in the prompt + whose bike_detail_component rows get linked),
+    name the bike (context in the prompt + whose bike_component rows get linked),
     `element_name` is the element as it stands in that tree, `category` an optional slug or
     display name (inferred from the element name when absent or unknown), `element_type` the
     element's subcategory in that tree (e.g. "Frame"), optional — it tells the prompt what kind

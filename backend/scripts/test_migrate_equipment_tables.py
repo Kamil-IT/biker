@@ -17,6 +17,7 @@ from app.schemas import (  # noqa: E402
     EquipmentDetailsResponse,
 )
 from migrate_drop_bike_detail import migrate as migrate_drop_bike_detail  # noqa: E402
+from migrate_rename_bike_component import migrate as rename_component  # noqa: E402
 from migrate_equipment_tables import NEW_TABLES, migrate  # noqa: E402
 
 OLD_COMPONENT_DDL = """
@@ -116,6 +117,7 @@ def test_without_table_is_absent(tmp_path):
 def test_migrated_database_works_with_the_orm(tmp_path, monkeypatch):
     path = _old_db(tmp_path / "old.db", rows=1)
     migrate(path, verbose=False)
+    assert rename_component(path, verbose=False)["status"] == "migrated"  # the ORM maps bike_component now
     monkeypatch.setattr(models, "_db_url", None)
     models.configure_db(path)
     try:

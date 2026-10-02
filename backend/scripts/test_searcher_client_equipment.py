@@ -400,7 +400,7 @@ def _schema_error_session(monkeypatch):
 
     from app import repository
 
-    err = OperationalError("SELECT …", {}, Exception("no such column: bike_detail_component.equipment_id"))
+    err = OperationalError("SELECT …", {}, Exception("no such column: bike_component.equipment_id"))
 
     class _Session:
         def query(self, *a, **k):

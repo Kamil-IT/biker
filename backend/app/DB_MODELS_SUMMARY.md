@@ -38,12 +38,12 @@ Defines 8 tables with relationships and constraints:
 - Shared across search results, details, offers, reviews and photos
 - Timestamp tracking (created_at, updated_at)
 - One-to-many: bike_offer, bike_detail_photos
-- One-to-one: bike_review; one-to-many: bike_detail_component (details themselves are `bike.description` / `bike.short_description`)
+- One-to-one: bike_review; one-to-many: bike_component (details themselves are `bike.description` / `bike.short_description`)
 
 > The search cache (`search_cache` / `search_bike_rating_cache`, earlier `bike_results` + `accessories`) is gone since
 > TODO-043: a search only inserts the bikes it found into `bike` (`store.save_search`).
 
-**Bike details** — the `bike.description` / `bike.short_description` columns (table `bike_detail` was dropped by `scripts/migrate_drop_bike_detail.py`; NULL description = no details) and `BikeDetailComponent` rows keyed on `bike_id`
+**Bike details** — the `bike.description` / `bike.short_description` columns (table `bike_detail` was dropped by `scripts/migrate_drop_bike_detail.py`; NULL description = no details) and `BikeComponent` rows keyed on `bike_id`
 - Stores description as JSON (BikeDescription model)
 - Components are normalised into `bike_details_component` →
   `bike_details_component_element` → `bike_details_component_spec`, not a JSON blob

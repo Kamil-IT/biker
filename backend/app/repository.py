@@ -9,7 +9,7 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from .component_tree import flatten_components, rebuild_components  # noqa: F401 — re-exported
 from .models import (
     Bike,
-    BikeDetailComponent,
+    BikeComponent,
     BikeMissingRequest,
     dialect_insert,
     get_session,
@@ -52,7 +52,7 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> bo
         bike.description = data.description.model_dump_json()
         bike.short_description = data.short_description or ""
         bike.updated_at = datetime.now(timezone.utc)
-        session.query(BikeDetailComponent).filter_by(
+        session.query(BikeComponent).filter_by(
             bike_id=bike.id,
         ).delete(synchronize_session=False)
         session.expire(bike, ["components"])
@@ -62,7 +62,7 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> bo
         # gets back the equipment link its element name had before the re-save;
         # an incoming element.equipment_id is ignored (it may be another DB's id).
         for row in flatten_components(data.components):
-            session.add(BikeDetailComponent(
+            session.add(BikeComponent(
                 bike_id=bike.id,
                 equipment_id=links.get(norm(row["element_name"])),
                 **row,
@@ -83,11 +83,11 @@ def _equipment_links(session, bike_id: int) -> dict[str, int]:
     """norm(element_name) -> equipment_id of one bike's linked component rows (TODO-042)."""
     links: dict[str, int] = {}
     for name, equipment_id in session.query(
-        BikeDetailComponent.element_name, BikeDetailComponent.equipment_id,
+        BikeComponent.element_name, BikeComponent.equipment_id,
     ).filter(
-        BikeDetailComponent.bike_id == bike_id,
-        BikeDetailComponent.equipment_id.isnot(None),
-    ).order_by(BikeDetailComponent.id):
+        BikeComponent.bike_id == bike_id,
+        BikeComponent.equipment_id.isnot(None),
+    ).order_by(BikeComponent.id):
         links.setdefault(norm(name), equipment_id)
     return links
 
@@ -98,12 +98,12 @@ EQUIPMENT_MIGRATION_HINT = "run backend/scripts/migrate_equipment_tables.py"
 def _log_schema_error(what: str, exc: Exception) -> None:
     """ERROR for a DB schema error, naming the TODO-042 migration.
 
-    The ORM reads bike_detail_component.equipment_id, which create_all() never
+    The ORM reads bike_component.equipment_id, which create_all() never
     adds to an existing table — an unmigrated database fails here ("no such
     column" / "does not exist") without saying why.
     """
     logger.error(
-        "%s failed: database schema error — if bike_detail_component.equipment_id is missing, "
+        "%s failed: database schema error — if bike_component.equipment_id is missing, "
         "the database is not migrated, %s | %s", what, EQUIPMENT_MIGRATION_HINT, exc,
     )
 
@@ -207,12 +207,12 @@ def _search_fill(session, bike_ids: list[int]) -> dict[int, tuple[str, list[str]
     rows_by_bike: dict[int, list] = {b.id: [] for b in bikes}
     if rows_by_bike:
         for bike_id, cat, sub, el, key, value in session.query(
-            BikeDetailComponent.bike_id, BikeDetailComponent.category,
-            BikeDetailComponent.subcategory, BikeDetailComponent.element_name,
-            BikeDetailComponent.spec_key, BikeDetailComponent.spec_value,
-        ).filter(BikeDetailComponent.bike_id.in_(list(rows_by_bike))).order_by(
-            BikeDetailComponent.component_order, BikeDetailComponent.element_order,
-            BikeDetailComponent.spec_order,
+            BikeComponent.bike_id, BikeComponent.category,
+            BikeComponent.subcategory, BikeComponent.element_name,
+            BikeComponent.spec_key, BikeComponent.spec_value,
+        ).filter(BikeComponent.bike_id.in_(list(rows_by_bike))).order_by(
+            BikeComponent.component_order, BikeComponent.element_order,
+            BikeComponent.spec_order,
         ):
             rows_by_bike[bike_id].append((cat, sub, el, key, value))
     return {
@@ -328,7 +328,7 @@ _MATCHERS = {
 }
 
 def find_bikes_by_details(req) -> list[BikeResult]:
-    """DB-first search over bike + bike_detail_component — no AI call.
+    """DB-first search over bike + bike_component — no AI call.
 
     [] (→ AI fallback) when no checkable field is set, nothing matches, or the
     DB errors. Every match is returned (no cap), sorted by brand then model
@@ -354,11 +354,11 @@ def find_bikes_by_details(req) -> list[BikeResult]:
             specs = {i: _BikeSpecs() for i in with_details}
             rows = (
                 session.query(
-                    BikeDetailComponent.bike_id, BikeDetailComponent.category,
-                    BikeDetailComponent.subcategory, BikeDetailComponent.element_name,
-                    BikeDetailComponent.spec_key, BikeDetailComponent.spec_value,
+                    BikeComponent.bike_id, BikeComponent.category,
+                    BikeComponent.subcategory, BikeComponent.element_name,
+                    BikeComponent.spec_key, BikeComponent.spec_value,
                 )
-                .filter(BikeDetailComponent.bike_id.in_(list(specs)))
+                .filter(BikeComponent.bike_id.in_(list(specs)))
                 .all()
             )
             for bike_id, cat, sub, elem, key, value in rows:

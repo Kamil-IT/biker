@@ -13,7 +13,7 @@ Cases
       No model is supplied on purpose so the DB-first branch (needs brand AND
       model) is skipped and the AI path actually writes the table.
 
-  E3  Open the top result   -> bike_detail + bike_detail_component (+ photos)
+  E3  Open the top result   -> bike_detail + bike_component (+ photos)
   E4  Spec-tree round-trip  -> #spec rows rendered == #non-NULL spec rows in DB
   E5  Expert review         -> endpoint_req_to_body_cache '/v1/bike/review'
                                (only cached when refs/sources exist -> so if the
@@ -232,15 +232,15 @@ def case_details(page, rep: Report, top_bike, args) -> None:
     bdid = bd[0][0]
 
     n_comp = scalar(
-        "SELECT COUNT(*) FROM bike_detail_component WHERE bike_id=?", (bdid,))
+        "SELECT COUNT(*) FROM bike_component WHERE bike_id=?", (bdid,))
     rep.hard("E3.components", (n_comp or 0) > 0,
-             f"bike_detail_component rows = {n_comp}")
+             f"bike_component rows = {n_comp}")
 
     # UI category names must all exist in the DB category set.
     # The category header carries a Tailwind `uppercase` class, so inner_text()
     # comes back upper-cased while the DB keeps title-case — compare case-folded.
     db_cats = {r[0].lower() for r in rows(
-        "SELECT DISTINCT category FROM bike_detail_component WHERE bike_id=?", (bdid,))}
+        "SELECT DISTINCT category FROM bike_component WHERE bike_id=?", (bdid,))}
     ui_cats = [page.locator(SEL_CAT_HEADER).nth(i).inner_text().strip()
                for i in range(page.locator(SEL_CAT_HEADER).count())]
     missing = [c for c in ui_cats if c.lower() not in db_cats]
@@ -253,7 +253,7 @@ def case_details(page, rep: Report, top_bike, args) -> None:
 
     # E4  round-trip fidelity: rendered spec rows == non-NULL spec rows in DB.
     db_specs = scalar(
-        "SELECT COUNT(*) FROM bike_detail_component "
+        "SELECT COUNT(*) FROM bike_component "
         "WHERE bike_id=? AND spec_key IS NOT NULL", (bdid,)) or 0
     ui_specs = page.locator(SEL_SPEC_ROW).count()
     rep.hard("E4.spec_roundtrip", db_specs == ui_specs,
@@ -261,7 +261,7 @@ def case_details(page, rep: Report, top_bike, args) -> None:
 
     db_elems = scalar(
         "SELECT COUNT(DISTINCT component_order || '-' || element_order) "
-        "FROM bike_detail_component WHERE bike_id=?", (bdid,)) or 0
+        "FROM bike_component WHERE bike_id=?", (bdid,)) or 0
     ui_elems = page.locator(SEL_ELEMENT).count()
     rep.soft("E4.elements", db_elems == ui_elems,
              f"DB elements={db_elems} vs UI element links={ui_elems}")
@@ -362,7 +362,7 @@ def case_cascade(rep: Report, top_bike, args) -> None:
 
     children = {
         "bike_description": "SELECT COUNT(*) FROM bike WHERE id=? AND description IS NOT NULL",
-        "bike_detail_component": "SELECT COUNT(*) FROM bike_detail_component WHERE bike_id=?",
+        "bike_component": "SELECT COUNT(*) FROM bike_component WHERE bike_id=?",
         "bike_detail_photos": "SELECT COUNT(*) FROM bike_detail_photos WHERE bike_id=?",
         "bike_offer": "SELECT COUNT(*) FROM bike_offer WHERE bike_id=?",
     }
