@@ -375,20 +375,32 @@ async def search_details(company: str, model: str) -> BikeDetailsResponse:
     return result.details
 
 
-def _equipment_body(bike_company: str, bike_model: str, element_name: str, category: str | None) -> dict:
+ELEMENT_TYPE_MAX = 255
+
+
+def _equipment_body(
+    bike_company: str, bike_model: str, element_name: str, category: str | None, element_type: str | None = None,
+) -> dict:
+    """The searcher's request body. `element_type` is the element's subcategory on the bike's spec sheet
+    (e.g. "Frame"), stripped and cut to 255 characters; left out when empty, like `category`."""
     body = {"bike_company": bike_company, "bike_model": bike_model, "element_name": element_name}
     if category:
         body["category"] = category
+    element_type = (element_type or "").strip()[:ELEMENT_TYPE_MAX].strip()
+    if element_type:
+        body["element_type"] = element_type
     return body
 
 
 def _equipment_key(path: str, bike_company: str, bike_model: str, element_name: str) -> tuple[str, ...]:
-    """Single-flight key: the category is not part of it — the searcher infers it when absent."""
+    """Single-flight key: neither the category nor the element type is part of it — the searcher infers
+    the category when absent, and the element type comes from the stored spec tree (one per element)."""
     return (path, bike_company.strip().lower(), bike_model.strip().lower(), element_name.strip().lower())
 
 
 async def search_equipment_details(
     bike_company: str, bike_model: str, element_name: str, category: str | None = None,
+    element_type: str | None = None,
 ) -> EquipmentDetailsResponse:
     """Run (or join) the details search for one element of a bike's spec tree (TODO-042) — see _search.
 
@@ -399,13 +411,15 @@ async def search_equipment_details(
     path = SEARCH_PATHS["equipment_details"]
     result = await _single_flight(
         _equipment_key(path, bike_company, bike_model, element_name), path,
-        _equipment_body(bike_company, bike_model, element_name, category), _SearcherEquipmentDetailsResponse,
+        _equipment_body(bike_company, bike_model, element_name, category, element_type),
+        _SearcherEquipmentDetailsResponse,
     )
     return result.details
 
 
 async def search_equipment_photos(
     bike_company: str, bike_model: str, element_name: str, category: str | None = None,
+    element_type: str | None = None,
 ) -> EquipmentPhotosResponse:
     """Run (or join) the photo search for one element of a bike's spec tree (TODO-042) — see _search.
 
@@ -414,6 +428,7 @@ async def search_equipment_photos(
     path = SEARCH_PATHS["equipment_photos"]
     result = await _single_flight(
         _equipment_key(path, bike_company, bike_model, element_name), path,
-        _equipment_body(bike_company, bike_model, element_name, category), _SearcherEquipmentPhotosResponse,
+        _equipment_body(bike_company, bike_model, element_name, category, element_type),
+        _SearcherEquipmentPhotosResponse,
     )
     return EquipmentPhotosResponse(photos=result.photos, equipment_id=result.equipment_id)

@@ -477,7 +477,7 @@ Content-Type: application/json
 
 **Endpoint** `POST /v1/equipment/details/search`
 
-Run equipment details search on demand through the searcher, naming the **bike** and element to search for. Sends `bike_company`, `bike_model`, `element_name` (required, ≤ 255) and optional `category` (≤ 32). Searcher runs `claude -p` once (`WebSearch` + `WebFetch`, category-specific prompt, no Playwright), stores only when usable (non-empty components or description): `equipment` row created if missing, `equipment_detail` updated in place, components replaced, and `equipment_id` set on **that bike's** `bike_detail_component` rows with that element name (never globally).
+Run equipment details search on demand through the searcher, naming the **bike** and element to search for. Sends `bike_company`, `bike_model`, `element_name` (required, ≤ 255) and optional `category` (≤ 32); the backend adds `element_type` = the stored element's subcategory (e.g. `Frame`, so a frame named exactly like the bike is searched as that bike's frameset, not answered `found: false` — fix 2026-10-02). Searcher runs `claude -p` once (`WebSearch` + `WebFetch`, category-specific prompt, no Playwright), stores only when usable (non-empty components or description): `equipment` row created if missing, `equipment_detail` updated in place, components replaced, and `equipment_id` set on **that bike's** `bike_detail_component` rows with that element name (never globally).
 
 ```http
 POST http://localhost:8000/v1/equipment/details/search

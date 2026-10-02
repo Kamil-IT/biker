@@ -11,6 +11,9 @@ build the description and parse the tree. build_equipment_details() is pure.
 
 The item comes from a bike's spec tree, so it is identified by its element
 name (company ""), and the bike is named in the user message as context only.
+build_user_message() (pure, shared with the photo search) adds the element type
+(its subcategory on the spec sheet) and, for an element named exactly like the
+bike — typically the frame — says it is that part of the bike, not the bike.
 """
 import asyncio
 import logging
@@ -108,18 +111,59 @@ def prompt_value(value: str) -> str:
     return " ".join(_PROMPT_UNSAFE.sub(" ", value or "").split())
 
 
-def user_message(bike_company: str, bike_model: str, element_name: str, slug: str) -> str:
+def _norm_name(value: str) -> str:
+    """strip + lower + collapse whitespace (after prompt_value), for the "named after the bike" check."""
+    return " ".join(prompt_value(value).lower().split())
+
+
+def is_named_after_bike(bike_company: str, bike_model: str, element_name: str) -> bool:
+    """True when the element carries the bike's own name ("Giant" "Revolt Advanced Pro" ->
+    "Giant Revolt Advanced Pro" or "Revolt Advanced Pro") — on a spec sheet that is the frame."""
+    name = _norm_name(element_name)
+    return bool(name) and name in (_norm_name(f"{bike_company} {bike_model}"), _norm_name(bike_model))
+
+
+def build_user_message(
+    task: str, bike_company: str, bike_model: str, element_name: str, element_type: str | None, slug: str,
+    context: str,
+) -> str:
+    """The equipment searches' user message. Pure.
+
+    `task` opens it ("Find the specifications and an overview of"), `context` follows the bike
+    sentence. A given element type is named ((listed under "Frame" on the spec sheet)); an
+    element carrying the bike's own name gets a sentence saying it is that part of the bike
+    (the frame when the type is unknown), so the model does not answer found: false for "not
+    a component". Every client-supplied value goes through prompt_value.
+    """
     bike = prompt_value(f"{bike_company} {bike_model}")
-    return (
-        f'Find the specifications and an overview of the bike component or equipment item "{prompt_value(element_name)}" '
-        f'(category: {display_name(slug)}). It is a component listed on the "{bike}" bicycle\'s spec sheet — '
+    kind = prompt_value(element_type or "")
+    listed = f' (listed under "{kind}" on the spec sheet)' if kind else ""
+    message = (
+        f'{task} the bike component or equipment item "{prompt_value(element_name)}"{listed} '
+        f'(category: {display_name(slug)}). It is a component listed on the "{bike}" bicycle\'s spec sheet — {context}'
+    )
+    if is_named_after_bike(bike_company, bike_model, element_name):
+        part = kind or "frame"
+        message += (
+            f" This element carries the bike's own name: it is the {part} of that bike (for a frame: the frameset "
+            "sold or documented by the bike maker), not the complete bike. Describe that part. When the bike maker "
+            "documents it, answer found: true."
+        )
+    return message
+
+
+def user_message(
+    bike_company: str, bike_model: str, element_name: str, slug: str, element_type: str | None = None,
+) -> str:
+    return build_user_message(
+        "Find the specifications and an overview of", bike_company, bike_model, element_name, element_type, slug,
         "use the bike only as context to identify the item (for a generic name, the version fitted to that bike). "
-        "When the manufacturer documents the part, answer found: true."
+        "When the manufacturer documents the part, answer found: true.",
     )
 
 
 async def find_equipment_details(
-    bike_company: str, bike_model: str, element_name: str, category: str | None,
+    bike_company: str, bike_model: str, element_name: str, category: str | None, element_type: str | None = None,
 ) -> tuple[str, EquipmentDetails]:
     """(category slug, what the run found). Raises SearcherError when the run fails; a run that found
     nothing is an unusable EquipmentDetails (no description, no components), not an error."""
@@ -127,16 +171,17 @@ async def find_equipment_details(
     t = time.perf_counter()
     try:
         data = await asyncio.to_thread(
-            run_structured, system_prompt(slug), user_message(bike_company, bike_model, element_name, slug),
+            run_structured, system_prompt(slug),
+            user_message(bike_company, bike_model, element_name, slug, element_type),
             EQUIPMENT_DETAILS_SCHEMA,
         )
     except ClaudeCliError as exc:
         raise searcher_error(exc) from exc
     details = build_equipment_details(element_name, slug, data)
     logger.info(
-        "equipment details search done | element=%r category=%r bike=%r %r description=%d short=%d elements=%d "
-        "sources=%d elapsed=%.2fs",
-        element_name, slug, bike_company, bike_model, len(details.description.text), len(details.short_description),
+        "equipment details search done | element=%r type=%r category=%r bike=%r %r description=%d short=%d "
+        "elements=%d sources=%d elapsed=%.2fs",
+        element_name, element_type, slug, bike_company, bike_model, len(details.description.text), len(details.short_description),
         sum(len(s.elements) for c in details.components for s in c.subcategories),
         len(details.description.citations), time.perf_counter() - t,
     )

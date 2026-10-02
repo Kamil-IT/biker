@@ -39,7 +39,7 @@ _PARTS_KEYWORDS = [
     "derailleur", "shifter", "shift lever", "cassette", "freewheel", "crank", "chainring", "chain", "bottom bracket",
     "brake", "rotor", "caliper", "lever", "pad", "rim", "hub", "wheel", "tyre", "tire", "tube", "spoke", "axle",
     "handlebar", "stem", "grip", "bar tape", "tape", "headset", "seatpost", "seat post", "dropper", "saddle", "pedal",
-    "fork", "shock", "suspension", "groupset", "sprocket", "motor", "drive unit",
+    "fork", "shock", "suspension", "groupset", "sprocket", "motor", "drive unit", "frame", "frameset",
     "lock-on", "lockring", "lock ring",              # part names that contain a lock keyword
     "battery", "battery pack", "powertube",          # an e-bike battery is a part (a light's battery: see below)
 ]
