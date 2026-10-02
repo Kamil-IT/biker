@@ -290,3 +290,49 @@ def test_route_returns_stored_details_without_shells(db, monkeypatch):
     monkeypatch.setattr(searcher_main, "find_bike_details", nothing)
     r = client.post("/v1/search/details", json={"company": "Unknown", "model": "Bike"}, headers={"X-Searcher-Key": "secret-key"})
     assert r.status_code == 200 and r.json()["saved"] == 0 and r.json()["details"]["components"] == []
+
+
+# ── is_linkable (ISSUE-016) ────────────────────────────────────────────────
+
+def _elements_of(details):
+    return {el.name: el for cat in details.components for sub in cat.subcategories for el in sub.elements}
+
+
+def test_is_linkable_taken_from_the_model_only_when_literally_true():
+    data = _data(components=[{"category": "Accessories", "subcategories": [{"subcategory": "Tool", "elements": [
+        {"name": "Giant Multi-Tool", "description": "", "specs": [], "is_linkable": True},
+        {"name": "None included", "description": "", "specs": [], "is_linkable": False},
+        {"name": "Owner's Manual", "description": "", "specs": []},            # missing -> False
+        {"name": "Kona JS2", "description": "", "specs": [], "is_linkable": "true"},  # not a bool -> False
+        {"name": "Shimano Deore RD-M6000", "description": "", "specs": [], "is_linkable": 1},
+    ]}]}])
+    els = _elements_of(build_details("Giant", "Talon 3", data))
+    assert {n: e.is_linkable for n, e in els.items()} == {
+        "Giant Multi-Tool": True, "None included": False, "Owner's Manual": False,
+        "Kona JS2": False, "Shimano Deore RD-M6000": False,
+    }
+
+
+def test_schema_requires_is_linkable_per_element():
+    from app.details_finder import DETAILS_SCHEMA
+    element = (DETAILS_SCHEMA["properties"]["components"]["items"]["properties"]["subcategories"]["items"]
+               ["properties"]["elements"]["items"])
+    assert element["properties"]["is_linkable"] == {"type": "boolean"}
+    assert "is_linkable" in element["required"]
+
+
+def test_is_linkable_round_trips_through_save_details(db):
+    data = _data(components=[{"category": "Accessories", "subcategories": [{"subcategory": "Tool", "elements": [
+        {"name": "Giant Multi-Tool", "description": "", "specs": [], "is_linkable": True},
+        {"name": "None included", "description": "", "specs": [], "is_linkable": False},
+    ]}]}])
+    details = build_details("Giant", "Talon 3", data)
+    bike_id, saved = save_details("Giant", "Talon 3", details)
+    assert saved and bike_id is not None
+    _got_id, stored = get_stored_details("Giant", "Talon 3")
+    assert {n: e.is_linkable for n, e in _elements_of(stored).items()} == {
+        "Giant Multi-Tool": True, "None included": False,
+    }
+    with models.get_engine().connect() as conn:
+        rows = conn.execute(text("SELECT element_name, is_linkable FROM bike_component")).all()
+    assert {(n, bool(f)) for n, f in rows} == {("Giant Multi-Tool", True), ("None included", False)}

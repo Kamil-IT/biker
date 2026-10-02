@@ -25,6 +25,7 @@ from sqlalchemy import (
     create_engine,
     event,
     inspect,
+    true,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -148,6 +149,13 @@ def init_db():
     if "equipment_id" not in comp_columns:
         raise RuntimeError(
             "bike_component has no equipment_id column — run backend/scripts/migrate_equipment_tables.py "
+            "on this database first"
+        )
+    # ISSUE-016: every bike component row carries is_linkable; the ORM selects and inserts it,
+    # so an unmigrated database would fail on the first details read or write.
+    if "is_linkable" not in comp_columns:
+        raise RuntimeError(
+            "bike_component has no is_linkable column — run backend/scripts/migrate_component_linkable.py "
             "on this database first"
         )
 
@@ -305,6 +313,8 @@ class BikeComponent(Base):
     element_name = Column(String(512), nullable=False, index=True)
     element_description = Column(Text, nullable=False, default="")
     element_order = Column(Integer, nullable=False, default=0)
+    # ISSUE-016 — the model's verdict whether the name is a linkable product (see backend/app/models.py).
+    is_linkable = Column(Boolean, nullable=False, default=True, server_default=true())
 
     spec_key = Column(String(255), nullable=True, index=True)
     spec_value = Column(String(1024), nullable=True)

@@ -250,3 +250,25 @@ def test_migrate_drop_search_tables(tmp_path):
         assert con.execute("SELECT COUNT(*) FROM bike").fetchone()[0] == 2
 
     assert drop_search_tables(path, verbose=False)["status"] == "already-migrated"
+
+
+# ── is_linkable (ISSUE-016) ────────────────────────────────────────────────
+
+def test_is_linkable_round_trips_per_element(db):
+    comps = [BikeCategory(category="Accessories", subcategories=[BikeSubcategory(subcategory="Tool", elements=[
+        ComponentElement(name="Giant Multi-Tool", is_linkable=True,
+                         specs=[SpecItem(key="Material", value="Steel"), SpecItem(key="Tools", value="Allen keys")]),
+        ComponentElement(name="None included", is_linkable=False),
+    ])])]
+    assert repository.save_bike_details("Giant", "Talon 3", _details("Giant", "Talon 3", comps))
+    got = repository.get_bike_details("Giant", "Talon 3")
+    flags = {el.name: el.is_linkable for el in got.components[0].subcategories[0].elements}
+    assert flags == {"Giant Multi-Tool": True, "None included": False}
+    with models.get_session() as s:
+        stored = {(r.element_name, r.is_linkable) for r in s.query(models.BikeComponent).all()}
+    assert stored == {("Giant Multi-Tool", True), ("None included", False)}
+
+
+def test_is_linkable_defaults_to_true_in_the_schema():
+    # Writers that cannot judge (equipment finders, old fixtures) keep the old "every name links" behaviour.
+    assert ComponentElement(name="X").is_linkable is True

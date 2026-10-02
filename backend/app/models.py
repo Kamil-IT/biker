@@ -14,6 +14,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    true,
 )
 from sqlalchemy import event
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -211,6 +212,12 @@ class BikeComponent(Base):
     element_name = Column(String(512), nullable=False, index=True)
     element_description = Column(Text, nullable=False, default="")
     element_order = Column(Integer, nullable=False, default=0)
+    # ISSUE-016: does the name denote a product the frontend should link to the
+    # equipment view? Decided by the searcher's model at search time, by
+    # `app/linkable.py` for the discovery scraper and the backfill migration
+    # (`scripts/migrate_component_linkable.py`). Server default TRUE keeps the old
+    # behaviour for rows an older writer might still insert.
+    is_linkable = Column(Boolean, nullable=False, default=True, server_default=true())
 
     # spec level — NULL when the element carries no specs at all
     spec_key = Column(String(255), nullable=True, index=True)

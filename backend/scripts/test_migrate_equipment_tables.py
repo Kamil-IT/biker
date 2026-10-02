@@ -19,6 +19,7 @@ from app.schemas import (  # noqa: E402
 from migrate_drop_bike_detail import migrate as migrate_drop_bike_detail  # noqa: E402
 from migrate_rename_bike_component import migrate as rename_component  # noqa: E402
 from migrate_equipment_tables import NEW_TABLES, migrate  # noqa: E402
+from migrate_component_linkable import migrate as migrate_linkable  # noqa: E402
 
 OLD_COMPONENT_DDL = """
 CREATE TABLE bike_detail_component (
@@ -118,6 +119,7 @@ def test_migrated_database_works_with_the_orm(tmp_path, monkeypatch):
     path = _old_db(tmp_path / "old.db", rows=1)
     migrate(path, verbose=False)
     assert rename_component(path, verbose=False)["status"] == "migrated"  # the ORM maps bike_component now
+    assert migrate_linkable(path, verbose=False)["status"] == "migrated"  # ISSUE-016: the ORM selects is_linkable too
     monkeypatch.setattr(models, "_db_url", None)
     models.configure_db(path)
     try:

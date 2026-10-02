@@ -61,7 +61,7 @@ def save_bike_details(company: str, model: str, data: BikeDetailsResponse) -> bo
         # One row per spec (component_tree.flatten_components). TODO-042: a row
         # gets back the equipment link its element name had before the re-save;
         # an incoming element.equipment_id is ignored (it may be another DB's id).
-        for row in flatten_components(data.components):
+        for row in flatten_components(data.components, include_linkable=True):
             session.add(BikeComponent(
                 bike_id=bike.id,
                 equipment_id=links.get(norm(row["element_name"])),

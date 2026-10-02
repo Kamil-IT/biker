@@ -94,6 +94,9 @@ class ComponentElement(BaseModel):
     description: str = ""
     specs: list[SpecItem] = []
     equipment_id: int | None = None  # TODO-042: the equipment row this bike element opens (bike trees only)
+    # ISSUE-016: the model's verdict — True only for a specific product (brand + model /
+    # part number) the UI may link to the equipment view. Missing in the CLI answer → False.
+    is_linkable: bool = False
 
 
 class BikeSubcategory(BaseModel):

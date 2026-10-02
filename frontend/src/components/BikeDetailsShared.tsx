@@ -337,8 +337,10 @@ function ElementItem({
   element: ComponentElement
   onElementSelect?: (element: ComponentElement) => void
 }) {
-  const { name, description, specs } = element
-  const linkable = !!onElementSelect && !!name
+  const { name, description, specs, is_linkable } = element
+  // ISSUE-016: the stored flag decides — "None included", paperwork and generic
+  // parts come back with is_linkable false and render as plain text.
+  const linkable = !!onElementSelect && !!name && is_linkable === true
   return (
     <div>
       {linkable ? (

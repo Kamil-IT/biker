@@ -31,7 +31,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[2] / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from app.models import Bike, BikeComponent, BikeDetailPhoto  # noqa: E402 — needs sys.path above
+from app.linkable import is_linkable  # noqa: E402 — needs sys.path above
+from app.models import Bike, BikeComponent, BikeDetailPhoto  # noqa: E402
 from app.schemas import (  # noqa: E402
     BikeCategory, BikeDescription, BikeDetailsResponse, BikeSubcategory,
     ComponentElement, SpecItem, TextSegment,
@@ -382,6 +383,8 @@ class _Tree:
                         description=fit(e["description"], LIMITS["element_description"]),
                         specs=[SpecItem(key=fit(k, LIMITS["spec_key"]), value=fit(v, LIMITS["spec_value"]))
                                for k, v in e["specs"]],
+                        # ISSUE-016: no model here — the shared regex heuristic decides.
+                        is_linkable=is_linkable(e["name"], sub),
                     ) for e in elements
                 ]) for sub, elements in subs.items() if elements
             ])

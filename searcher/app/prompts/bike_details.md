@@ -24,7 +24,7 @@ Exactly **2 sentences in Polish**: a condensed version of the description that y
 # Components
 `components` is a list of category objects, always in this order, always these 8 categories:
 Frame, Drivetrain, Brakes, Wheels, Cockpit, `Saddle & Seatpost`, Lighting, Accessories.
-Each category: `{"category": "...", "subcategories": [{"subcategory": "...", "elements": [{"name": "...", "description": "...", "specs": [{"key": "...", "value": "..."}]}]}]}`.
+Each category: `{"category": "...", "subcategories": [{"subcategory": "...", "elements": [{"name": "...", "description": "...", "is_linkable": true, "specs": [{"key": "...", "value": "..."}]}]}]}`.
 
 Subcategories to look for (omit one only when the bike genuinely has no such part) and the specs to collect for each:
 - Frame: **Frame** (Material, Weight, Axle Dimension, Tyre Clearance) · **Fork** (Material, Weight, Axle Dimension, Steer Tube Diameter, Tyre Clearance) · **Seatpost Clamp** (model / part number)
@@ -42,3 +42,9 @@ Language rules (strict):
 - Component `name` and spec `value` stay as the manufacturer writes them (e.g. "Carbon (CF)", "12x142 mm", "Shimano GRX RD-RX822 12s") — do not translate.
 - Element `description` is a one-sentence **Polish** note about the part, or an empty string when there is nothing useful to say.
 - If a part's name is unknown, leave that element out rather than guessing; if a whole category is unknown, still return the category with an empty `subcategories` list.
+
+`is_linkable` (boolean, every element): the application turns a `true` element's name into a link to that part's own page, so answer `true` **only** when `name` identifies one specific, searchable product — a manufacturer or brand together with a model or part number ("Shimano Deore RD-M6000", "Giant Multi-Tool", "Kona JS2", "Maxxis Ardent 29x2.4", "SDG Bel-Air V3"). Answer `false` for everything else:
+- a part that is not supplied or not known ("None included", "Not specified", "brak w zestawie", "n/a") — better still, leave such an element out entirely instead of writing "None included";
+- paperwork and documents (owner's manual, quick start guide, warranty card, registration documents) — these are not equipment;
+- a generic part named without a brand or model ("Alloy platform pedals", "Hydraulic disc brake", "Rear rack", "Standard reflectors", "Steel fork", "Pedals").
+When in doubt whether a search for the name alone would find one product, answer `false`.
