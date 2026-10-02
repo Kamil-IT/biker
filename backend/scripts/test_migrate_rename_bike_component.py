@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app import models, repository  # noqa: E402
-from migrate_rename_bike_component import migrate  # noqa: E402
+from migrate_rename_bike_component import _sequence_leftover, migrate  # noqa: E402
 
 ROWS = [(1, 1, "Frame", "Frame", 0, "F", "d", 0, "Material", "Carbon", 0, None),
         (2, 1, "Frame", "Fork", 0, "Fk", "", 1, None, None, None, 7),
@@ -150,3 +150,14 @@ def test_migrated_database_works_with_the_orm(tmp_path, monkeypatch):
     finally:
         models.dispose_engine()
         models._db_url = None
+
+
+def test_sequence_rename_is_planned_only_when_the_column_still_owns_the_old_name():
+    """PostgreSQL planning decision (the SQLite tests cannot reach it)."""
+    # plain rename: the old table owns the old sequence, the new name is free
+    assert _sequence_leftover("public.bike_detail_component_id_seq", False) == {
+        "kind": "sequence", "old": "bike_detail_component_id_seq", "new": "bike_component_id_seq", "columns": []}
+    # repair case: bike_component already owns its own sequence; the empty old table's one goes with its DROP
+    assert _sequence_leftover("public.bike_component_id_seq", True) is None
+    assert _sequence_leftover("bike_detail_component_id_seq", True) is None  # the new name is taken
+    assert _sequence_leftover(None, False) is None

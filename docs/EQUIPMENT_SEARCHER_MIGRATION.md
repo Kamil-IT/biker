@@ -204,7 +204,7 @@ Migracja przed pierwszym startem na istniejącej bazie: `python scripts/migrate_
 - Rygor `found:false`: nieistniejący kod części (RD-M315) nie daje zmyślonych danych — to zamierzone.
 - Brak limitu zapytań na anonimowe wyzwalacze searcha (jak w pozostałych trasach `/search`).
 - Wyposażenie zachowało osobny wiersz `equipment_detail` (opis + krótki opis), choć rower po PR #137 trzyma je na `bike`.
-  Spłaszczenie zrobiono później (TODO-044, `backlog/TODO_044_MERGE_EQUIPMENT_DETAIL.md`): `equipment_detail` wchłonięte przez `equipment`,
+  Spłaszczenie zrobiono później (TODO-044, `backlog/done/DONE_044_MERGE_EQUIPMENT_DETAIL.md`): `equipment_detail` wchłonięte przez `equipment`,
   `equipment_detail_component` → `equipment_component`, a `company` / `model` uzupełnia dopiero wynik wyszukiwania.
 
 ## 12. Lekcje
