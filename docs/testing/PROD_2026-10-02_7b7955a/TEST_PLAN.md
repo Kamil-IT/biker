@@ -14,7 +14,7 @@
 | Database | Cloud SQL `biker-pg`, never touched directly; stored state was read through the API only |
 | Browser | Python Playwright (global `python`), Chromium headless, 1400x1000, scripts and screenshots in the session scratchpad `qa-prod/` |
 | Anthropic API key | has **no credits**, so every SDK call is a 400. That is expected for the search AI fallback, parse, equipment review and Ceneo. The UI must degrade, not break |
-| Paid budget | at most 2 searcher runs: one equipment details run, plus one equipment photos run on the same element only if the details run stored data |
+| Paid budget | at most 2 searcher runs. Planned as one equipment details run plus a conditional photos run. After the first details run came back empty, the lead approved the second slot for another details run and no photos run |
 
 **Not run on production (no cost-free or no-touch way):**
 - D-05, D-06, E-04 and A-14 need a stopped searcher.
@@ -33,7 +33,8 @@ Techniques: use-case scenarios per screen, equivalence partitions on stored-data
 | Bike B (less data) | Trek / Marlin 6 | photos only (8). No description, components, review or offers |
 | Popular | Giant Revolt Advanced Pro, Romet Aspre, Trek Madone SL 6 | ratings 8.4 / 7.0 / 8.2 |
 | Paid element P1 | "Shimano Altus RD-M315" on bike A (Drivetrain / Rear Derailleur) | no equipment row; the `equipment` table was empty at deploy time |
-| Linked element (not created by QA) | "Giant Through Axle" on Giant Revolt Advanced Pro | created at 06:59–07:00 UTC by an equipment search that was **not** run by this QA session: equipment id 1, details stored, 4 element rows linked, no photos |
+| Paid element P2 | "Shimano Altus FD-M315" on bike A (Drivetrain / Front Derailleur) | no equipment row |
+| Linked element (not created by QA) | "Giant Through Axle" on Giant Revolt Advanced Pro | created at 06:59–07:00 UTC by the user testing production by hand: equipment id 1, details stored, 4 element rows linked, no photos |
 
 Entry criteria: frontend `/` and backend `/docs` answer 200. Exit criteria: every in-scope case Pass, or failures reported with evidence. Severity: Critical (page broken / data loss), High (feature wrong), Medium (degraded), Low (cosmetic).
 
@@ -70,7 +71,7 @@ Entry criteria: frontend `/` and backend `/docs` answer 200. Exit criteria: ever
 | E-01 | High | Giant Revolt Advanced Pro, click "Giant Through Axle" (linked) | reads `/v1/equipment/details` + `/photos` with `equipment_id: 1`; Polish description and spec tree shown; no `/search`; only the gallery button (no photos stored) |
 | E-02 | High | Bike A, click "Shimano Altus RD-M315", wait > 5 s | reads by name (`company: ""`) return empty; 3 buttons (Zdjęcia, Opis, Specyfikacja); no `/v1/bike/missing` |
 | E-03 | High | Same view, review section | `/v1/equipment/review` 400; section hidden; rest of the page intact |
-| E-05 | High | **P1 (paid)**: click the Opis button | one `/v1/equipment/details/search`, Opis and Specyfikacja both show "Szukam danych wyposażenia…"; then data in Polish in both, or "Nie znaleziono danych" in both |
+| E-05 | High | **P1 / P2 (paid)**: click the Opis button | one `/v1/equipment/details/search`, Opis and Specyfikacja both show "Szukam danych wyposażenia…"; then data in Polish in both, or "Nie znaleziono danych" in both |
 | E-06 | High | After E-05: back to bike A, re-open the element | data read from the DB by `equipment_id`, no second `/search`; `/v1/bike/details` carries `equipment_id` on that element; `/v1/equipment/details` by id answers the stored data |
 
 ### API regression (A), urllib against the backend URL
@@ -92,9 +93,9 @@ Entry criteria: frontend `/` and backend `/docs` answer 200. Exit criteria: ever
 
 **Total in scope: 31 cases** (H 3 · S 5 · D 5 · E 5 · A 13).
 
-## Results (2026-10-02, 08:50–09:05 local time)
+## Results (2026-10-02, 08:50–09:10 local time)
 
-**30 passed · 0 failed · 1 blocked.** No 5xx anywhere: every response seen in the browser and in the 53 API checks was 200, 400, 404 or 422.
+**31 passed · 0 failed · 0 blocked.** No 5xx anywhere: every response seen in the browser and in the 53 API checks was 200, 400, 404 or 422.
 
 | Case | Result | Evidence / notes |
 |---|---|---|
@@ -114,8 +115,9 @@ Entry criteria: frontend `/` and backend `/docs` answer 200. Exit criteria: ever
 | E-01 | Pass | `equipment_id: 1` sent in both reads; Polish description, sources, spec tree (Polish labels, "Thread pitch" untranslated, O5); only the gallery button; no `/search` (`e01_linked_giant_axle.png`) |
 | E-02 | Pass | reads by name `{"company":"","model":"Shimano Altus RD-M315"}` empty; 3 buttons; no `/v1/bike/missing` (`e02_equip_view.png`) |
 | E-03 | Pass | `/v1/equipment/review` 400; review section not rendered; only that 400 in the console |
-| E-05 (P1) | Pass (empty path) | one `/v1/equipment/details/search`, body `{bike_company:"Trek", bike_model:"Marlin 5", element_name:"Shimano Altus RD-M315"}` (no category; the searcher picked `parts`); both sections "Szukam danych wyposażenia…" (`e05_pending.png`); no photos search. Searcher log: CLI 40.3 s, 10 turns, $0.176, "model reports the item was not found", nothing written. Both sections then "Nie znaleziono danych" (`e05_after.png`). The data path was not exercised, see O6 |
-| E-06 | Blocked | P1 stored nothing, so there was no `equipment_id` to read back. Re-entry read by name, sent no `/search`, and showed the 3 buttons again (O4, by design). `/v1/bike/details` for Marlin 5 has no linked element. The read-back path was verified on the "Giant Through Axle" equipment instead (E-01, A-10) |
+| E-05 (P1) | Pass with note | "Shimano Altus RD-M315": one `/v1/equipment/details/search`, body `{bike_company:"Trek", bike_model:"Marlin 5", element_name:"Shimano Altus RD-M315"}` (no category; the searcher picked `parts`). Both sections showed "Szukam danych wyposażenia…" (`e05_pending.png`) and no photos search was sent. Searcher log: CLI 40.3 s, 10 turns, $0.176, "model reports the item was not found", nothing written. Both sections then showed "Nie znaleziono danych" (`e05_after.png`). This code does not exist (O6), and the local run saw the same result. The empty path is correct |
+| E-05 (P2) | Pass | "Shimano Altus FD-M315": one shared run, both sections "Szukam danych wyposażenia…" (`e05b_pending.png`), 45.6 s. Both sections then filled in Polish (`e05b_after.png`): description 756 chars, short description 279 chars, 2 elements (Napęd / "Shimano Altus FD-M315-TS" and General / "FD-M315-TS"), sources dassets.shimano.com and productinfo.shimano.com (Shimano PDFs). The gallery button stayed and no photos search was sent |
+| E-06 | Pass | After P2, back to Marlin 5 and re-open: `/v1/equipment/details` and `/photos` sent with `equipment_id: 3`, data shown at once, only the gallery button, no `/search` (`e06b_reenter.png`). API: `/v1/bike/details` Marlin 5 has `equipment_id: 3` on Drivetrain / Front Derailleur "Shimano Altus FD-M315" only. `/v1/equipment/details` by id 3 and by lower-case name answer the stored data in 0.08 s. `/v1/equipment/photos` by id 3 gives `photos: []`. After P1 (empty) the re-entry read by name, sent no `/search` and showed the 3 buttons again (O4). Linked read on the user's equipment id 1: both Giant "Giant Through Axle" rows carry `equipment_id: 1` (E-01) |
 | A-01 – A-12 | Pass | 52 of 53 checks passed on the first pass. Every DB read took under 0.5 s (max `/v1/bike/search {is_electric:true}` 0.48 s, others 0.05–0.13 s). Every 404 guard answered in about 0.1 s without a searcher run |
 | A-13 | Pass (retest) | The first pick, `Shimano / Altus RD-M315`, was a 200 from the old generic cache: a test-data error (O3). Uncached `Zzqx / QA Uncached Part 7781` gave a 400 with Anthropic's detail. Parse and Ceneo gave 400 |
 
@@ -124,16 +126,17 @@ Entry criteria: frontend `/` and backend `/docs` answer 200. Exit criteria: ever
 - O2: a search 400 shows the backend's English Anthropic message inside the Polish banner ("Błąd: Your credit balance is too low…").
 - O3: the generic-cache row of `/v1/equipment/review` for `Shimano / Altus RD-M315` describes a different part (RD-M310). Its explanation keeps raw `<cite index="…">` markup, which `/v1/equipment/review` returns unstripped. The UI asks with `company: ""`, so it misses this row and the section stays hidden. Low.
 - O4: after an empty equipment search, re-entering the item shows "Poproś o dane" again, so another paid run is one click away. This is by design.
-- O5: the spec key "Thread pitch" has no Polish label in `specLabels.ts`, so it falls back to English. Low.
+- O5: several spec keys and one subcategory have no Polish label in `specLabels.ts`, so they fall back to English: "Thread pitch" (Giant axle), and "Cable pull", "Mounting type", "Chainstay angle" and the subcategory "General" (FD-M315). Low.
 - O6: the stored Trek Marlin 5 spec lists "Shimano Altus RD-M315". Shimano's Altus rear derailleur is the RD-M310 (FD-M315 is the front derailleur), so the part code is probably wrong in the stored details. The model's "not found" is then a correct answer, not a searcher fault. A component element with a wrong code costs a paid run that cannot succeed.
-- O7: the searcher logs show an equipment photos run and a details run at 06:59 UTC for "Giant Through Axle" on Giant Revolt Advanced Pro. This QA session did not start them. The details run stored equipment id 1: Polish description, 6 component rows, 4 element rows linked, 75.6 s, $0.135. Its photos run ended at 07:03 UTC after 237 s (CLI 33 turns, $0.849, the backend request 237.4 s) with no product URL found, and wrote nothing. That is about five times a details run for a generic part name, and worth a look at the photos prompt's turn budget (Medium, cost). A further outside photos run started at 07:02 UTC for the element "Giant Revolt Advanced Pro" (the frame), with a CLI time of 37.3 s and $0.098. Each searcher request started a new Cloud Run instance (`--concurrency 1`), with a cold start of about 15 s before the CLI starts.
+- O7: the user tested production by hand at the same time. The searcher logs show an equipment photos run and a details run at 06:59 UTC for "Giant Through Axle" on Giant Revolt Advanced Pro. The details run stored equipment id 1: Polish description, 6 component rows, 4 element rows linked, 75.6 s, $0.135. Its photos run ended at 07:03 UTC after 237 s (CLI 33 turns, $0.849, the backend request 237.4 s) with no product URL found, and wrote nothing. That is about five times a details run for a generic part name, and worth a look at the photos prompt's turn budget (Medium, cost). A further outside photos run started at 07:02 UTC for the element "Giant Revolt Advanced Pro" (the frame), with a CLI time of 37.3 s and $0.098. That element now carries `equipment_id: 2`. Each searcher request started a new Cloud Run instance (`--concurrency 1`), with a cold start of about 15 s before the CLI starts.
 
-**Paid runs**
+**Paid runs (this QA session)**
 
 | Run | Case | Wall time (UI) | Searcher / CLI | Cost (CLI) | Stored (as seen through the API) |
 |---|---|---|---|---|---|
 | P1 equipment details, "Shimano Altus RD-M315" on Trek Marlin 5 | E-05 | 45.4 s (backend 43.4 s) | CLI 40.3 s, 10 turns, `found: false` | $0.176 | nothing: `/v1/equipment/details` by name stays empty, no `equipment_id` on the bike's element |
+| P2 equipment details, "Shimano Altus FD-M315" on Trek Marlin 5 (approved by the lead) | E-05 / E-06 | 45.6 s (backend 45.4 s) | CLI 45.1 s, 8 turns, `found: true` | $0.266 | equipment id 3 (`parts`): description, short description, 10 component rows (2 elements), linked to Marlin 5's front-derailleur row only |
 
-The photos run was not made, because P1 stored no data (budget rule).
+**Total paid by QA: 2 runs, $0.442.** No photos run was made, on the lead's instruction.
 
-**QA writes on production:** one `bike_missing_request` attempt for an unknown bike (`qa_prod`), which writes nothing by design. The paid run wrote nothing. The UI buttons for the equipment view send no `/v1/bike/missing`.
+**QA writes on production:** one `bike_missing_request` attempt for an unknown bike (`qa_prod`), which writes nothing by design. P1 wrote nothing. P2 wrote equipment id 3 and linked one element row of Trek Marlin 5. That data is left in place, like the local QA data. The UI buttons for the equipment view send no `/v1/bike/missing`.
