@@ -2,7 +2,7 @@
 
 **Branch:** `refactor/merge-equipment-detail`
 **Worktree:** `C:\Users\kamil_wolny\Projects\biker-wt\refactor-merge-equipment-detail`
-**Status:** TODO — kod i testy gotowe, PR nieotwarty; migracja nieuruchomiona na lokalnym `biker-pg` ani na Cloud SQL
+**Status:** DONE — merged in PR #149 (92394ac, 2026-10-02); Cloud SQL migrated and deployed the same day (backend `biker-backend-00017-8vb`, searcher `biker-searcher-00010-dkq`, frontend `biker-frontend-00012-m56`)
 
 ## Cel (trzy punkty)
 

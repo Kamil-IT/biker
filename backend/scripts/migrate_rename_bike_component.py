@@ -83,8 +83,19 @@ def _engine(url: str) -> Engine:
     return create_engine(url, isolation_level="AUTOCOMMIT")
 
 
-def _leftovers(conn, table: str) -> list[dict]:
-    """Objects of `table` still carrying the old name: {kind, old, new, columns}."""
+def _sequence_leftover(owned: str | None, new_exists: bool) -> dict | None:
+    """The sequence rename to plan, or None. `owned` = the sequence the source table's id column owns
+    (pg_get_serial_sequence, maybe schema-qualified). Renamed only while that column still uses the old
+    sequence name and the new name is free: in the repair case (an empty old table recreated beside
+    bike_component) the old sequence belongs to the table that is dropped, and the new one already exists."""
+    if owned and owned.split(".")[-1].strip('"') == _PG_SEQUENCE[0] and not new_exists:
+        return {"kind": "sequence", "old": _PG_SEQUENCE[0], "new": _PG_SEQUENCE[1], "columns": []}
+    return None
+
+
+def _leftovers(conn, table: str, new_dropped: bool = False) -> list[dict]:
+    """Objects of `table` still carrying the old name: {kind, old, new, columns}.
+    `new_dropped`: an empty duplicate NEW table is dropped in this run, so its sequence name is free."""
     insp = inspect(conn)
     found = []
     for ix in insp.get_indexes(table):
@@ -97,9 +108,12 @@ def _leftovers(conn, table: str) -> list[dict]:
         for old, new in _PG_CONSTRAINTS:
             if old in names:
                 found.append({"kind": "constraint", "old": old, "new": new, "columns": []})
-        if conn.execute(text("SELECT 1 FROM pg_class WHERE relkind = 'S' AND relname = :n"),
-                        {"n": _PG_SEQUENCE[0]}).first():
-            found.append({"kind": "sequence", "old": _PG_SEQUENCE[0], "new": _PG_SEQUENCE[1], "columns": []})
+        owned = conn.execute(text("SELECT pg_get_serial_sequence(:t, 'id')"), {"t": table}).scalar()
+        new_exists = not new_dropped and bool(conn.execute(
+            text("SELECT 1 FROM pg_class WHERE relkind = 'S' AND relname = :n"), {"n": _PG_SEQUENCE[1]}).first())
+        item = _sequence_leftover(owned, new_exists)
+        if item:
+            found.append(item)
     if insp.has_table(OLD_ORPHANS):
         found.append({"kind": "table", "old": OLD_ORPHANS, "new": NEW_ORPHANS, "columns": []})
     return found
@@ -175,7 +189,7 @@ def migrate(url_or_path=None, dry_run: bool = False, verbose: bool = True) -> di
                 report["rows_before"] = len(expected)
                 plan = [{"kind": "table", "old": OLD, "new": NEW, "columns": []}] if has_old else []
                 # leftovers are read off the source table now (index names survive a rename on both dialects)
-                plan += _leftovers(conn, source)
+                plan += _leftovers(conn, source, new_dropped=drop_empty == NEW)
                 if drop_empty:
                     plan.insert(0, {"kind": "drop", "old": drop_empty, "new": "", "columns": []})
                 say(f"before: {len(expected)} rows in {source}; "
