@@ -31,3 +31,4 @@ docs/bikes/scratch/
 # Per-run queue state (1.8MB, churns every run). rounds.json is the durable log.
 docs/bikes/pipeline/state/queue.json
 backend/cache.db.bak
+webscraper/centrumrowerowe/runs/

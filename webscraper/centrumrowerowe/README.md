@@ -93,6 +93,45 @@ count, every listing linked, no bike lost its `bike_id`); a mismatch rolls back 
 SQLite rebuilds the table, PostgreSQL alters it in place under an `ACCESS EXCLUSIVE` lock. A second
 run prints "already migrated". Run on the local PostgreSQL `biker-pg` on 2026-09-30 (rehearsed first on a PostgreSQL copy of the real table): `old_rows=1310 bikes=1278 listings=1310 merged_groups=30 merged_rows=32 bike_id_conflicts=0` - the merged groups are men's/women's variants of the same model name (e.g. "Rower crossowy ROMET Orkan 5 CS" + "... damski ..."); a second run printed "already migrated". Run on GCP Cloud SQL the same evening (through the proxy, `--allow-remote`, started by the user by hand): identical numbers (1310 → 1278 bikes, 1310 listings, 49 done / 1 skipped / 1228 pending, 50 `bike_id` kept), second run "already migrated". After the migration, on `biker-pg` (2026-09-30): a full re-scrape saw 1311 products and inserted 7 bikes + 7 listings (new `pd` ids in the catalogue; 6 old ones were not seen) and updated 1304 listings; `process_queue.py --limit 5` gave `done=5 skipped=0 failed=0`; 194 unit tests pass.
 
+### 5. `enrich.py` — import straight into the target and fill what is missing
+
+The loop used for the full import into Cloud SQL (2026-10-02). Each round claims up to `--batch` (5)
+pending bikes and processes them exactly like `process_queue.py` (shop page, no AI), then takes up to
+5 bikes (`done`/`skipped` with a bike) that still miss something and fills, per bike: one
+`bike_offer` per centrumrowerowe listing (`source = 'centrumrowerowe.pl'`, `is_new` true, price as
+`1 099 zł`, no AI — note: no backend route reads this source yet, so the UI does not show it);
+photos via `POST {backend}/v1/bike/photos/search` **only when the bike has none**; details via
+`/v1/bike/details/search` **only when the description text or the components are missing** (the AI
+result then replaces the components); `short_description` = a two-sentence Polish summary of the description by Haiku
+(`claude -p --model haiku`, no tools, short system prompt, subscription — `ANTHROPIC_API_KEY` is removed
+from the CLI's environment; ~12 s and ~$0.012 list per bike; only while empty, `--refresh-short` redoes it); the review via `/v1/bike/review/search`
+when there is no `bike_review` row. The paid calls go to the deployed backend (default the Cloud Run
+URL, `--backend`), so the searcher writes them atomically.
+
+`--since` (ISO, UTC) limits the enrichment to discovery rows updated at or after that moment — the
+full import ran with `--since 2026-10-02T12:00`, leaving the 55 bikes processed earlier alone.
+
+**Usage guard**: before every paid call (Haiku included) the subscription usage is checked
+(`GET https://api.anthropic.com/api/oauth/usage`, token from `~/.claude/.credentials.json` — the same
+account as the searcher's). The endpoint rate-limits (429), so it is read at most once a minute and the
+reading is shared by all threads; a 429 is retried (Retry-After, up to 4 tries) and a failed read keeps
+the last reading while it is under 5 minutes old. At 5 h ≥ `--stop-at` (80 %) or 7 days ≥
+`--stop-at-week` (85 %), when it cannot be read, or on a backend 400
+(subscription limit) no new paid call starts and no new batch is claimed; calls already running finish.
+Nothing is left half-done: what is missing is always read from the database, so a rerun resumes.
+A paid step that came back empty is recorded in `runs/enrich_attempts.json` (gitignored) and not
+paid for again unless `--retry-empty`.
+
+### 6. `verify_discovery.py` — did everything land? (read-only)
+
+Checks every discovery row: nothing `pending`/`in_progress`, `failed` rows listed; per bike the
+description text, `short_description`, components (WARN under 4 categories), photos, review and a
+centrumrowerowe offer per listing; the backend's own reads (`get_bike_details`, `get_bike_photos`,
+`get_review`) non-empty; a `done` row has a listing fetched without error. A paid step recorded as
+empty turns its ERROR into a WARN. `--recheck N` (default 20) re-fetches N random done bikes and
+compares component rows and description (when still the shop's) and the photo count with the DB.
+Summary on stdout, every finding in `runs/verify_<timestamp>.csv`, exit code 1 on any ERROR.
+
 ## Files
 
 | file | role |
@@ -106,6 +145,9 @@ run prints "already migrated". Run on the local PostgreSQL `biker-pg` on 2026-09
 | `migrate_discovery_listings.py` | one-off: old one-table `bike_discovery` → bike + listing tables |
 | `bike_store.py` | storing helpers shared by the processor and the copy script |
 | `copy_to_db.py` | copy bikes + listings + details + photos into another database |
+| `enrich.py` | import loop: queue batch of 5 + fill offer / photos / details / short description (Haiku) / review, stops at 80 % (5 h) / 85 % (7 days) of the subscription |
+| `run_loop.sh` | rounds of `enrich.py` until the limit: waits out a 5 h stop, ends on the 7-day stop, then runs `verify_discovery.py` (log `runs/loop.log`) |
+| `verify_discovery.py` | read-only completeness check of every discovered bike, CSV of findings, exit 1 on ERROR |
 | `db.py` | backend bootstrap (`sys.path`, `backend/.env`), `BikeDiscovery` + `BikeDiscoveryListing` models, `check_target()` |
 | `tests/` | pytest on saved product pages in `tests/fixtures/`, temp SQLite only |
 
@@ -172,6 +214,13 @@ $env:PGPASSFILE = 'C:\path\to\backend\gcp-prod-pgpass.conf'
 ..\..\backend\.venv\Scripts\python.exe copy_to_db.py --target-url postgresql+psycopg://biker@127.0.0.1:6543/biker --allow-remote
 ```
 
+```powershell
+# 4. import straight into Cloud SQL and fill the gaps (proxy on 6543, see above)
+$env:DATABASE_URL = 'postgresql+psycopg://biker@127.0.0.1:6543/biker'
+..\..\backend\.venv\Scripts\python.exe enrich.py --allow-remote                 # until done or 80 % of the 5 h window
+..\..\backend\.venv\Scripts\python.exe verify_discovery.py --allow-remote --recheck 20
+```
+
 Flags:
 
 | script | flag | meaning |
@@ -191,6 +240,20 @@ Flags:
 | | `--source`, `--limit` | only bikes listed by this shop (and only its listings) / at most N bikes |
 | | `--dry-run` | report what would change, write nothing |
 | | `--allow-remote` | required for a non-local target |
+| `enrich.py` | `--batch N` | bikes per round, queue and enrichment (default 5) |
+| | `--stop-at P` | 5 h usage % that stops the run (default 80) |
+| | `--stop-at-week P` | 7-day usage % that stops the run (default 85) |
+| | `--since ISO` | only enrich discovery rows updated at/after this UTC time |
+| | `--refresh-short` | regenerate `short_description` with Haiku even when set |
+| | `--backend URL` | backend for the paid searches (default the Cloud Run backend) |
+| | `--no-queue`, `--bike ID` | only enrich / only these bikes |
+| | `--max-bikes N` | stop after enriching N bikes |
+| | `--retry-empty` | pay again for steps that came back empty |
+| | `--allow-remote` | allow a non-local database |
+| `verify_discovery.py` | `--recheck N` | random done bikes to re-fetch and compare (default 20, 0 = none) |
+| | `--since ISO` | check done/skipped bikes only when updated at/after this UTC time |
+| | `--bike ID`, `--no-read-path`, `--csv PATH` | only these bikes / skip the backend read checks / findings file |
+| | `--allow-remote` | allow a non-local database (read-only) |
 | `migrate_discovery_listings.py` | `--url URL` | database to migrate (default: `DATABASE_URL` from `backend/.env`) |
 | | `--dry-run` | migrate, verify and report, then roll back |
 | | `--allow-remote` | required for a non-local database, **`--dry-run` included** (it runs the DDL and locks the table before rolling back) |
