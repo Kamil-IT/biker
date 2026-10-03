@@ -3,8 +3,10 @@ import SearchInput from './SearchInput'
 import ResultCard from './ResultCard'
 import LoadingCard from './LoadingCard'
 import PopularBikesSection from './PopularBikesSection'
+import SortSelect from './SortSelect'
 import { bikePath } from '../hooks/useRoute'
 import { PENDING_RATING, bikeKey } from '../ratings'
+import type { SortOrder } from '../sortBikes'
 import type { Bike, ExpertRating, PopularBike, SearchFilters, SearchPayload } from '../types'
 
 export type SearchState = 'idle' | 'loading' | 'results' | 'error'
@@ -29,6 +31,9 @@ interface SearchPageProps {
   popularBikes: PopularBike[]
   popularRatings: Record<string, ExpertRating>
   bikes: Bike[]
+  // The "Sortuj" select above the results (TODO-040 sorting, rules in sortBikes.ts).
+  sortOrder: SortOrder
+  onSortChange: (order: SortOrder) => void
   ratings: Record<string, ExpertRating>
   submittedQuery: string
   resultsRef: RefObject<HTMLElement | null>
@@ -39,7 +44,8 @@ interface SearchPageProps {
 export default function SearchPage({
   showResults, state, errorMsg, noMatchMsg,
   query, onQueryChange, filters, onFilterChange, showFilters, onShowFiltersChange, isParsing, onSubmit,
-  popularBikes, popularRatings, bikes, ratings, submittedQuery, resultsRef, onReset, onSelectBike,
+  popularBikes, popularRatings, bikes, sortOrder, onSortChange, ratings, submittedQuery, resultsRef, onReset,
+  onSelectBike,
 }: SearchPageProps) {
   // A /search address opened by link or F5 renders before its search has started.
   const loading = state === 'loading' || state === 'idle'
@@ -152,6 +158,11 @@ export default function SearchPage({
                 </button>
               )}
             </div>
+
+            {/* Sort — pointless for a single bike */}
+            {state === 'results' && bikes.length > 1 && (
+              <SortSelect value={sortOrder} onChange={onSortChange} />
+            )}
 
             {/* Card list */}
             <div className="space-y-4">

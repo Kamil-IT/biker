@@ -42,6 +42,8 @@ from .photos_repository import get_bike_photos  # noqa: E402
 from .reviews_repository import get_review  # noqa: E402
 # Equipment details / photos (DB reads) and their on-demand searches, TODO-042.
 from .equipment_routes import router as equipment_router  # noqa: E402
+# The Kontakt tab's "Napisz do nas" form → contact_message.
+from .contact_routes import router as contact_router  # noqa: E402
 # The OLX used-bike search (TODO-031), the Decathlon search (TODO-032), the
 # Allegro search (TODO-033), the bike photo search and the bike review search
 # (TODO-037), the bike details search (TODO-041) and the equipment details / photo
@@ -73,6 +75,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Biker API", version="1.0.0", lifespan=lifespan)
 app.include_router(equipment_router)
+app.include_router(contact_router)
 
 
 @app.exception_handler(anthropic.BadRequestError)

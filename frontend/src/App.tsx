@@ -12,8 +12,8 @@ import useCachedRatings from './hooks/useCachedRatings'
 import { useBikeDetails } from './hooks/useBikeDetails'
 import { useEquipment } from './hooks/useEquipment'
 import { errorMessage, postJson } from './api'
-import { bikeKey } from './ratings'
 import { payloadToFilters, payloadToQuery, queryToPayload } from './searchQuery'
+import { DEFAULT_SORT, sortBikes, type SortOrder } from './sortBikes'
 import type { Bike, ComponentElement, EquipmentResolveResponse, ParseResponse, SearchFilters, SearchPayload } from './types'
 import { EMPTY_FILTERS } from './types'
 
@@ -76,15 +76,15 @@ export default function App() {
 
   // Home-page "Najpopularniejsze rowery" (TODO-034): fetched once for the app's lifetime.
   const { bikes: popularBikes, ratings: popularRatings } = usePopularBikes()
-  // TODO-040: expert ratings of the search results (stored reviews only). Until every
-  // rating has settled the backend order is kept so cards do not jump; then rated bikes
-  // go first, best first, and "no rating" bikes last (stable sort = backend order in ties).
+  // TODO-040: expert ratings of the search results (stored reviews only). The "Sortuj"
+  // select orders the list by rating (default: best first) or by name; the choice is kept
+  // across searches. Rules in sortBikes.ts.
   const { ratings: resultRatings, settled: ratingsSettled } = useCachedRatings(bikes)
-  const sortedBikes = useMemo(() => {
-    if (!ratingsSettled) return bikes
-    const value = (b: Bike) => resultRatings[bikeKey(b)]?.rating ?? -1
-    return [...bikes].sort((a, b) => value(b) - value(a))
-  }, [bikes, resultRatings, ratingsSettled])
+  const [sortOrder, setSortOrder] = useState<SortOrder>(DEFAULT_SORT)
+  const sortedBikes = useMemo(
+    () => sortBikes(bikes, sortOrder, resultRatings, ratingsSettled),
+    [bikes, sortOrder, resultRatings, ratingsSettled],
+  )
 
   const details = useBikeDetails()
   // Equipment view (/equipment/{id}, entered from a component name in a bike's spec tree).
@@ -359,6 +359,8 @@ export default function App() {
             popularBikes={popularBikes}
             popularRatings={popularRatings}
             bikes={sortedBikes}
+            sortOrder={sortOrder}
+            onSortChange={setSortOrder}
             ratings={resultRatings}
             submittedQuery={submittedQuery}
             resultsRef={resultsRef}

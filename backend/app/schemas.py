@@ -1,4 +1,5 @@
-from typing import Annotated, Optional
+import re
+from typing import Annotated, Literal, Optional, get_args
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -76,6 +77,46 @@ class BikeDetailsRequest(BaseModel):
 
 
 MISSING_TYPE_MAX_LEN = 64
+
+# The contact form's "W jakiej sprawie?" choices. The slugs are stored; the Polish
+# labels live in the frontend (ContactPage.tsx), like the search filters' options.
+ContactTopic = Literal["missing_bike", "wrong_data", "feature_idea", "cooperation", "other"]
+CONTACT_TOPICS = get_args(ContactTopic)
+CONTACT_NAME_MAX_LEN = 100
+CONTACT_EMAIL_MAX_LEN = 254
+CONTACT_MESSAGE_MAX_LEN = 5000
+# Deliberately loose (one @, a dot in the domain, no whitespace): the address is only
+# used to reply by hand, so a typo costs a reply, not a broken feature.
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+
+class ContactMessageRequest(BaseModel):
+    """The "Napisz do nas" form of the Kontakt tab. Strings are trimmed; `name` is optional.
+
+    `website` is a honeypot: the form hides it, so only a bot fills it in.
+    """
+    name: str = Field(default="", max_length=CONTACT_NAME_MAX_LEN)
+    email: str = Field(max_length=CONTACT_EMAIL_MAX_LEN)
+    topic: ContactTopic
+    message: str = Field(min_length=1, max_length=CONTACT_MESSAGE_MAX_LEN)
+    website: str = ""
+
+    @field_validator("name", "email", "message", "website", mode="before")
+    @classmethod
+    def strip(cls, v):
+        # NUL is dropped too: PostgreSQL refuses it in a text column.
+        return v.replace("\x00", "").strip() if isinstance(v, str) else v
+
+    @field_validator("email")
+    @classmethod
+    def email_shape(cls, v: str) -> str:
+        if not _EMAIL_RE.fullmatch(v):
+            raise ValueError("not a valid e-mail address")
+        return v
+
+
+class ContactMessageResponse(BaseModel):
+    ok: bool = True
 
 
 class MissingDataRequest(BaseModel):
