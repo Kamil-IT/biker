@@ -237,8 +237,9 @@ def fill_bike_results(bikes: list[BikeResult]) -> list[BikeResult]:
         fill = _search_fill(session, [i for i in (ids.get((_lc(r.brand), _lc(r.model))) for r in bikes) if i])
         out = []
         for r in bikes:
-            explanation, chips = fill.get(ids.get((_lc(r.brand), _lc(r.model))), ("", []))
-            out.append(BikeResult(brand=r.brand, model=r.model, accessories=chips, explanation=explanation))
+            bike_id = ids.get((_lc(r.brand), _lc(r.model)))
+            explanation, chips = fill.get(bike_id, ("", []))
+            out.append(BikeResult(id=bike_id, brand=r.brand, model=r.model, accessories=chips, explanation=explanation))
         return out
     except Exception as exc:  # noqa: BLE001
         logger.warning("fill_bike_results failed (non-fatal) | %s", exc)
@@ -257,6 +258,22 @@ def accessory_chips(bike_id: int) -> list[str]:
     session = get_session()
     try:
         return _search_fill(session, [bike_id]).get(bike_id, ("", []))[1]
+    finally:
+        session.close()
+
+
+def get_bike_by_id(bike_id: int) -> Optional[BikeResult]:
+    """One bike as a search result (stored casing, short description, chips) — None when the id is unknown.
+
+    The /bike/{id} deep link of the frontend. A DB error raises (the route answers 503).
+    """
+    session = get_session()
+    try:
+        bike = session.get(Bike, bike_id)
+        if bike is None:
+            return None
+        explanation, chips = _search_fill(session, [bike_id]).get(bike_id, ("", []))
+        return BikeResult(id=bike.id, brand=bike.brand, model=bike.model, accessories=chips, explanation=explanation)
     finally:
         session.close()
 
@@ -377,7 +394,7 @@ def find_bikes_by_details(req) -> list[BikeResult]:
         for b in candidates:
             explanation, accessories = fill.get(b.id, ("", []))
             results.append(BikeResult(
-                brand=b.brand, model=b.model, accessories=accessories, explanation=explanation,
+                id=b.id, brand=b.brand, model=b.model, accessories=accessories, explanation=explanation,
             ))
         results.sort(key=lambda r: (_lc(r.brand), _lc(r.model)))
         logger.info(

@@ -1,5 +1,6 @@
 import ResultCard from './ResultCard'
 import { PENDING_RATING, bikeKey } from '../ratings'
+import { bikePath } from '../hooks/useRoute'
 import type { Bike, ExpertRating, PopularBike } from '../types'
 
 interface PopularBikesSectionProps {
@@ -11,8 +12,8 @@ interface PopularBikesSectionProps {
 // Home-page "Najpopularniejsze rowery" (TODO-034): the same container and status row
 // as the results section, one ResultCard per bike in its popular look — the expert
 // rating in the numeral slot, the description in the explanation slot, no "Najlepsze
-// dopasowanie" badge. A click hands `handleBikeSelect` a regular Bike, so the details
-// view opens exactly as it does for a search result.
+// dopasowanie" badge. Each card links to /bike/{id}; a click hands `onSelect` a regular Bike,
+// so the details view opens exactly as it does for a search result.
 export default function PopularBikesSection({ bikes, ratings, onSelect }: PopularBikesSectionProps) {
   return (
     <section
@@ -37,6 +38,7 @@ export default function PopularBikesSection({ bikes, ratings, onSelect }: Popula
               <ResultCard
                 key={key}
                 bike={{
+                  id:          bike.id,
                   brand:       bike.brand,
                   model:       bike.model,
                   accessories: [],
@@ -47,6 +49,7 @@ export default function PopularBikesSection({ bikes, ratings, onSelect }: Popula
                 animationDelay={Math.min(i, 8) * 65}
                 expertRating={rating}
                 onSelect={onSelect}
+                href={bike.id != null ? bikePath(bike.id) : undefined}
               />
             )
           })}
