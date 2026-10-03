@@ -6,6 +6,7 @@ import BikeDetailsView from './components/BikeDetailsView'
 import EquipmentDetailsView from './components/EquipmentDetailsView'
 import PopularBikesSection from './components/PopularBikesSection'
 import TopTabs from './components/TopTabs'
+import SortSelect from './components/SortSelect'
 import FitComingSoonPage from './components/FitComingSoonPage'
 import ContactPage from './components/ContactPage'
 import useRoute, { ROUTES, type Route } from './hooks/useRoute'
@@ -14,6 +15,7 @@ import useCachedRatings from './hooks/useCachedRatings'
 import { useEquipment } from './hooks/useEquipment'
 import { postJson } from './api'
 import { PENDING_RATING, bikeKey } from './ratings'
+import { DEFAULT_SORT, sortBikes, type SortOrder } from './sortBikes'
 import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikePhotosResponse, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse, ComponentElement, SearchPayload, ParseResponse, SearchFilters } from './types'
 import { EMPTY_FILTERS } from './types'
 
@@ -63,15 +65,15 @@ export default function App() {
   // Home-page "Najpopularniejsze rowery" (TODO-034): fetched once for the app's
   // lifetime — coming back from the details view does not refetch.
   const { bikes: popularBikes, ratings: popularRatings } = usePopularBikes()
-  // TODO-040: expert ratings of the search results (stored reviews only). Until every
-  // rating has settled the backend order is kept so cards do not jump; then rated bikes
-  // go first, best first, and "no rating" bikes last (stable sort = backend order in ties).
+  // TODO-040: expert ratings of the search results (stored reviews only). The "Sortuj"
+  // select orders the list by rating (default: best first) or by name; the choice is kept
+  // across searches. Rules in sortBikes.ts.
   const { ratings: resultRatings, settled: ratingsSettled } = useCachedRatings(bikes)
-  const sortedBikes = useMemo(() => {
-    if (!ratingsSettled) return bikes
-    const value = (b: Bike) => resultRatings[bikeKey(b)]?.rating ?? -1
-    return [...bikes].sort((a, b) => value(b) - value(a))
-  }, [bikes, resultRatings, ratingsSettled])
+  const [sortOrder, setSortOrder] = useState<SortOrder>(DEFAULT_SORT)
+  const sortedBikes = useMemo(
+    () => sortBikes(bikes, sortOrder, resultRatings, ratingsSettled),
+    [bikes, sortOrder, resultRatings, ratingsSettled],
+  )
 
   // Details state
   const [view, setView]                         = useState<AppView>('search')
@@ -593,6 +595,11 @@ export default function App() {
                       </button>
                     )}
                   </div>
+
+                  {/* Sort — pointless for a single bike */}
+                  {appState === 'results' && bikes.length > 1 && (
+                    <SortSelect value={sortOrder} onChange={setSortOrder} />
+                  )}
 
                   {/* Card list */}
                   <div className="space-y-4">
