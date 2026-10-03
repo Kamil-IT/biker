@@ -368,6 +368,26 @@ class BikePopular(Base):
     bike = relationship("Bike")
 
 
+# --- Contact messages ------------------------------------------------------
+# What a visitor sent through the "Kontakt" tab's "Napisz do nas" form
+# (POST /v1/contact). Written only by that endpoint, read by hand (SQL) — the
+# app has no route that lists them. Created by init_db() like every other
+# table — no migration step.
+
+
+class ContactMessage(Base):
+    """One message from the contact form; `topic` is a slug of schemas.CONTACT_TOPICS."""
+
+    __tablename__ = "contact_message"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False, default="")  # optional on the form, "" = not given
+    email = Column(String(254), nullable=False)
+    topic = Column(String(32), nullable=False)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 # --- Generic endpoint response cache ---------------------------------------
 # The per-endpoint response cache read/written by app/cache.py. A Core table,
 # not an ORM class: it has no primary key (rows are identified by the

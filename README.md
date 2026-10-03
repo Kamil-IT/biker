@@ -14,6 +14,7 @@ Before the first search the home page shows **Najpopularniejsze rowery** — the
    In the **Recenzja eksperta** section the button also starts the on-demand review search (`POST /v1/bike/review/search` → the same `searcher/` service runs the Claude Code CLI once over the curated review sites, computes the weighted rating and stores it in `bike_review` / `bike_review_source` — only when it found at least one professional source; a stored review is never wiped by a bad run); it reads "Szukam recenzji…" while it runs, then the review replaces it — or "Nie znaleziono recenzji".
    In the photo gallery slot the button also starts the on-demand photo search (`POST /v1/bike/photos/search` → the same `searcher/` service finds the manufacturer's product page with the Claude Code CLI, scrapes up to 8 photos from it with Playwright and stores them in `bike_detail_photos` — only for a bike that has none, stored photos are never replaced); it reads "Szukam zdjęć…" while it runs, then the gallery replaces it — or "Nie znaleziono zdjęć". In the **Used** offers card that same button also starts the on-demand OLX search (`POST /v1/bike/used/search` → the `searcher/` service, which runs the Claude Code CLI on your subscription and stores what it finds in `bike_offer`). The button reads "Szukam na OLX…" while it runs, then the real listings with photos replace it — or "Nie znaleziono ofert" when there are none. The **New** card also lists the stored centrumrowerowe.pl offers (`POST /v1/bike/centrumrowerowe`, a DB read of rows written by the local discovery enrichment; no button, the data is either stored or not). Its two search buttons are separate: **Poszukaj na Allegro** (`POST /v1/bike/allegro/search`) and **Poszukaj w Decathlonie** (`POST /v1/bike/decathlon/search`), each shown only while that source has no stored row for the bike; a click records the request and runs that one search ("Szukam na Allegro…" / "Szukam w Decathlonie…"), the rows replace the button, or it becomes a disabled "Nie znaleziono na Allegro" / "Nie znaleziono w Decathlonie" with the backend's `info` under it. Neither search stores photos (Allegro blocks every automated fetch with 403, so its photo scrape was dropped). Allegro is searched for every brand, and a used Allegro listing lands in the **Used** card by its `is_new` flag; Decathlon only for its house brands (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt; `backend/app/decathlon_brands.py`) — any other brand gets an instant empty Decathlon answer with no search spent (closes `TODO_ISSUE_010`)
 6. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel, and bike parts — the default category when the name matches no keyword). Equipment is informational only — no shopping/offer links
+7. The **Kontakt** tab's **Napisz do nas** form (optional name, e-mail, topic, message) is saved through `POST /v1/contact` into the `contact_message` table. Nobody is e-mailed, so read the messages with SQL (`SELECT * FROM contact_message ORDER BY created_at DESC`)
 
 ## Running the project
 
@@ -401,11 +402,11 @@ Manual test plan and results (13 of 13 cases pass in round 3, after the merge of
 
 | Command | What it does |
 |---|---|
-| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/bike/popular`, `/v1/bike/used/olx`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`, `/v1/bike/allegro`, `/v1/bike/allegro/search`, `/v1/bike/centrumrowerowe`, `/v1/bike/photos`, `/v1/bike/photos/search`, `/v1/bike/details`, `/v1/bike/details/search`) |
+| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/contact`, `/v1/bike/popular`, `/v1/bike/used/olx`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`, `/v1/bike/allegro`, `/v1/bike/allegro/search`, `/v1/bike/centrumrowerowe`, `/v1/bike/photos`, `/v1/bike/photos/search`, `/v1/bike/details`, `/v1/bike/details/search`) |
 | `cd backend && python scripts/seed_popular_bikes.py` | Fill `bike_popular` — the home page's "Najpopularniejsze rowery" served by `GET /v1/bike/popular` (TODO-034) — with 3 bikes that have details, photos and a stored review (`bike_review`) with a real rating; `--dry-run`, `--count N`, repeatable `--bike "Brand\|Model"`; replaces the table contents |
 | `cd searcher && python scripts/test_searcher.py` | Smoke-test the searcher (`/health`, 401/422 on all six search routes and a stored-photos answer from the DB — free, no CLI run; the single paid live run lives in `backend/scripts/test_search.py` `case_decathlon_search`) |
 | `cd backend && python scripts/copy_review_cache_to_table.py` | One-off (TODO-037): copy the old generic-cache bike reviews into `bike_review` / `bike_review_source`; `--dry-run`, `--force`, `--db` / `--url`; idempotent |
-| `cd backend && pytest` | Unit tests (no API key): stored reviews + cache copy, search database read, details + equipment tables and migrations, searcher client routes (photo, review, details, equipment x2), stored data repository reads |
+| `cd backend && pytest` | Unit tests (no API key): stored reviews + cache copy, search database read, details + equipment tables and migrations, searcher client routes (photo, review, details, equipment x2), stored data repository reads, the contact form endpoint |
 | `cd frontend && npm run build` | TypeScript check + production bundle → `dist/` |
 | `cd frontend && npm run preview` | Serve the production bundle locally |
 | http://localhost:8000/docs | Interactive OpenAPI UI for the backend |
@@ -445,6 +446,7 @@ biker/
 │   │   ├── reviews_repository.py      # Stored bike review (bike_review + bike_review_source) — DB read for /v1/bike/review
 │   │   ├── photos_repository.py       # Stored bike photos: get_bike_photos (POST /v1/bike/photos) — bike_detail_photos keyed on bike_id
 │   │   ├── equipment_routes.py        # Four POST /v1/equipment/* endpoints (TODO-042): /details, /photos (DB reads); /details/search, /photos/search (searcher proxies)
+│   │   ├── contact_routes.py          # POST /v1/contact: the Kontakt form's message → contact_message (honeypot, 503 on a failed write)
 │   │   ├── equipment_repository.py    # Equipment data access (get_equipment_details, get_equipment_photos, save_equipment_details, save_equipment_photos, bike_has_component)
 │   │   ├── equipment_models.py        # Equipment ORM: equipment (item + details), equipment_component, equipment_detail_photos; equipment_id FK on bike_component
 │   │   ├── component_tree.py          # Shared tree builder for bike and equipment spec trees
@@ -465,6 +467,7 @@ biker/
 │       ├── test_migrate_equipment_tables.py # pytest: idempotent migration (TODO-042)
 │       ├── test_migrate_merge_equipment_detail.py # pytest: the equipment merge on temp SQLite (TODO-044)
 │       ├── test_searcher_client_equipment.py # pytest: searcher client routes for equipment details + photos (TODO-042)
+│       ├── test_contact.py            # pytest: POST /v1/contact on temp SQLite (validation, honeypot, 503)
 └── frontend/
     └── src/
         ├── App.tsx                    # App shell, state machine, all API calls

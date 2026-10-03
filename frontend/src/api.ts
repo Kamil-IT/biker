@@ -1,4 +1,4 @@
-import type { MissingDataRequest } from './types'
+import type { ContactMessageRequest, MissingDataRequest } from './types'
 
 // POST a JSON body and parse the JSON answer. A non-OK status throws an Error carrying
 // the backend's `detail` (or "Błąd serwera <status>"), so a caller can show it or let a
@@ -25,4 +25,21 @@ export async function recordMissing(body: MissingDataRequest): Promise<void> {
     body:    JSON.stringify(body),
   })
   if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
+}
+
+// Send the Kontakt form (POST /v1/contact). Every failure throws an Error whose message is
+// Polish and ready to show: 422 = the backend refused a field, anything else = try later.
+export async function sendContactMessage(body: ContactMessageRequest): Promise<void> {
+  let res: Response
+  try {
+    res = await fetch('/v1/contact', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    })
+  } catch {
+    throw new Error('Brak połączenia z serwerem. Spróbuj ponownie za chwilę.')
+  }
+  if (res.status === 422) throw new Error('Sprawdź adres e-mail i treść wiadomości.')
+  if (!res.ok) throw new Error('Nie udało się wysłać wiadomości. Spróbuj ponownie za chwilę.')
 }

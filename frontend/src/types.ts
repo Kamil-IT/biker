@@ -208,6 +208,22 @@ export interface MissingDataResponse {
   counter:      number
 }
 
+// The Kontakt tab's form (POST /v1/contact). `topic` is a slug — ContactPage.tsx owns
+// the Polish labels; `website` is a honeypot a person leaves empty.
+export type ContactTopic = 'missing_bike' | 'wrong_data' | 'feature_idea' | 'cooperation' | 'other'
+
+export interface ContactMessageRequest {
+  name:    string
+  email:   string
+  topic:   ContactTopic
+  message: string
+  website: string
+}
+
+export interface ContactMessageResponse {
+  ok: boolean
+}
+
 export interface ParseResponse {
   brand?:          string
   model?:          string
