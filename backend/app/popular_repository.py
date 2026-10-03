@@ -14,6 +14,7 @@ import logging
 import re
 
 from .models import Bike, BikePopular, get_session
+from .photo_cover import get_cover_photos
 from .schemas import BikeDescription, PopularBike, PopularBikesResponse
 
 logger = logging.getLogger(__name__)
@@ -79,8 +80,12 @@ def get_popular_bikes() -> PopularBikesResponse:
             .order_by(BikePopular.position, BikePopular.id)
             .all()
         )
+        covers = get_cover_photos([bike_id for bike_id, *_ in rows], session)
         bikes = [
-            PopularBike(id=bike_id, brand=brand, model=model, description=_blurb(brand, model, description))
+            PopularBike(
+                id=bike_id, brand=brand, model=model, description=_blurb(brand, model, description),
+                photo=covers.get(bike_id, (None, None))[0], photo_bg=covers.get(bike_id, (None, None))[1],
+            )
             for bike_id, brand, model, description in rows
         ]
         logger.info("popular bikes served from DB | bikes=%d", len(bikes))

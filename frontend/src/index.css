@@ -95,3 +95,9 @@ body {
 .spin {
   animation: spin 0.75s linear infinite;
 }
+
+/* Result tiles: no entrance or fill animation, show the final state. */
+@media (prefers-reduced-motion: reduce) {
+  .result-tile { animation: none !important; opacity: 1 !important; }
+  .result-bar  { animation: none !important; width: var(--bar-target, 0%) !important; }
+}

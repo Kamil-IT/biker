@@ -5,6 +5,9 @@ export interface Bike {
   model: string
   accessories: string[]
   explanation: string
+  // Cover photo URL and its edge colour ("#RRGGBB"); absent/null from older backends or bikes without a photo.
+  photo?: string | null
+  photo_bg?: string | null
 }
 
 export interface SpecItem {
@@ -242,6 +245,8 @@ export interface PopularBike {
   brand:       string
   model:       string
   description: string
+  photo?:      string | null
+  photo_bg?:   string | null
 }
 
 export interface PopularBikesResponse {

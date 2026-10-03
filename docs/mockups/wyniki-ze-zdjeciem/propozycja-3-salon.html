@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Propozycja 3: Salon — wyniki ze zdjęciem — Biker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* Salon: ciemna, ciepło oświetlona sala. Każde zdjęcie to „odbitka” w kolorze własnego tła (photoBg),
+       oprawiona w ciemną ścianę — białe i czarne studio wyglądają jak plakaty, nie jak dziury. */
+    :root {
+      --wall: #12303A;        /* ściana: głęboki pstrąg */
+      --wall-2: #0C2229;      /* podłoga / cień */
+      --wall-3: #1B424E;      /* podniesione powierzchnie */
+      --paper: #F1EADB;       /* tekst, papier odbitki bez koloru */
+      --muted: #A8BAB7;
+      --brass: #E2B15A;       /* jedyny akcent: mosiądz */
+      --line: rgb(241 234 219 / 0.16);
+      --serif: 'Instrument Serif', Georgia, serif;
+      --sans: 'Hanken Grotesk', system-ui, sans-serif;
+      --gutter: clamp(1rem, 4vw, 2.5rem);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; min-height: 100vh; background-color: var(--wall); color: var(--paper); font-family: var(--sans); line-height: 1.5;
+      background:
+        radial-gradient(60rem 28rem at 50% -6rem, rgb(226 177 90 / 0.14), transparent 70%),
+        linear-gradient(var(--wall), var(--wall-2) 90rem);
+    }
+    a { color: inherit; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    :focus-visible { outline: 2px solid var(--brass); outline-offset: 3px; }
+    .wrap { max-width: 78rem; margin: 0 auto; padding: 0 var(--gutter); }
+
+    /* ── Nagłówek ── */
+    header .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 2rem; padding-block: 1.1rem 0.9rem; }
+    .wordmark { font-family: var(--serif); font-size: 2.1rem; line-height: 1; letter-spacing: 0.14em; color: var(--brass); text-decoration: none; }
+    .tabs { display: flex; gap: 0.25rem; margin: 0; padding: 0; list-style: none; }
+    .tabs a { display: block; padding: 0.55rem 0.9rem; border-radius: 99px; text-decoration: none; font-weight: 500; font-size: 0.95rem; color: var(--muted); }
+    .tabs a:hover { color: var(--paper); }
+    .tabs a[aria-current="page"] { color: var(--wall-2); background: var(--paper); }
+    .tabs .short { display: none; }
+
+    /* ── Szukajka ── */
+        .search { display: flex; gap: 0.6rem; max-width: 52rem; padding-block: 1.5rem 2.25rem; }
+    .search input {
+      flex: 1; min-width: 0; padding: 0.95rem 1.25rem; font: inherit; font-size: 1.05rem; color: var(--paper);
+      background: var(--wall-3); border: 1px solid var(--line); border-radius: 99px;
+    }
+    .btn { padding: 0.95rem 1.5rem; font: inherit; font-weight: 700; color: var(--wall-2); background: var(--brass); border: 0; border-radius: 99px; cursor: pointer; white-space: nowrap; }
+    .btn:hover { background: #F0C677; }
+
+    /* ── Pasek wyników ── */
+    .status { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; padding-bottom: 1.5rem; }
+    .status h2 { margin: 0; font-family: var(--serif); font-weight: 400; font-size: clamp(2rem, 5vw, 3.1rem); line-height: 1; }
+    .status p { margin: 0.4rem 0 0; color: var(--muted); }
+    .reset { padding: 0.6rem 1rem; font: inherit; font-weight: 600; color: var(--paper); background: none; border: 1px solid var(--line); border-radius: 99px; cursor: pointer; white-space: nowrap; }
+    .reset:hover { border-color: var(--brass); color: var(--brass); }
+
+    /* ── Galeria: 12 kolumn. Pierwszy (najwyżej oceniany) zajmuje 6×2, kolejne cztery stoją obok, reszta w rzędzie ── */
+    .gallery { display: grid; gap: 1.75rem 1.25rem; grid-template-columns: 1fr; margin: 0; padding: 0 0 6rem; list-style: none; }
+    @media (min-width: 640px) { .gallery { grid-template-columns: repeat(2, 1fr); } .gallery .feature { grid-column: 1 / -1; } }
+    @media (min-width: 1180px) {
+      .gallery { grid-template-columns: repeat(12, 1fr); }
+      .gallery > li { grid-column: span 3; }
+      .gallery .feature { grid-column: span 6; grid-row: span 2; }
+    }
+
+    .tile { display: flex; flex-direction: column; height: 100%; gap: 0.9rem; text-decoration: none; position: relative; }
+    .feature .tile { gap: 1.1rem; }
+
+    /* Odbitka: kolor tła z photoBg, zdjęcie wpisane w całości (contain), nic nie jest ucinane. */
+    .panel {
+      position: relative; overflow: hidden; border-radius: 4px; aspect-ratio: 4 / 3;
+      background: var(--bg, var(--paper));
+      box-shadow: 0 0 0 1px rgb(241 234 219 / 0.22), 0 28px 50px -26px rgb(226 177 90 / 0.4), 0 10px 24px -12px #000;
+      transition: box-shadow 250ms, transform 250ms;
+      animation: lightsUp 1100ms cubic-bezier(.3,.6,.2,1) both; animation-delay: calc(var(--i) * 90ms);
+    }
+    .feature .panel { aspect-ratio: auto; flex: 1; min-height: 20rem; }
+    .panel img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform: scale(var(--zoom, 1)); }
+    .tile:hover .panel, .tile:focus-visible .panel { box-shadow: 0 0 0 2px var(--brass), 0 34px 60px -26px rgb(226 177 90 / 0.65), 0 10px 24px -12px #000; transform: translateY(-3px); }
+    /* czarne odbitki dostają cienką jasną ramkę wewnątrz, żeby nie zlewały się ze ścianą */
+    .panel::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgb(241 234 219 / 0.14); pointer-events: none; }
+
+    /* Brak zdjęcia: pusta rama z zaproszeniem */
+    .panel.empty { display: grid; place-items: center; background: transparent; box-shadow: none; border: 1.5px dashed rgb(226 177 90 / 0.55); }
+    .panel.empty::after { display: none; }
+    .empty-art { display: grid; justify-items: center; gap: 0.7rem; padding: 1rem; text-align: center; color: var(--brass); }
+    .empty-art svg { width: 7rem; max-width: 40%; opacity: 0.85; }
+    .empty-art p { margin: 0; max-width: 17rem; font-size: 0.875rem; color: var(--paper); }
+    .panel.loading { background: linear-gradient(90deg, var(--wall-3) 25%, #275766 50%, var(--wall-3) 75%) 0 0 / 200% 100%; animation: shimmer 1.6s ease-in-out infinite; box-shadow: none; }
+
+    /* Opis na odbitce — tylko tam, gdzie jest myszka; na dotyku i klawiaturze zawsze pod podpisem */
+    .more { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 0.9rem; }
+    .plaque > div:first-child { flex: 1; min-width: 0; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+    .chips li { padding: 0.15rem 0.65rem; font-size: 0.78rem; color: #DCE5E2; background: rgb(241 234 219 / 0.09); border: 1px solid var(--line); border-radius: 99px; }
+    .desc { margin: 0; font-size: 0.93rem; line-height: 1.6; color: #DCE5E2; max-width: 38rem; }
+    .none { margin: 0; font-size: 0.875rem; color: var(--muted); font-style: italic; }
+    .cue { display: none; }
+    /* Bez myszki opis stoi pod podpisem (nazwa i ocena zaraz pod odbitką) */
+    .gallery li:not(.feature) .panel-wrap { display: contents; }
+    .gallery li:not(.feature) .more { order: 1; margin-top: 0; }
+    @media (hover: hover) and (min-width: 640px) {
+      .gallery li:not(.feature) .panel-wrap { display: block; }
+      .gallery li:not(.feature) .more {
+        position: absolute; inset: 0 0 auto 0; height: calc(100% - 0px); top: 0; z-index: 2; justify-content: flex-end; padding: 1.1rem; margin: 0;
+        background: linear-gradient(transparent 0%, rgb(8 24 29 / 0.95) 20%); opacity: 0; transform: translateY(8px);
+        transition: opacity 220ms, transform 220ms; pointer-events: none;
+      }
+      .gallery li:not(.feature) .chips, .gallery li:not(.feature) .desc { flex-shrink: 0; }
+      .gallery li:not(.feature) .desc { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: 0.85rem; }
+      .gallery li:not(.feature) .tile:hover .more, .gallery li:not(.feature) .tile:focus-visible .more { opacity: 1; transform: none; }
+      .panel-wrap { position: relative; }
+      .gallery li:not(.feature) .cue {
+        display: block; position: absolute; left: 0.7rem; top: 0.7rem; z-index: 1; padding: 0.1rem 0.6rem; font-size: 0.75rem; font-weight: 600;
+        color: var(--paper); background: rgb(8 24 29 / 0.78); border-radius: 99px; transition: opacity 150ms;
+      }
+      .gallery li:not(.feature) .tile:hover .cue, .gallery li:not(.feature) .tile:focus-visible .cue { opacity: 0; }
+    }
+
+    /* Podpis pod odbitką: marka, model, ocena */
+    .plaque { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; }
+    .brand { margin: 0; font-size: 0.85rem; font-weight: 600; color: var(--muted); }
+    .model { margin: 0.1rem 0 0; font-family: var(--serif); font-weight: 400; font-size: 1.75rem; line-height: 1.02; transition: color 150ms; }
+    .tile:hover .model { color: var(--brass); }
+    .score { text-align: right; flex: none; }
+    .score b { font-family: var(--serif); font-weight: 400; font-size: 2.6rem; line-height: 0.85; font-variant-numeric: tabular-nums; color: var(--brass); }
+    .score span { display: block; font-size: 0.75rem; color: var(--muted); }
+    .score.none-r b { color: var(--muted); font-size: 2rem; }
+    .bar { height: 3px; margin-top: 0.4rem; background: var(--line); border-radius: 2px; overflow: hidden; width: 4.5rem; margin-left: auto; }
+    .bar i { display: block; height: 100%; background: var(--brass); width: var(--r); }
+    .feature .model { font-size: clamp(2.3rem, 4.2vw, 3.4rem); }
+    .feature .brand { font-size: 1rem; }
+    .feature .score b { font-size: clamp(3.4rem, 6vw, 5rem); }
+    .badge { display: inline-block; margin-bottom: 0.5rem; padding: 0.1rem 0.7rem; font-size: 0.8rem; font-weight: 700; color: var(--wall-2); background: var(--brass); border-radius: 99px; }
+    .sk { display: block; height: 1.1rem; margin-top: 0.4rem; border-radius: 4px; background: var(--wall-3); }
+
+    @keyframes lightsUp { from { filter: brightness(0.12) saturate(0.4); } to { filter: none; } }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+    @media (prefers-reduced-motion: reduce) { .panel, .panel.loading { animation: none; } .panel, .more, .cue { transition: none; } html { scroll-behavior: auto; } }
+
+    @media (max-width: 479px) {
+      .tabs a { padding: 0.5rem 0.65rem; font-size: 0.875rem; }
+      .tabs .long { display: none; } .tabs .short { display: inline; }
+      .search { flex-direction: column; } .btn { width: 100%; }
+      .status { flex-direction: column; align-items: flex-start; }
+      .feature .panel { min-height: 0; aspect-ratio: 4 / 3; flex: none; }
+    }
+
+    /* ── Przełącznik stanów makiety (nie jest częścią projektu) ── */
+    .mock-bar { position: fixed; right: 1rem; bottom: 1rem; z-index: 30; display: flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.55rem; background: #fff; border: 1px dashed #777; border-radius: 0.6rem; font: 12px/1.2 system-ui, sans-serif; color: #555; }
+    .mock-bar button { font: inherit; padding: 0.3rem 0.55rem; border: 1px solid #ccc; border-radius: 0.4rem; background: #f6f6f6; color: #333; cursor: pointer; }
+    .mock-bar button[aria-pressed="true"] { background: #333; border-color: #333; color: #fff; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <a class="wordmark" href="#" aria-label="Biker — strona główna">BIKER</a>
+      <nav aria-label="Główna nawigacja">
+        <ul class="tabs">
+          <li><a href="#" aria-current="page">Szukanie rowerów</a></li>
+          <li><a href="#"><span class="long">Rower na Twoją miarę</span><span class="short">Na miarę</span></a></li>
+          <li><a href="#">Kontakt</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <form class="search" onsubmit="event.preventDefault()">
+      <label for="q" class="sr-only">Czego szukasz?</label>
+      <input id="q" type="search">
+      <button class="btn" type="submit">Szukaj rowerów</button>
+    </form>
+
+    <section aria-labelledby="results-heading" aria-live="polite">
+      <div class="status">
+        <div>
+          <h2 id="results-heading">Znaleźliśmy <span id="count"></span></h2>
+          <p id="status-line"></p>
+        </div>
+        <button class="reset" type="button">Nowe wyszukiwanie</button>
+      </div>
+      <ul class="gallery" id="gallery"></ul>
+    </section>
+  </main>
+
+  <div class="mock-bar" role="group" aria-label="Stan makiety">
+    <span>Makieta:</span>
+    <button type="button" data-state="ready" aria-pressed="true">Wyniki</button>
+    <button type="button" data-state="loading" aria-pressed="false">Wczytywanie zdjęć i ocen</button>
+  </div>
+
+  <script src="data.js"></script>
+  <script>
+    const BIKE_ART = '<svg viewBox="0 0 120 64" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<circle cx="26" cy="44" r="17"/><circle cx="94" cy="44" r="17"/>'
+      + '<path d="M26 44 58 44 50 21Z M50 21 82 19 58 44 M82 19 94 44 M50 21 47 13 M41 13H54 M82 19 80 12 88 11"/></svg>'
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+    const fmt = r => (r === 10 ? '10' : r.toFixed(1))
+    const plural = n => n === 1 ? 'rower' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)) ? 'rowery' : 'rowerów'
+
+    function emptyPanel(i) {
+      return `<div class="panel empty" style="--i:${i}"><div class="empty-art">${BIKE_ART}<p>Brak zdjęcia. Poproś o nie w szczegółach roweru, przyciskiem „Poproś o dane”.</p></div></div>`
+    }
+    // Duże białe marginesy (kwadratowe zdjęcie na białym) — powiększamy kadr, marginesy to tylko tło.
+    function onLoad(img) {
+      const r = img.naturalWidth / img.naturalHeight
+      if (r < 1.15 && img.dataset.bg) img.style.setProperty('--zoom', '1.28')
+    }
+    function onError(img) {
+      const panel = img.closest('.panel')
+      panel.outerHTML = emptyPanel(panel.style.getPropertyValue('--i'))
+    }
+    window.onLoad = onLoad; window.onError = onError
+
+    function panel(b, i, loading) {
+      if (loading) return `<div class="panel loading" style="--i:${i}"></div>`
+      if (!b.photo) return emptyPanel(i)
+      return `<div class="panel" style="--i:${i}${b.photoBg ? `;--bg:${esc(b.photoBg)}` : ''}">
+        <img src="${esc(b.photo)}" alt="${esc(b.brand + ' ' + b.model)}" data-bg="${b.photoBg ? 1 : ''}" decoding="async"
+             onload="onLoad(this)" onerror="onError(this)"></div>`
+    }
+
+    function tile(b, i, loading) {
+      const rated = b.rating != null
+      const spoken = loading ? 'ocena eksperta w trakcie wczytywania' : rated ? `ocena eksperta ${fmt(b.rating).replace('.', ',')} na 10` : 'brak oceny'
+      const chips = b.accessories.filter(Boolean), text = b.explanation.trim()
+      const feature = i === 0 && rated && !loading
+      const score = loading
+        ? `<div class="score" aria-hidden="true"><b>—</b><span>/ 10</span></div>`
+        : rated ? `<div class="score" aria-hidden="true"><b>${fmt(b.rating)}</b><span>/ 10</span><div class="bar"><i style="--r:${b.rating * 10}%"></i></div></div>`
+        : `<div class="score none-r" aria-hidden="true"><b>?</b><span>bez oceny</span></div>`
+      const more = loading ? '' : (chips.length || text)
+        ? `<div class="more">${chips.length ? `<ul class="chips" aria-label="Najważniejsze cechy">${chips.map(c => `<li>${esc(c)}</li>`).join('')}</ul>` : ''}${text ? `<p class="desc">${esc(text)}</p>` : ''}</div>`
+        : `<p class="none">Nie mamy jeszcze opisu tego roweru.</p>`
+      const cue = !loading && (chips.length || text) ? '<span class="cue" aria-hidden="true">Najedź, by zobaczyć opis</span>' : ''
+      const lines = loading ? '<span class="sk" style="width:55%"></span><span class="sk" style="width:80%;height:1.7rem"></span>'
+        : `${feature ? '<span class="badge">Najwyżej oceniany</span>' : ''}<p class="brand">${esc(b.brand)}</p><h3 class="model">${esc(b.model)}</h3>`
+      // opis na odbitce (hover) leży w .panel-wrap; w trybie bez myszki CSS pokazuje go pod podpisem
+      return `<li class="${feature ? 'feature' : ''}"><a class="tile" href="#" aria-label="Zobacz specyfikację ${esc(b.brand)} ${esc(b.model)}, ${spoken}">
+        <div class="panel-wrap" style="${feature ? 'flex:1;display:flex;flex-direction:column' : ''}">${panel(b, i, loading)}${feature ? '' : cue}${feature ? '' : more}</div>
+        <div class="plaque"><div>${lines}</div>${score}</div>${feature ? more : ''}
+      </a></li>`
+    }
+
+    function render(state) {
+      const loading = state === 'loading'
+      document.getElementById('gallery').innerHTML = window.BIKER_RESULTS.map((b, i) => tile(b, i, loading)).join('')
+      const n = window.BIKER_RESULTS.length
+      document.getElementById('count').textContent = `${n} ${plural(n)}`
+      document.getElementById('status-line').textContent = loading ? 'Wczytujemy zdjęcia i oceny ekspertów.' : `Dla „${window.BIKER_QUERY}”, od najwyżej ocenianych.`
+    }
+    document.getElementById('q').value = window.BIKER_QUERY
+    document.querySelectorAll('.mock-bar button').forEach(btn => btn.addEventListener('click', () => {
+      document.querySelectorAll('.mock-bar button').forEach(b => b.setAttribute('aria-pressed', String(b === btn)))
+      render(btn.dataset.state)
+    }))
+    render('ready')
+  </script>
+</body>
+</html>

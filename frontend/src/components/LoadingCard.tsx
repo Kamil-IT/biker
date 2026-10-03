@@ -9,39 +9,25 @@ export default function LoadingCard({ delay = 0 }: LoadingCardProps) {
 
   return (
     <div
-      className="bg-card rounded-2xl border border-border p-6 md:p-8"
+      className="flex flex-col h-full bg-card rounded-2xl border border-border overflow-hidden"
       aria-hidden="true"
     >
-      <div className="flex gap-5 md:gap-8 items-start">
-        {/* Score skeleton */}
-        <div className="shrink-0">
-          <div className="shimmer w-20 h-14 md:w-24 md:h-16 rounded-lg" style={style(0)} />
-          <div className="shimmer w-8 h-3 rounded mt-2" style={style(60)} />
-        </div>
-
-        {/* Content skeleton */}
-        <div className="flex-1 pt-1 min-w-0">
-          {/* Brand */}
-          <div className="shimmer h-6 w-36 rounded-lg" style={style(80)} />
-          {/* Model */}
-          <div className="shimmer h-4 w-24 rounded mt-2" style={style(110)} />
-          {/* Accessories chips */}
-          <div className="flex gap-1.5 mt-3">
-            <div className="shimmer h-5 w-24 rounded-full" style={style(140)} />
-            <div className="shimmer h-5 w-32 rounded-full" style={style(160)} />
-            <div className="shimmer h-5 w-20 rounded-full" style={style(180)} />
-          </div>
-          {/* Explanation lines */}
-          <div className="space-y-1.5 mt-3">
-            <div className="shimmer h-4 w-full rounded" style={style(210)} />
-            <div className="shimmer h-4 w-4/5 rounded" style={style(240)} />
-          </div>
+      {/* Photo stage + rating plate */}
+      <div className="relative aspect-[4/3] overflow-hidden">
+        <div className="shimmer absolute inset-0" style={style(0)} />
+        <div className="absolute top-3 left-3 flex items-baseline gap-1.5 px-2.5 pt-1.5 pb-1 bg-parchment border border-charcoal/10 rounded-[0.55rem]">
+          <b className="font-display font-extrabold text-[1.9rem] leading-[0.9] text-muted">—</b>
+          <span className="font-display font-semibold text-[0.95rem] text-muted">/ 10</span>
         </div>
       </div>
 
-      {/* Bar skeleton */}
-      <div className="mt-5">
-        <div className="shimmer h-1.5 w-full rounded-full" style={style(270)} />
+      <div className="flex flex-col gap-2 flex-1 p-4 pb-5">
+        <div className="shimmer h-4 w-20 rounded" style={style(80)} />
+        <div className="shimmer h-7 w-44 rounded-lg" style={style(110)} />
+        <div className="space-y-1.5 mt-1">
+          <div className="shimmer h-4 w-full rounded" style={style(210)} />
+          <div className="shimmer h-4 w-4/5 rounded" style={style(240)} />
+        </div>
       </div>
     </div>
   )

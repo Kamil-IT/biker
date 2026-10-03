@@ -154,6 +154,8 @@ class PopularBike(BaseModel):
     brand: str
     model: str
     description: str = ""  # first two sentences of the stored details description; "" without details
+    photo: Optional[str] = None  # cover photo URL (first stored photo that is not junk); None = no photo
+    photo_bg: Optional[str] = None  # "#RRGGBB" edge colour of that photo; None = unknown
 
 
 class PopularBikesResponse(BaseModel):
@@ -220,6 +222,8 @@ class BikeResult(BaseModel):
     model: str
     accessories: list[str]
     explanation: str
+    photo: Optional[str] = None  # cover photo URL (first stored photo that is not junk); None = no photo
+    photo_bg: Optional[str] = None  # "#RRGGBB" edge colour of that photo; None = unknown
 
 
 DbId = Annotated[int, Field(ge=1, le=2147483647)]  # INTEGER range: no DB overflow

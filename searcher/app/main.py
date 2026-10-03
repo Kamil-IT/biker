@@ -42,6 +42,7 @@ from .equipment_photos_finder import find_equipment_photos
 from .equipment_repository import get_equipment_details, save_equipment_details, save_equipment_photos
 from .models import dispose_engine, get_engine, init_db
 from .olx_finder import OLX_SOURCE, SearcherError, SearcherLimitError, find_used_bikes
+from .photo_bg import compute_photo_colors
 from .photos_finder import find_bike_photos
 from .repository import (
     get_stored_details,
@@ -248,8 +249,9 @@ async def _photo_search(company: str, model: str) -> PhotosResponse:
         except SearcherError as exc:
             logger.error("photos search failed | company=%r model=%r | %s", company, model, exc)
             raise _search_failed(exc) from exc
+        colors = await compute_photo_colors(photos)  # best-effort edge colours, bounded, never raises
         try:
-            bike_id, stored, saved = await asyncio.to_thread(save_photos, company, model, photos)
+            bike_id, stored, saved = await asyncio.to_thread(save_photos, company, model, photos, colors)
         except Exception as exc:  # noqa: BLE001 — logged in the repository; callers get a summary only
             raise HTTPException(status_code=500, detail="database write failed") from exc
     finally:

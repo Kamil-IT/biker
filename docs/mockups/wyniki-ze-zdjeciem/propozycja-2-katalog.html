@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Propozycja 2: Katalog — wyniki ze zdjęciem — Biker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@500;600;700;800&family=Newsreader:opsz,wght@6..72,400;6..72,500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    /* Katalog: zimny papier, ciemna zieleń zamiast terakoty, porządek jak w druku technicznym. */
+    :root {
+      --page: #E8E7E1; --paper: #FAF9F5; --plate: #EEEDE6; --ink: #1B2320; --ink-2: #444C47;
+      --muted: #5E665F; --rule: #CFCDC3; --green: #1E5B47; --green-dark: #143F31; --green-tint: #DCE7E0;
+      --sans: 'Schibsted Grotesk', system-ui, sans-serif; --serif: 'Newsreader', Georgia, serif; --mono: 'IBM Plex Mono', ui-monospace, monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font-family: var(--serif); font-size: 1rem; line-height: 1.55; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+    a { color: inherit; }
+    :focus-visible { outline: 3px solid var(--green); outline-offset: 3px; }
+    .wrap { max-width: 64rem; margin: 0 auto; padding: 0 1.25rem; }
+
+    /* Nagłówek */
+    .site-header { background: var(--paper); border-bottom: 1px solid var(--rule); }
+    .brand-row { display: flex; align-items: baseline; gap: 1rem; padding-top: 1.1rem; }
+    .wordmark { font: 800 1.7rem/1 var(--sans); letter-spacing: 0.06em; text-decoration: none; color: var(--ink); }
+    .tagline { font: 400 0.9rem var(--serif); font-style: italic; color: var(--muted); }
+    .tabs { display: flex; gap: 1.75rem; margin: 0.9rem 0 0; padding: 0; list-style: none; overflow-x: auto; }
+    .tabs a { display: block; padding: 0.55rem 0 0.7rem; font: 600 0.95rem var(--sans); color: var(--muted); text-decoration: none; border-bottom: 3px solid transparent; white-space: nowrap; }
+    .tabs a:hover { color: var(--ink); }
+    .tabs a[aria-current="page"] { color: var(--ink); border-bottom-color: var(--green); }
+    .tabs .short { display: none; }
+
+    /* Wyszukiwarka */
+    .search { padding: 1.75rem 0 1.5rem; }
+    .search-box { display: flex; gap: 0.6rem; }
+    .field { flex: 1; min-width: 0; padding: 0.85rem 1rem; font: 400 1.05rem var(--serif); color: var(--ink); background: var(--paper); border: 1.5px solid var(--ink-2); border-radius: 0.35rem; }
+    .btn { padding: 0 1.4rem; font: 700 0.95rem var(--sans); color: #fff; background: var(--green); border: 0; border-radius: 0.35rem; cursor: pointer; }
+    .btn:hover { background: var(--green-dark); }
+
+    /* Pasek wyników */
+    .status { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; padding: 0.5rem 0 0.9rem; border-bottom: 2px solid var(--ink); }
+    .status h2 { margin: 0; font: 800 1.75rem/1.1 var(--sans); letter-spacing: -0.01em; }
+    .status p { margin: 0.25rem 0 0; color: var(--ink-2); font-size: 0.95rem; }
+    .reset { padding: 0.6rem 0; font: 700 0.95rem var(--sans); color: var(--green); background: none; border: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+    .reset:hover { color: var(--green-dark); }
+
+    /* Wiersze katalogu */
+    .list { margin: 0; padding: 0 0 5rem; list-style: none; }
+    .list > li { border-bottom: 1px solid var(--rule); }
+    .row {
+      display: grid; grid-template-columns: minmax(0, 43fr) minmax(0, 57fr); gap: 1.75rem;
+      padding: 1.25rem 0.75rem 1.25rem 0; text-decoration: none; color: inherit; position: relative;
+      transition: background 150ms;
+    }
+    .row:hover { background: var(--paper); }
+    .row:hover .model { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; text-decoration-color: var(--green); }
+
+    /* Tablica ze zdjęciem: stały kadr, tło = kolor narożnika zdjęcia, zdjęcie zawsze w całości. */
+    .plate {
+      position: relative; aspect-ratio: 4 / 3; overflow: hidden; align-self: start;
+      background: var(--bg, var(--plate)); border-radius: 0.3rem; box-shadow: inset 0 0 0 1px rgb(27 35 32 / 0.14);
+    }
+    .plate img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+    .plate.nobg::after { content: ''; position: absolute; left: 18%; right: 18%; bottom: 14%; height: 8%; z-index: 0; background: radial-gradient(closest-side, rgb(27 35 32 / 0.16), transparent); }
+    .plate.nobg img { z-index: 1; }
+    .plate.empty { display: grid; place-items: center; background: repeating-linear-gradient(135deg, var(--plate) 0 10px, #E6E4DB 10px 20px); }
+    .empty-art { display: grid; justify-items: center; gap: 0.5rem; padding: 0.9rem 1.2rem; max-width: 17rem; text-align: center; background: var(--paper); border: 1px solid var(--rule); border-radius: 0.3rem; }
+    .empty-art svg { width: 4.5rem; color: var(--muted); }
+    .empty-art b { font: 700 0.95rem var(--sans); }
+    .empty-art p { margin: 0; font-size: 0.85rem; line-height: 1.4; color: var(--ink-2); }
+    .skeleton { background: linear-gradient(90deg, #DEDCD2 25%, #ECEBE4 50%, #DEDCD2 75%); background-size: 200% 100%; animation: shimmer 1.6s ease-in-out infinite; }
+    .plate.skeleton { box-shadow: none; }
+
+    /* Treść wiersza */
+    .info { display: flex; flex-direction: column; min-width: 0; }
+    .head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+    .brand { margin: 0; font: 600 0.95rem/1.2 var(--sans); color: var(--muted); }
+    .model { margin: 0.1rem 0 0; font: 800 clamp(1.5rem, 2.6vw, 1.95rem)/1.05 var(--sans); letter-spacing: -0.015em; }
+
+    /* Ocena: duża liczba i linijka 0–10, ta sama pozycja w każdym wierszu. */
+    .score { flex: none; width: 7.2rem; }
+    .score .num { display: flex; align-items: baseline; justify-content: flex-end; gap: 0.25rem; font-family: var(--sans); }
+    .score b { font-weight: 800; font-size: 2.3rem; line-height: 0.95; font-variant-numeric: tabular-nums; color: var(--green); }
+    .score .num span { font-weight: 600; font-size: 0.9rem; color: var(--muted); }
+    .score.none b { color: var(--muted); }
+    .score .num small { font: 600 0.85rem var(--sans); color: var(--muted); }
+    .ruler { position: relative; height: 0.6rem; margin-top: 0.4rem; background: repeating-linear-gradient(90deg, var(--ink-2) 0 1px, transparent 1px 10%); border-bottom: 1px solid var(--ink-2); }
+    .ruler i { position: absolute; left: 0; bottom: 0; height: 4px; width: 0; background: var(--green); animation: fill 700ms cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+    .score .cap { display: block; margin-top: 0.3rem; text-align: right; font: 600 0.78rem var(--sans); color: var(--muted); }
+
+    /* Specyfikacja z wypustkami */
+    .spec { margin: 0.9rem 0 0; padding: 0; }
+    .spec div { display: grid; grid-template-columns: 4.6rem 1fr; align-items: baseline; gap: 0.5rem; padding: 0.38rem 0; border-top: 1px solid var(--rule); }
+    .spec div:last-child { border-bottom: 1px solid var(--rule); }
+    .spec dt { font: 600 0.85rem var(--sans); color: var(--muted); }
+    .spec dd { margin: 0; font: 500 0.8125rem/1.35 var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+    .spec dd.gap { color: var(--muted); font-family: var(--sans); font-weight: 500; }
+    .desc { margin: 0.85rem 0 0; max-width: 40rem; font-size: 1rem; line-height: 1.55; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .no-details { margin: 0.9rem 0 0; padding: 0.7rem 0.9rem; font-size: 0.95rem; color: var(--ink-2); background: var(--paper); border-left: 3px solid var(--rule); }
+    .row:hover .no-details { background: var(--page); }
+
+    @keyframes fill { to { width: var(--r); } }
+    @keyframes shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+    @media (prefers-reduced-motion: reduce) { .ruler i { width: var(--r); animation: none; } .skeleton { animation: none; } .row { transition: none; } }
+
+    /* Telefon: zdjęcie na całą szerokość nad treścią */
+    @media (max-width: 640px) {
+      .row { grid-template-columns: 1fr; gap: 0.9rem; padding-right: 0; }
+      .plate { aspect-ratio: 16 / 11; }
+      .score { width: 5.6rem; } .score b { font-size: 1.9rem; } .score .cap { display: none; }
+      .spec div { grid-template-columns: 4.2rem 1fr; }
+      .status { flex-direction: column; align-items: flex-start; gap: 0; }
+      .tabs .long { display: none; } .tabs .short { display: inline; } .tabs { gap: 1.25rem; }
+      .tagline { display: none; }
+      .search-box { flex-direction: column; } .btn { padding: 0.8rem; }
+    }
+
+    /* Przełącznik stanów makiety (nie jest częścią projektu) */
+    .mock-bar { position: fixed; right: 1rem; bottom: 1rem; z-index: 30; display: flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.55rem; background: #fff; border: 1px dashed #777; border-radius: 0.6rem; font: 12px/1.2 system-ui, sans-serif; color: #555; }
+    .mock-bar button { font: inherit; padding: 0.3rem 0.55rem; border: 1px solid #ccc; border-radius: 0.4rem; background: #f6f6f6; cursor: pointer; }
+    .mock-bar button[aria-pressed="true"] { background: #333; border-color: #333; color: #fff; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <div class="brand-row">
+        <a class="wordmark" href="#" aria-label="Biker — strona główna">BIKER</a>
+        <span class="tagline">Wyszukiwarka rowerów AI</span>
+      </div>
+      <nav aria-label="Główna nawigacja">
+        <ul class="tabs">
+          <li><a href="#" aria-current="page">Szukanie rowerów</a></li>
+          <li><a href="#"><span class="long">Rower na Twoją miarę</span><span class="short">Na miarę</span></a></li>
+          <li><a href="#">Kontakt</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <form class="search" onsubmit="event.preventDefault()">
+      <label for="q" class="sr-only">Czego szukasz?</label>
+      <div class="search-box">
+        <input id="q" class="field" type="search">
+        <button class="btn" type="submit">Szukaj rowerów</button>
+      </div>
+    </form>
+
+    <section aria-labelledby="results-heading" aria-live="polite">
+      <div class="status">
+        <div>
+          <h2 id="results-heading">Znaleźliśmy <span id="count"></span></h2>
+          <p id="status-line"></p>
+        </div>
+        <button class="reset" type="button">Nowe wyszukiwanie</button>
+      </div>
+      <ul class="list" id="list"></ul>
+    </section>
+  </main>
+
+  <div class="mock-bar" role="group" aria-label="Stan makiety">
+    <span>Makieta:</span>
+    <button type="button" data-state="ready" aria-pressed="true">Wyniki</button>
+    <button type="button" data-state="loading" aria-pressed="false">Wczytywanie zdjęć i ocen</button>
+  </div>
+
+  <script src="data.js"></script>
+  <script>
+    const ART = '<svg viewBox="0 0 120 64" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<circle cx="26" cy="44" r="17"/><circle cx="94" cy="44" r="17"/>'
+      + '<path d="M26 44 58 44 50 21Z M50 21 82 19 58 44 M82 19 94 44 M50 21 47 13 M41 13H54 M82 19 80 12 88 11"/></svg>'
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+    const fmt = r => (r === 10 ? '10' : r.toFixed(1))
+    const plural = n => n === 1 ? 'rower' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)) ? 'rowery' : 'rowerów'
+
+    // Mockup-only: `accessories` is positional (napęd, hamulce, rama) and may be shorter, so a lone
+    // material in 2nd place is treated as the frame. The real API should send keyed values.
+    const MATERIAL = /carbon|alumin|steel|chromoly|cf\b/i
+    function specs(a) {
+      const v = a.filter(Boolean)
+      if (v.length === 2 && MATERIAL.test(v[1])) return [v[0], null, v[1]]
+      return [v[0] || null, v[1] || null, v[2] || null]
+    }
+
+    function plate(b, loading) {
+      if (loading) return '<div class="plate skeleton" role="img" aria-label="Zdjęcie się wczytuje"></div>'
+      if (!b.photo) return emptyPlate()
+      const bg = b.photoBg ? `style="--bg:${esc(b.photoBg)}"` : ''
+      return `<div class="plate${b.photoBg ? '' : ' nobg'}" ${bg}><img src="${esc(b.photo)}" alt="${esc(b.brand + ' ' + b.model)}" loading="lazy" decoding="async"
+        onerror="this.parentNode.outerHTML = emptyPlate()"></div>`
+    }
+    function emptyPlate() {
+      return `<div class="plate empty"><div class="empty-art">${ART}<b>Brak zdjęcia</b>
+        <p>Możesz poprosić o nie w szczegółach roweru, przyciskiem „Poproś o dane”.</p></div></div>`
+    }
+
+    function score(b, loading) {
+      if (loading) return '<div class="score none"><div class="num"><b>—</b><span>/ 10</span></div><div class="ruler"></div><span class="cap">Wczytywanie oceny</span></div>'
+      if (b.rating == null) return '<div class="score none"><div class="num"><b>?</b><small>bez oceny</small></div><div class="ruler"></div><span class="cap">Ocena eksperta</span></div>'
+      return `<div class="score"><div class="num"><b>${fmt(b.rating)}</b><span>/ 10</span></div>
+        <div class="ruler"><i style="--r:${b.rating * 10}%"></i></div><span class="cap">Ocena eksperta</span></div>`
+    }
+
+    function row(b, i, loading) {
+      const spoken = loading ? 'ocena eksperta w trakcie wczytywania'
+        : b.rating != null ? `ocena eksperta ${fmt(b.rating).replace('.', ',')} na 10` : 'brak oceny'
+      const [drive, brakes, frame] = specs(b.accessories)
+      const labels = [['Napęd', drive], ['Hamulce', brakes], ['Rama', frame]]
+      const text = b.explanation.trim()
+      const spec = b.accessories.length
+        ? `<dl class="spec">${labels.map(([k, v]) => `<div><dt>${k}</dt><dd${v ? '' : ' class="gap"'}>${v ? esc(v) : 'brak danych'}</dd></div>`).join('')}</dl>`
+        : ''
+      return `<li><a class="row" href="#" aria-label="Zobacz specyfikację ${esc(b.brand)} ${esc(b.model)}, ${spoken}">
+        ${plate(b, loading)}
+        <div class="info">
+          <div class="head"><div><p class="brand">${esc(b.brand)}</p><h3 class="model">${esc(b.model)}</h3></div>${score(b, loading)}</div>
+          ${spec}
+          ${text ? `<p class="desc">${esc(text)}</p>` : `<p class="no-details">Nie mamy jeszcze opisu ani komponentów tego roweru. Znajdziesz je w szczegółach, po kliknięciu „Poproś o dane”.</p>`}
+        </div></a></li>`
+    }
+
+    function render(state) {
+      const loading = state === 'loading'
+      const bikes = window.BIKER_RESULTS
+      document.getElementById('list').innerHTML = bikes.map((b, i) => row(b, i, loading)).join('')
+      document.getElementById('count').textContent = `${bikes.length} ${plural(bikes.length)}`
+      document.getElementById('status-line').textContent = loading
+        ? 'Wczytujemy zdjęcia i oceny ekspertów.'
+        : `Dla „${window.BIKER_QUERY}”, od najwyżej ocenianych.`
+    }
+
+    document.getElementById('q').value = window.BIKER_QUERY
+    document.querySelectorAll('.mock-bar button').forEach(btn => btn.addEventListener('click', () => {
+      document.querySelectorAll('.mock-bar button').forEach(b => b.setAttribute('aria-pressed', String(b === btn)))
+      render(btn.dataset.state)
+    }))
+    render('ready')
+  </script>
+</body>
+</html>

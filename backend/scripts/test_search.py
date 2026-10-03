@@ -973,13 +973,60 @@ def case_bike_by_id():
         resp = _post(BIKE_BY_ID_URL, {"bike_id": bike_id}, timeout=10)
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
         assert resp.json() == {"id": bike_id, "brand": FIX_ID_BRAND, "model": FIX_ID_MODEL,
-                               "accessories": FIX_CHIPS, "explanation": FIX_SHORT}, resp.json()
+                               "accessories": FIX_CHIPS, "explanation": FIX_SHORT,
+                               "photo": None, "photo_bg": None}, resp.json()
         assert time.perf_counter() - t0 < 5.0
         resp = _post(BIKE_BY_ID_URL, {"bike_id": 999999999}, timeout=10)
         assert resp.status_code == 404 and resp.json() == {"detail": "Bike not found"}, resp.text[:200]
         assert _post(BIKE_BY_ID_URL, {"bike_id": 0}, timeout=10).status_code == 422
     finally:
         _delete_bike(FIX_ID_BRAND, FIX_ID_MODEL)
+
+
+FIX_COVER_BRAND = "Smoke Cover"
+FIX_COVER_JUNK = "https://example.com/smoke-cover/assets/logo.svg"
+FIX_COVER_GOOD = "https://example.com/smoke-cover/front-view.jpg"
+
+
+def case_result_cover():
+    """Search results, /v1/bike/by-id and /v1/bike/popular carry the bike's cover photo + its edge colour: the first
+    stored photo that is not junk (a leading logo.svg is skipped) and its bg_color; a bike without photos -> null/null."""
+    with_photos, without = "With Photos", "No Photos"
+    for m in (with_photos, without):
+        _delete_bike(FIX_COVER_BRAND, m)
+        _seed_bike_details(FIX_COVER_BRAND, m, FIX_SHORT, _full_components())
+    conn = _DB()
+    try:
+        id_with = conn.execute("SELECT id FROM bike WHERE brand = ? AND model = ?", (FIX_COVER_BRAND, with_photos)).fetchone()[0]
+        id_without = conn.execute("SELECT id FROM bike WHERE brand = ? AND model = ?", (FIX_COVER_BRAND, without)).fetchone()[0]
+        for order, (url, color) in enumerate(((FIX_COVER_JUNK, None), (FIX_COVER_GOOD, "#F2F2F2"))):
+            conn.execute(
+                "INSERT INTO bike_detail_photos (bike_id, url, display_order, bg_color) VALUES (?, ?, ?, ?)",
+                (id_with, url, order, color),
+            )
+        for position, bike_id in ((1, id_with), (2, id_without)):
+            conn.execute("INSERT INTO bike_popular (bike_id, position, created_at) VALUES (?, ?, ?)", (bike_id, position, _now()))
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        found = _post(SEARCH_URL, {"brand": FIX_COVER_BRAND}, timeout=60)
+        assert found.status_code == 200, found.text[:200]
+        mine = {b["model"]: b for b in found.json()["bikes"] if b["brand"] == FIX_COVER_BRAND}
+        assert (mine[with_photos]["photo"], mine[with_photos]["photo_bg"]) == (FIX_COVER_GOOD, "#F2F2F2"), mine[with_photos]
+        assert (mine[without]["photo"], mine[without]["photo_bg"]) == (None, None), mine[without]
+        t0 = time.perf_counter()
+        for bike_id, expected in ((id_with, (FIX_COVER_GOOD, "#F2F2F2")), (id_without, (None, None))):
+            resp = _post(BIKE_BY_ID_URL, {"bike_id": bike_id}, timeout=10)
+            assert resp.status_code == 200, resp.text[:200]
+            assert (resp.json()["photo"], resp.json()["photo_bg"]) == expected, resp.json()
+        popular = {b["model"]: b for b in httpx.get(POPULAR_URL, timeout=10).json()["bikes"] if b["brand"] == FIX_COVER_BRAND}
+        assert (popular[with_photos]["photo"], popular[with_photos]["photo_bg"]) == (FIX_COVER_GOOD, "#F2F2F2"), popular
+        assert (popular[without]["photo"], popular[without]["photo_bg"]) == (None, None), popular
+        assert time.perf_counter() - t0 < 5.0, "DB reads took too long (AI ran?)"
+    finally:
+        for m in (with_photos, without):
+            _delete_bike(FIX_COVER_BRAND, m)
 
 
 def case_equipment_resolve_and_by_id():
@@ -1088,6 +1135,7 @@ CASES = [
     (case_equipment_details_search, False),
     (case_equipment_photos_search, False),
     (case_bike_by_id, False),
+    (case_result_cover, False),
     (case_equipment_resolve_and_by_id, False),
     (case_search_free_text, True),
     (case_parse, True),
