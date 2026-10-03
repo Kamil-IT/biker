@@ -119,6 +119,20 @@ UNIQUE(bike_id, missing_type)
 New table only — `init_db()`'s `create_all()` creates it on an existing database at startup, so it needs no
 migration step.
 
+**`contact_message`** — messages from the Kontakt tab's "Napisz do nas" form (`POST /v1/contact`)
+```
+id (PK)
+name: str (≤ 100, "" = not given)
+email: str (≤ 254)
+topic: str (≤ 32, a slug: missing_bike / wrong_data / feature_idea / cooperation / other)
+message: text (1–5000 chars, enforced by the request schema)
+created_at: datetime (indexed)
+```
+New table only, no foreign keys — `init_db()` creates it at startup, so it needs no migration step. Nothing in the app
+reads it; query it by hand. Already created 2026-10-03 (only this table, `checkfirst`, `bike` row count unchanged) on all
+three databases: local `biker-pg` (it was there from the QA backend's start), the main checkout's `backend/cache.db`,
+and Cloud SQL through the proxy (1011 bikes, 0 messages).
+
 **`bike_review`** — the stored expert review of a bike (TODO-037)
 ```
 id (PK)

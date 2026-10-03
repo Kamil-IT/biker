@@ -201,7 +201,7 @@ pytest -m "not llm"
 ```
 
 `pytest.ini` scopes default collection to `scripts/test_searcher_client_photos.py`,
-`scripts/test_searcher_client_review.py`, `scripts/test_searcher_client_limit.py`, `scripts/test_reviews_repository.py`, `scripts/test_searcher_client_details.py`, `scripts/test_searcher_client_equipment.py`, `scripts/test_details_repository.py`, `scripts/test_equipment_repository.py`, `scripts/test_migrate_equipment_tables.py` and `scripts/test_migrate_drop_bike_detail.py`, `scripts/test_migrate_merge_equipment_detail.py`, so a bare `pytest` run covers the stored-review read and the cache-copy script (temp SQLite), the details repository helpers, `migrate_short_description` and `purge_details_cache` (temp SQLite),
+`scripts/test_searcher_client_review.py`, `scripts/test_searcher_client_limit.py`, `scripts/test_reviews_repository.py`, `scripts/test_searcher_client_details.py`, `scripts/test_searcher_client_equipment.py`, `scripts/test_details_repository.py`, `scripts/test_equipment_repository.py`, `scripts/test_migrate_equipment_tables.py` and `scripts/test_migrate_drop_bike_detail.py`, `scripts/test_migrate_merge_equipment_detail.py`, `scripts/test_contact.py`, so a bare `pytest` run covers the contact form endpoint (temp SQLite, `TestClient`), the stored-review read and the cache-copy script (temp SQLite), the details repository helpers, `migrate_short_description` and `purge_details_cache` (temp SQLite),
 the equipment repository and its migration (temp SQLite), and
 the searcher client's photo, review, details and equipment routes (mocked httpx: request, single-flight, busy mapping, in-flight cap 10, body validation;
 for equipment also the 404 guards and status mapping of `/v1/equipment/*/search`). (`scripts/test_browser_slots.py` was removed in TODO-042
@@ -464,6 +464,37 @@ Content-Type: application/json
 **Flow:** none — no outbound HTTP calls; one SQLite read of `bike` plus one upsert into `bike_missing_request`.
 
 **Tests:** `scripts/test_search.py` TC-27 – TC-29 against a live server: counter 1 → 2 plus a separate row for a second `missing_type` on a seeded fixture bike, with no generic-cache row (TC-27); unknown bike → 200, `bike_id: null`, `counter: 0`, no bike created (TC-28); invalid `missing_type` → 422 (TC-29).
+
+---
+
+### `POST /v1/contact`
+
+Store a message from the Kontakt tab's **Napisz do nas** form (`app/contact_routes.py`). One row per message in `contact_message` (`id`, `name`, `email`, `topic`, `message`, `created_at`). Nobody is e-mailed and no route lists the messages, so they are read with SQL (`SELECT * FROM contact_message ORDER BY created_at DESC`). **No** AI call and **no** generic cache.
+
+```http
+POST http://localhost:8000/v1/contact
+Content-Type: application/json
+
+{
+  "name": "Ola",
+  "email": "ola@example.pl",
+  "topic": "missing_bike",
+  "message": "Nie mogę znaleźć modelu Kross Esker 4.0 z 2025 roku.",
+  "website": ""
+}
+```
+
+**Response:** `{ "ok": true }`
+
+- Every string is trimmed and NUL characters are dropped (PostgreSQL refuses NUL in text). `name` is optional (`""`, ≤ 100). `email` must be present, ≤ 254 characters and shaped like `x@y.z` (one `@`, a dot in the domain, no whitespace). `topic` must be one of `missing_bike`, `wrong_data`, `feature_idea`, `cooperation`, `other`: the slugs are stored and the frontend owns the Polish labels. `message` must be 1–5000 characters. Anything else is a **422**.
+- `website` is a honeypot: the form hides it, so a person leaves it empty. When it is filled, the endpoint still answers **200** `{ "ok": true }` but stores nothing (WARNING log), so a bot learns nothing.
+- A failed write is rolled back, logged at ERROR, and answered with **503** `"Could not save the message — try again later"`. Unlike `/v1/bike/missing`, a lost message must not look sent. The log line of a stored message carries only its id, topic and length, never the address or the text.
+- No rate limit: a script can fill the table. The planned per-IP limit (deploy step 2) would cover this route too.
+- The table is created at startup by `init_db()`, so no migration step is needed. It already exists (created 2026-10-03) on the local `biker-pg`, the main checkout's `cache.db` and Cloud SQL.
+
+**Flow:** none — no outbound HTTP calls; one INSERT into `contact_message`.
+
+**Tests:** `scripts/test_search.py` `case_contact` against a live server: a message is stored (trimmed name) → 200 `{ok: true}`, a bad e-mail → 422, a filled honeypot → 200 and no second row; the fixture rows are deleted afterwards. `scripts/test_contact.py` (pytest, temp SQLite): trimming, optional name, every topic, honeypot, eleven 422 cases, the 5000-character boundary, NUL dropped, 503 on a failed write.
 
 ---
 

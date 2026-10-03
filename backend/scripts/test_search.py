@@ -10,7 +10,7 @@ it passes on a cold or aged database. Endpoints covered here:
 
   no API   /v1/bike/search (DB hit) · /v1/bike/details
            /v1/bike/details/search (404 only — no paid run)
-           /v1/bike/missing · /v1/bike/popular · /v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
+           /v1/bike/missing · /v1/contact · /v1/bike/popular ·/v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
            /v1/bike/decathlon · /v1/bike/decathlon/search (404 + foreign-brand skip always; the
            live house-brand search — the ONE paid searcher run in the suite — only when the searcher is up)
            /v1/bike/allegro · /v1/bike/allegro/search (404 only — no paid run)
@@ -56,6 +56,7 @@ SEARCH_URL = f"{BASE}/v1/bike/search"
 DETAILS_URL = f"{BASE}/v1/bike/details"
 DETAILS_SEARCH_URL = f"{BASE}/v1/bike/details/search"
 MISSING_URL = f"{BASE}/v1/bike/missing"
+CONTACT_URL = f"{BASE}/v1/contact"
 POPULAR_URL = f"{BASE}/v1/bike/popular"
 USED_URL = f"{BASE}/v1/bike/used/olx"
 USED_SEARCH_URL = f"{BASE}/v1/bike/used/search"
@@ -347,6 +348,46 @@ def case_missing():
         assert resp.json() == {"bike_id": bike_id, "missing_type": "photos", "counter": 1}, resp.json()
     finally:
         _delete_bike(FIX_MISSING_BRAND, FIX_MISSING_MODEL)
+
+
+FIX_CONTACT_EMAIL = "smoke-fixture@example.invalid"
+
+
+def _delete_contact_fixture() -> None:
+    conn = _DB()
+    try:
+        conn.execute("DELETE FROM contact_message WHERE email = ?", (FIX_CONTACT_EMAIL,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _contact_fixture_rows() -> list[tuple]:
+    conn = _DB()
+    try:
+        return conn.execute(
+            "SELECT name, topic, message FROM contact_message WHERE email = ? ORDER BY id", (FIX_CONTACT_EMAIL,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def case_contact():
+    """/v1/contact stores a contact-form message; a bad e-mail is a 422 and a filled honeypot stores nothing."""
+    _delete_contact_fixture()
+    try:
+        body = {"name": " Smoke ", "email": FIX_CONTACT_EMAIL, "topic": "other", "message": "Wiadomość testowa."}
+        resp = _post(CONTACT_URL, body, timeout=10)
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        assert resp.json() == {"ok": True}, resp.json()
+        assert _contact_fixture_rows() == [("Smoke", "other", "Wiadomość testowa.")], _contact_fixture_rows()
+        resp = _post(CONTACT_URL, {**body, "email": "not-an-address"}, timeout=10)
+        assert resp.status_code == 422, f"bad e-mail: expected 422, got {resp.status_code}"
+        resp = _post(CONTACT_URL, {**body, "website": "http://spam.example"}, timeout=10)
+        assert resp.status_code == 200 and resp.json() == {"ok": True}, f"honeypot: {resp.status_code} {resp.text[:200]}"
+        assert len(_contact_fixture_rows()) == 1, "a filled honeypot must not store a row"
+    finally:
+        _delete_contact_fixture()
 
 
 FIX_POP_BRAND, FIX_POP_MODEL_A, FIX_POP_MODEL_B = "Smoke Fixture", "Popular Bike A", "Popular Bike B"
@@ -948,6 +989,7 @@ CASES = [
     (case_details, False),
     (case_details_search, False),
     (case_missing, False),
+    (case_contact, False),
     (case_popular, False),
     (case_used, False),
     (case_used_search, False),
