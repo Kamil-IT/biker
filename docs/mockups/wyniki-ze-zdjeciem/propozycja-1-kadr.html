@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Propozycja 1: Kadr — wyniki ze zdjęciem — Biker</title>
+  <!-- Tokeny, nagłówek z zakładkami, pole i przyciski: te same co w makietach zakładek (Café Rider) -->
+  <link rel="stylesheet" href="../zakladki/styles.css">
+  <style>
+    /* Wyniki dostają szerszą kolumnę niż formularz — trzy kadry obok siebie na desktopie. */
+    .wrap-wide { max-width: 68rem; margin: 0 auto; padding: 0 var(--gutter); }
+
+    .hero { padding-block: 3rem 2.25rem; }
+    .search-box { position: relative; }
+    .search-box svg { position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: var(--muted); }
+    .search-box .field { padding: 1rem 1rem 1rem 3rem; font-size: 1.0625rem; border-radius: 1rem; }
+    .search-actions { display: flex; justify-content: flex-end; margin-top: 0.75rem; }
+
+    /* ── Pasek nad wynikami ───────────────────────────── */
+    .results { border-top: 1px solid var(--border); padding-top: 2rem; padding-bottom: 5rem; }
+    .status {
+      display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .status h2 {
+      margin: 0; font-family: var(--font-display); font-weight: 700;
+      font-size: 1.6rem; line-height: 1.1;
+    }
+    .status p { margin: 0.2rem 0 0; color: var(--ink); font-size: 0.9375rem; }
+    .reset {
+      background: none; border: 0; padding: 0.5rem 0; cursor: pointer; white-space: nowrap;
+      font-family: var(--font-display); font-weight: 600; font-size: 1.05rem; color: var(--terra);
+    }
+    .reset:hover { color: var(--terra-dark); }
+
+    /* ── Siatka kafelków ──────────────────────────────── */
+    .grid {
+      display: grid; gap: 1.25rem;
+      grid-template-columns: repeat(auto-fill, minmax(17.5rem, 1fr));
+      margin: 0; padding: 0; list-style: none;
+    }
+
+    .tile {
+      display: flex; flex-direction: column; height: 100%;
+      background: var(--parchment); border: 1px solid var(--border); border-radius: 1rem;
+      overflow: hidden; text-decoration: none; color: inherit;
+      transition: border-color 150ms, box-shadow 150ms;
+      opacity: 0; animation: slideUp 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+    .tile:hover { border-color: var(--terra); box-shadow: 0 10px 28px -18px rgb(43 38 32 / 0.55); }
+    .tile:hover .model { color: var(--terra); }
+    .tile:focus-visible { outline: 2px solid var(--terra); outline-offset: 3px; border-radius: 1rem; }
+
+    /* Kadr: zdjęcie wpisane bez przycinania kół, tło kadru w kolorze narożnika zdjęcia
+       (photoBg). Białe, szare i czarne tła studyjne wypełniają kadr bez widocznych pasów;
+       przezroczysty PNG i brak koloru → jasne tło kadru. */
+    .stage {
+      position: relative; aspect-ratio: 4 / 3; overflow: hidden;
+      background: var(--bg, #F4F1EC);
+    }
+    .stage img { width: 100%; height: 100%; object-fit: contain; display: block; }
+
+    /* Dolna krawędź kadru jest paskiem oceny eksperta. */
+    .meter {
+      position: absolute; left: 0; right: 0; bottom: 0; height: 5px;
+      background: rgb(43 38 32 / 0.18);
+    }
+    .meter i {
+      display: block; height: 100%; width: 0; background: var(--terra);
+      animation: fillBar 700ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+
+    /* Tabliczka z oceną — jak numer startowy przypięty do kadru. */
+    .plate {
+      position: absolute; top: 0.75rem; left: 0.75rem;
+      display: flex; align-items: baseline; gap: 0.3rem;
+      padding: 0.3rem 0.6rem 0.25rem;
+      background: var(--parchment); border: 1px solid rgb(43 38 32 / 0.12); border-radius: 0.55rem;
+      box-shadow: 0 2px 10px -4px rgb(43 38 32 / 0.35);
+    }
+    .plate b {
+      font-family: var(--font-display); font-weight: 800; font-size: 1.9rem; line-height: 0.9;
+      font-variant-numeric: tabular-nums; color: var(--charcoal);
+    }
+    .plate span { font-family: var(--font-display); font-weight: 600; font-size: 0.95rem; color: var(--muted); }
+    .plate.top b { color: var(--terra); }
+    .plate.none b { color: var(--muted); }
+
+    /* Brak zdjęcia: rysunek roweru i wskazówka, gdzie o nie poprosić. */
+    .stage.empty { display: grid; place-items: center; background: #E6DED1; }
+    .empty-art { display: grid; justify-items: center; gap: 0.6rem; padding: 1rem; text-align: center; }
+    .empty-art svg { width: 46%; max-width: 9rem; color: #C3B6A2; }
+    .empty-art p { margin: 0; font-size: 0.8125rem; line-height: 1.45; color: var(--ink); max-width: 15rem; }
+
+    /* Wczytywanie zdjęcia / oceny */
+    .stage.loading .shimmer-fill { position: absolute; inset: 0; }
+    .shimmer-fill {
+      background: linear-gradient(90deg, var(--border) 25%, var(--sand) 50%, var(--border) 75%);
+      background-size: 200% 100%; animation: shimmer 1.6s ease-in-out infinite;
+    }
+
+    .body { display: flex; flex-direction: column; gap: 0.55rem; padding: 1rem 1.15rem 1.25rem; flex: 1; }
+    .brand { margin: 0; font-family: var(--font-display); font-weight: 600; font-size: 1rem; line-height: 1; color: var(--muted); }
+    .model {
+      margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 1.6rem; line-height: 1.02;
+      color: var(--charcoal); transition: color 150ms;
+    }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.15rem 0 0; padding: 0; list-style: none; }
+    .chips span {
+      display: inline-block; padding: 0.1rem 0.5rem;
+      font-family: var(--font-mono); font-size: 10.5px; line-height: 1.6; color: var(--ink);
+      background: var(--sand); border: 1px solid var(--border); border-radius: 99px;
+    }
+    .desc {
+      margin: 0.1rem 0 0; font-size: 0.875rem; line-height: 1.6; color: var(--ink);
+      display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+    }
+    .no-details { margin: 0.1rem 0 0; font-size: 0.875rem; color: var(--muted); font-style: italic; }
+
+    @keyframes slideUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+    @keyframes fillBar { to { width: var(--r); } }
+    @keyframes shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .tile { opacity: 1; animation: none; }
+      .meter i { width: var(--r); animation: none; }
+    }
+
+    @media (max-width: 479px) {
+      .model { font-size: 1.45rem; }
+      .status { flex-direction: column; align-items: flex-start; }
+    }
+
+    /* ── Przełącznik stanów makiety (nie jest częścią projektu) ── */
+    .mock-bar {
+      position: fixed; right: 1rem; bottom: 1rem; z-index: 30;
+      display: flex; align-items: center; gap: 0.4rem; padding: 0.45rem 0.55rem;
+      background: #fff; border: 1px dashed var(--muted); border-radius: 0.6rem;
+      font: 12px/1.2 system-ui, sans-serif; color: #555;
+    }
+    .mock-bar button {
+      font: inherit; padding: 0.3rem 0.55rem; border: 1px solid #ccc; border-radius: 0.4rem;
+      background: #f6f6f6; cursor: pointer;
+    }
+    .mock-bar button[aria-pressed="true"] { background: #333; border-color: #333; color: #fff; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <div class="brand-row">
+        <a class="wordmark" href="#" aria-label="Biker — strona główna">BIKER</a>
+        <span class="tagline">Wyszukiwarka rowerów AI</span>
+      </div>
+      <nav aria-label="Główna nawigacja">
+        <ul class="tabs">
+          <li><a href="#" aria-current="page">Szukanie rowerów</a></li>
+          <li><a href="#"><span class="long">Rower na Twoją miarę</span><span class="short">Na miarę</span></a></li>
+          <li><a href="#">Kontakt</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="wrap hero" aria-labelledby="hero-heading">
+      <h1 id="hero-heading">Znajdź swój<br><span style="color:var(--terra)">idealny rower.</span></h1>
+      <form onsubmit="event.preventDefault()">
+        <div class="search-box">
+          <label for="q" class="sr-only">Czego szukasz?</label>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="q" class="field" type="search">
+        </div>
+        <div class="search-actions"><button class="btn" type="submit">Szukaj rowerów</button></div>
+      </form>
+    </section>
+
+    <section class="wrap-wide" aria-labelledby="results-heading" aria-live="polite">
+      <div class="results">
+        <div class="status">
+          <div>
+            <h2 id="results-heading">Znaleźliśmy <span id="count"></span></h2>
+            <p id="status-line"></p>
+          </div>
+          <button class="reset" type="button">Nowe wyszukiwanie</button>
+        </div>
+        <ul class="grid" id="grid"></ul>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="wrap"><span>Biker © 2026</span><span>Napędzane przez Claude</span></div></footer>
+
+  <div class="mock-bar" role="group" aria-label="Stan makiety">
+    <span>Makieta:</span>
+    <button type="button" data-state="ready" aria-pressed="true">Wyniki</button>
+    <button type="button" data-state="loading" aria-pressed="false">Wczytywanie zdjęć i ocen</button>
+  </div>
+
+  <script src="data.js"></script>
+  <script>
+    const BIKE_ART = '<svg viewBox="0 0 120 64" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+      + '<circle cx="26" cy="44" r="17"/><circle cx="94" cy="44" r="17"/>'
+      + '<path d="M26 44 58 44 50 21Z M50 21 82 19 58 44 M82 19 94 44 M50 21 47 13 M41 13H54 M82 19 80 12 88 11"/></svg>'
+
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+    const fmt = r => r === 10 ? '10' : r.toFixed(1)
+    const plural = n => n === 1 ? 'rower' : (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)) ? 'rowery' : 'rowerów'
+
+    function stage(bike, loading) {
+      if (loading) {
+        return `<div class="stage loading"><div class="shimmer-fill"></div>
+          <div class="plate" aria-hidden="true"><b>—</b><span>/ 10</span></div></div>`
+      }
+      const rated = bike.rating != null
+      const plate = `<div class="plate${rated ? '' : ' none'}${bike.top ? ' top' : ''}" aria-hidden="true">
+          <b>${rated ? fmt(bike.rating) : '?'}</b><span>${rated ? '/ 10' : 'bez oceny'}</span></div>`
+      const meter = `<div class="meter" aria-hidden="true"><i style="--r:${rated ? bike.rating * 10 : 0}%"></i></div>`
+      if (!bike.photo) return emptyStage(plate, meter)
+      return `<div class="stage"${bike.photoBg ? ` style="--bg:${esc(bike.photoBg)}"` : ''}>
+          <img src="${esc(bike.photo)}" alt="${esc(bike.brand + ' ' + bike.model)}" loading="lazy" decoding="async"
+               onerror="this.closest('.stage').outerHTML = emptyStage(this.closest('.stage').querySelector('.plate').outerHTML, this.closest('.stage').querySelector('.meter').outerHTML)">
+          ${plate}${meter}</div>`
+    }
+
+    function emptyStage(plate, meter) {
+      return `<div class="stage empty"><div class="empty-art">${BIKE_ART}
+          <p>Brak zdjęcia. Poproś o nie w szczegółach roweru.</p></div>${plate}${meter}</div>`
+    }
+
+    function tile(bike, i, loading) {
+      const rated = bike.rating != null
+      const spoken = loading ? 'ocena eksperta w trakcie wczytywania'
+        : rated ? `ocena eksperta ${fmt(bike.rating).replace('.', ',')} na 10` : 'brak oceny'
+      const chips = bike.accessories.filter(Boolean)
+      const text = bike.explanation.trim()
+      return `<li><a class="tile" href="#" style="animation-delay:${Math.min(i, 8) * 65}ms"
+            aria-label="Zobacz specyfikację ${esc(bike.brand)} ${esc(bike.model)}, ${spoken}">
+          ${stage(bike, loading)}
+          <div class="body">
+            <p class="brand">${esc(bike.brand)}</p>
+            <h3 class="model">${esc(bike.model)}</h3>
+            ${chips.length ? `<ul class="chips" aria-label="Najważniejsze cechy">${chips.map(c => `<li><span>${esc(c)}</span></li>`).join('')}</ul>` : ''}
+            ${text ? `<p class="desc">${esc(text)}</p>` : '<p class="no-details">Nie mamy jeszcze opisu tego roweru.</p>'}
+          </div></a></li>`
+    }
+
+    function render(state) {
+      const loading = state === 'loading'
+      const bikes = window.BIKER_RESULTS.map((b, i) => ({ ...b, top: i === 0 && b.rating != null }))
+      document.getElementById('grid').innerHTML = bikes.map((b, i) => tile(b, i, loading)).join('')
+      const n = bikes.length
+      document.getElementById('count').textContent = `${n} ${plural(n)}`
+      document.getElementById('status-line').textContent = loading
+        ? 'Wczytujemy zdjęcia i oceny ekspertów.'
+        : `Dla „${window.BIKER_QUERY}”, od najwyżej ocenianych.`
+    }
+
+    document.getElementById('q').value = window.BIKER_QUERY
+    document.querySelectorAll('.mock-bar button').forEach(btn => btn.addEventListener('click', () => {
+      document.querySelectorAll('.mock-bar button').forEach(b => b.setAttribute('aria-pressed', String(b === btn)))
+      render(btn.dataset.state)
+    }))
+    render('ready')
+  </script>
+</body>
+</html>
