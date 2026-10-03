@@ -16,6 +16,7 @@ GOOD = [
     "http://shop.example/p/1/front.png?v=3",
     "https://cdn.example.com/files/Iconic-Roadster-side.jpg",  # "Iconic" is not the word "icon"
     "https://cdn.example.com/files/marketing-shot.webp",
+    "https://cdn.example.com/files/groupset-105-side.jpg",  # only "Group-<number>" exports are junk
     # a real product thumbnail whose query names the shop's menu — only a /menu/ folder is junk
     "https://rowery-indiana.pl/files/thumbs/products/3/opisy/0.jpg/296_389_crop.jpg?ts=1644573284&pn=menu-product",
 ]
@@ -34,6 +35,8 @@ BAD = [
     "https://x.test/Pashley-saddle-logo.jpg",
     "https://x.test/img/spinner.png",
     "https://rowery-indiana.pl/files/menu/support.jpg",  # a shop's menu graphic, not the bike
+    "https://rometbicycles.com/wp-content/uploads/2025/01/Group-2.png",  # design export = the Romet logo
+    "https://cdn.shopify.com/s/files/1/0628/3064/1309/files/Group_459_cd8d6129-b7ad-4c36-850f-2720424d3747.png?v=1727889485",
     "https://x.test/img/loader.png",
     "https://x.test/Profile_Badge.png",
     "ftp://x.test/bike.jpg",

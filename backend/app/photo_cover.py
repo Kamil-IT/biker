@@ -28,6 +28,9 @@ _JUNK_SUBSTRINGS = ("favicon", "judgeme", "judge.me", "review-images", "powered_
 # Folders of a shop's page chrome, matched in the path only (rowery-indiana.pl's real product
 # thumbnails carry `pn=menu-product` in the query, its menu graphics live under /files/menu/).
 _JUNK_FOLDERS = ("/menu/",)
+# Design-tool exports kept their layer name ("Group-2.png", "Group_459_….png"): brand logos and
+# page graphics, not bike photos (Romet Aspre's first stored photo is the Romet logo).
+_JUNK_FILENAME = re.compile(r"/group[-_ ]?\d+[^/]*$")
 
 
 def is_cover_candidate(url: Optional[str]) -> bool:
@@ -42,6 +45,8 @@ def is_cover_candidate(url: Optional[str]) -> bool:
         return False
     path = parts.path.lower()
     if path.endswith(_BAD_EXTENSIONS) or any(folder in path for folder in _JUNK_FOLDERS):
+        return False
+    if _JUNK_FILENAME.search(path):
         return False
     text = url.lower()
     if any(token in text for token in _JUNK_SUBSTRINGS):
