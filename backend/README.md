@@ -490,7 +490,7 @@ Content-Type: application/json
 - `website` is a honeypot: the form hides it, so a person leaves it empty. When it is filled, the endpoint still answers **200** `{ "ok": true }` but stores nothing (WARNING log), so a bot learns nothing.
 - A failed write is rolled back, logged at ERROR, and answered with **503** `"Could not save the message — try again later"`. Unlike `/v1/bike/missing`, a lost message must not look sent. The log line of a stored message carries only its id, topic and length, never the address or the text.
 - No rate limit: a script can fill the table. The planned per-IP limit (deploy step 2) would cover this route too.
-- The table is created at startup by `init_db()`, so no migration step is needed (also on Cloud SQL: the first deploy creates it).
+- The table is created at startup by `init_db()`, so no migration step is needed. It already exists (created 2026-10-03) on the local `biker-pg`, the main checkout's `cache.db` and Cloud SQL.
 
 **Flow:** none — no outbound HTTP calls; one INSERT into `contact_message`.
 

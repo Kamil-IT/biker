@@ -128,8 +128,10 @@ topic: str (≤ 32, a slug: missing_bike / wrong_data / feature_idea / cooperati
 message: text (1–5000 chars, enforced by the request schema)
 created_at: datetime (indexed)
 ```
-New table only, no foreign keys — `init_db()` creates it at startup (on Cloud SQL with the first deploy that ships it),
-so it needs no migration step. Nothing in the app reads it; query it by hand.
+New table only, no foreign keys — `init_db()` creates it at startup, so it needs no migration step. Nothing in the app
+reads it; query it by hand. Already created 2026-10-03 (only this table, `checkfirst`, `bike` row count unchanged) on all
+three databases: local `biker-pg` (it was there from the QA backend's start), the main checkout's `backend/cache.db`,
+and Cloud SQL through the proxy (1011 bikes, 0 messages).
 
 **`bike_review`** — the stored expert review of a bike (TODO-037)
 ```
