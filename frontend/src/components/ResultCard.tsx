@@ -1,4 +1,6 @@
+import type { MouseEvent } from 'react'
 import type { Bike, ExpertRating } from '../types'
+import { isPlainClick } from '../hooks/useRoute'
 
 export type { Bike }
 
@@ -8,6 +10,8 @@ interface ResultCardProps {
   isTop: boolean
   animationDelay: number
   onSelect: (bike: Bike) => void
+  // The bike's address (/bike/{id}); the card is then a link. Without it, a button.
+  href?: string
   // Expert rating (from the stored review) shown in the numeral, bar and aria text:
   // a number, "—" while pending, "?" when there is none.
   expertRating: ExpertRating
@@ -31,7 +35,7 @@ const ratingText = ({ state, rating }: ExpertRating): string => {
   return 'brak oceny'
 }
 
-export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect, expertRating }: ResultCardProps) {
+export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect, href, expertRating }: ResultCardProps) {
   const { brand, model, accessories, explanation } = bike
   // A pending or missing rating is 0 for the bar (empty). The numeral shows "—" while
   // pending and "?" when there is no rating.
@@ -43,25 +47,32 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
   const label        = ratingLabel(expertRating)
   const ariaScore    = ratingText(expertRating)
 
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(bike)}
-      className={[
-        'relative bg-card rounded-2xl border overflow-hidden w-full text-left group',
-        'p-6 md:p-8',
-        'transition-all duration-300',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/50 focus-visible:ring-offset-2 focus-visible:ring-offset-sand',
-        isTop
-          ? 'border-border shadow-md hover:shadow-xl'
-          : 'border-border hover:shadow-md',
-      ].join(' ')}
-      style={{
-        opacity: 0,
-        animation: `slideUp 420ms cubic-bezier(0.22,1,0.36,1) ${animationDelay}ms forwards`,
-      }}
-      aria-label={`Zobacz specyfikację ${brand} ${model}, ${ariaScore}`}
-    >
+  const frame = {
+    className: [
+      'block relative bg-card rounded-2xl border overflow-hidden w-full text-left group',
+      'p-6 md:p-8',
+      'transition-all duration-300',
+      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/50 focus-visible:ring-offset-2 focus-visible:ring-offset-sand',
+      isTop
+        ? 'border-border shadow-md hover:shadow-xl'
+        : 'border-border hover:shadow-md',
+    ].join(' '),
+    style: {
+      opacity: 0,
+      animation: `slideUp 420ms cubic-bezier(0.22,1,0.36,1) ${animationDelay}ms forwards`,
+    },
+    'aria-label': `Zobacz specyfikację ${brand} ${model}, ${ariaScore}`,
+  }
+
+  // A real link to /bike/{id}: a modified or middle click opens it in a new tab.
+  const handleLinkClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (!isPlainClick(e)) return
+    e.preventDefault()
+    onSelect(bike)
+  }
+
+  const content = (
+    <>
       {/* Left accent bar (top result only) */}
       {isTop && (
         <div className="absolute left-0 top-0 bottom-0 w-1 bg-terra" aria-hidden="true" />
@@ -204,6 +215,10 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
           Zobacz specyfikację →
         </span>
       </div>
-    </button>
+    </>
   )
+
+  return href
+    ? <a href={href} onClick={handleLinkClick} {...frame}>{content}</a>
+    : <button type="button" onClick={() => onSelect(bike)} {...frame}>{content}</button>
 }

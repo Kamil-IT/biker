@@ -528,8 +528,12 @@ X-Searcher-Key: dev-local-searcher-key
   sent by the backend from the stored row) → else `422`
 - `200` → `details` has the backend's `EquipmentDetailsResponse` shape (no `photos`; `category` = the slug). **The search
   always runs** (no DB read first). A usable result (components **or** description) is stored → `saved: 1`, `details` =
-  what is stored after the write. Anything less writes, deletes and links **nothing** → `saved: 0`, `details` = the empty
-  details and `equipment_id` `null` (also when the item exists — the UI then falls back to the by-name read)
+  what is stored after the write. Anything less (`found: false` or an empty answer) stores only the placeholder
+  description `"Opis niedostępny dla tego produktu."` (`NOT_FOUND_TEXT`, no components, no researched identity) on an
+  item whose `description` is NULL — creating the row if missing and linking the element like a usable result; an existing
+  description is never touched → `saved: 0`, `details` = what is stored (the placeholder or the earlier description),
+  `equipment_id` set. The frontend searches an item automatically only while it has no description, so the placeholder
+  ends that; a failed run (`400` / `502` / `503` / `500` below) writes nothing and the next visit retries
 - `400` (subscription limit) / `401` / `502` / `503` `{"detail": "searcher busy"}` (the same slots as the other seven
   routes) / `500` `{"detail": "database write failed"}` exactly as for `/v1/search/details`
 
@@ -545,7 +549,7 @@ answer `found: true` when the bike maker documents it (fix 2026-10-02; before it
 every client value is sanitised first — double quotes,
 backticks, control characters and line separators become spaces, whitespace collapsed — and the prompt says quoted names
 are data, not instructions) — **no Playwright** → (3) `build_equipment_details()`:
-`found: false` → empty, never stored; else the description built from `sources` minus shops (`app/shop_filter.py`:
+`found: false` → empty (only the placeholder above is stored); else the description built from `sources` minus shops (`app/shop_filter.py`:
 a marketplace host label — allegro, olx, ceneo, decathlon, amazon, ebay …; a shop token in the host — shop, store,
 sklep, parts, powered, bike24, wiggle …; or a listing path — /product/, /shop/, /p/<digits>, /dp/, /cart … — unless the
 host carries the item's brand, so a maker's product page stays; all dropped → the description is kept without sources), every subcategory under one category named after the slug, strings

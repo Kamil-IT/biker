@@ -1,4 +1,6 @@
 export interface Bike {
+  // bike.id — the /bike/{id} address. Null only for a search result whose bike row is missing.
+  id?: number | null
   brand: string
   model: string
   accessories: string[]
@@ -121,30 +123,30 @@ export interface EquipmentReviewResponse {
   ref: string[]
 }
 
-// Body of the equipment DB reads (details and photos): by `equipment_id` when the bike's
-// element carries one, else by name (`company: ''`, `model` = element name).
-export interface EquipmentDetailsPayload {
-  company?: string
-  model: string
-  category?: string
-  equipment_id?: number
-}
-
-// Body of the on-demand equipment searches: the bike the element was clicked on, the
-// element name and — when already known — the equipment category.
+// Body of the on-demand equipment searches (/equipment/{id}): the item, and the bike the
+// view was opened from when known (the search's context bike; else the backend takes the
+// first bike linking the item).
 export interface EquipmentSearchPayload {
-  bike_company: string
-  bike_model: string
-  element_name: string
-  category?: string
+  equipment_id: number
+  bike_id?: number
 }
 
-// What the equipment view was opened for: a component element of one bike's spec tree.
-export interface EquipmentSelection {
+// POST /v1/equipment/by-id: the item's identity and the first bike whose spec tree links
+// it (the back target of a deep link).
+export interface EquipmentItemResponse {
+  equipment_id: number
   name: string
-  equipmentId: number | null
-  bikeCompany: string
-  bikeModel: string
+  category: string
+  company: string
+  model: string
+  bike: { id: number; brand: string; model: string } | null
+}
+
+// POST /v1/equipment/resolve: the equipment row of a clicked element (created empty when missing).
+export interface EquipmentResolveResponse {
+  equipment_id: number
+  name: string
+  category: string
 }
 
 export interface EquipmentReviewPayload {
@@ -208,6 +210,22 @@ export interface MissingDataResponse {
   counter:      number
 }
 
+// The Kontakt tab's form (POST /v1/contact). `topic` is a slug — ContactPage.tsx owns
+// the Polish labels; `website` is a honeypot a person leaves empty.
+export type ContactTopic = 'missing_bike' | 'wrong_data' | 'feature_idea' | 'cooperation' | 'other'
+
+export interface ContactMessageRequest {
+  name:    string
+  email:   string
+  topic:   ContactTopic
+  message: string
+  website: string
+}
+
+export interface ContactMessageResponse {
+  ok: boolean
+}
+
 export interface ParseResponse {
   brand?:          string
   model?:          string
@@ -220,6 +238,7 @@ export interface ParseResponse {
 // display order. `description` is the first one or two sentences of the stored overview
 // ("" when the bike has no details row) — the card shows it in the explanation slot.
 export interface PopularBike {
+  id:          number | null
   brand:       string
   model:       string
   description: string

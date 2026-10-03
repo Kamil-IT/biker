@@ -1,4 +1,5 @@
-from typing import Optional
+import re
+from typing import Annotated, Literal, Optional, get_args
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -77,6 +78,46 @@ class BikeDetailsRequest(BaseModel):
 
 MISSING_TYPE_MAX_LEN = 64
 
+# The contact form's "W jakiej sprawie?" choices. The slugs are stored; the Polish
+# labels live in the frontend (ContactPage.tsx), like the search filters' options.
+ContactTopic = Literal["missing_bike", "wrong_data", "feature_idea", "cooperation", "other"]
+CONTACT_TOPICS = get_args(ContactTopic)
+CONTACT_NAME_MAX_LEN = 100
+CONTACT_EMAIL_MAX_LEN = 254
+CONTACT_MESSAGE_MAX_LEN = 5000
+# Deliberately loose (one @, a dot in the domain, no whitespace): the address is only
+# used to reply by hand, so a typo costs a reply, not a broken feature.
+_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+
+class ContactMessageRequest(BaseModel):
+    """The "Napisz do nas" form of the Kontakt tab. Strings are trimmed; `name` is optional.
+
+    `website` is a honeypot: the form hides it, so only a bot fills it in.
+    """
+    name: str = Field(default="", max_length=CONTACT_NAME_MAX_LEN)
+    email: str = Field(max_length=CONTACT_EMAIL_MAX_LEN)
+    topic: ContactTopic
+    message: str = Field(min_length=1, max_length=CONTACT_MESSAGE_MAX_LEN)
+    website: str = ""
+
+    @field_validator("name", "email", "message", "website", mode="before")
+    @classmethod
+    def strip(cls, v):
+        # NUL is dropped too: PostgreSQL refuses it in a text column.
+        return v.replace("\x00", "").strip() if isinstance(v, str) else v
+
+    @field_validator("email")
+    @classmethod
+    def email_shape(cls, v: str) -> str:
+        if not _EMAIL_RE.fullmatch(v):
+            raise ValueError("not a valid e-mail address")
+        return v
+
+
+class ContactMessageResponse(BaseModel):
+    ok: bool = True
+
 
 class MissingDataRequest(BaseModel):
     company: str
@@ -109,6 +150,7 @@ class MissingDataResponse(BaseModel):
 
 class PopularBike(BaseModel):
     """One curated home-page bike (TODO-034): the `bike` row's casing + a short blurb."""
+    id: Optional[int] = None  # bike.id — the frontend's /bike/{id} address
     brand: str
     model: str
     description: str = ""  # first two sentences of the stored details description; "" without details
@@ -171,10 +213,21 @@ class BikeDetailsResponse(BaseModel):
 
 
 class BikeResult(BaseModel):
+    # bike.id — the frontend's /bike/{id} address; None only when the bike row is missing
+    # (a swallowed save_search failure on the AI path).
+    id: Optional[int] = None
     brand: str
     model: str
     accessories: list[str]
     explanation: str
+
+
+DbId = Annotated[int, Field(ge=1, le=2147483647)]  # INTEGER range: no DB overflow
+
+
+class BikeByIdRequest(BaseModel):
+    """POST /v1/bike/by-id: one bike by its id (the frontend's /bike/{id} deep link)."""
+    bike_id: DbId
 
 
 class BikeSearchResponse(BaseModel):
@@ -298,16 +351,17 @@ class EquipmentDetailsRequest(BaseModel):
     against `equipment.name_norm` (just the model when company is empty - the
     spec-tree click) or the researched (company_norm, model_norm) pair, and
     ignores `category` (the oldest matching row wins). `model` is bounded by
-    the equipment.model / element_name column width (512).
+    the equipment.model / element_name column width (512); it may be empty when
+    `equipment_id` is given (the /equipment/{id} deep link knows only the id).
     """
     company: str = Field(default="", max_length=255)
-    model: str = Field(max_length=512)
+    model: str = Field(default="", max_length=512)
     category: Optional[str] = Field(default=None, max_length=32)
-    equipment_id: Optional[int] = Field(default=None, ge=1, le=2147483647)  # INTEGER range: no DB overflow
+    equipment_id: Optional[DbId] = None
 
-    @field_validator("company", mode="before")
+    @field_validator("company", "model", mode="before")
     @classmethod
-    def strip_company(cls, v):
+    def strip_text(cls, v):
         return str(v).strip() if v is not None else ""
 
     @field_validator("category", mode="before")
@@ -315,12 +369,11 @@ class EquipmentDetailsRequest(BaseModel):
     def strip_category(cls, v):
         return str(v).strip() if v is not None else None
 
-    @field_validator("model")
-    @classmethod
-    def model_not_empty(cls, v: str) -> str:
-        if not v.strip():
+    @model_validator(mode="after")
+    def model_or_id(self) -> "EquipmentDetailsRequest":
+        if not self.model and self.equipment_id is None:
             raise ValueError("model must not be empty")
-        return v.strip()
+        return self
 
     @field_validator("category", mode="after")
     @classmethod
@@ -350,19 +403,28 @@ class EquipmentPhotosResponse(BaseModel):
 class EquipmentSearchRequest(BaseModel):
     """On-demand equipment search from a bike's spec tree (TODO-042).
 
-    Bounded because every field reaches the searcher's CLI prompt and its rows.
+    Either by `equipment_id` (+ optional `bike_id`, the bike the view was opened
+    from — the context bike; else the first bike linked to the item) or by
+    `bike_company` + `bike_model` + `element_name`. Bounded because every field
+    reaches the searcher's CLI prompt and its rows.
     """
-    bike_company: str = Field(max_length=255)
-    bike_model: str = Field(max_length=255)
-    element_name: str = Field(max_length=255)
+    bike_company: str = Field(default="", max_length=255)
+    bike_model: str = Field(default="", max_length=255)
+    element_name: str = Field(default="", max_length=255)
     category: Optional[str] = Field(default=None, max_length=32)
+    equipment_id: Optional[DbId] = None
+    bike_id: Optional[DbId] = None
 
-    @field_validator("bike_company", "bike_model", "element_name")
+    @field_validator("bike_company", "bike_model", "element_name", mode="before")
     @classmethod
-    def not_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("must not be empty")
-        return v.strip()
+    def strip(cls, v):
+        return str(v).strip() if v is not None else ""
+
+    @model_validator(mode="after")
+    def by_id_or_by_name(self) -> "EquipmentSearchRequest":
+        if self.equipment_id is None and not (self.bike_company and self.bike_model and self.element_name):
+            raise ValueError("give equipment_id, or bike_company + bike_model + element_name (must not be empty)")
+        return self
 
     @field_validator("category", mode="before")
     @classmethod
@@ -370,6 +432,46 @@ class EquipmentSearchRequest(BaseModel):
         if v is None:
             return None
         return str(v).strip() or None
+
+
+class EquipmentByIdRequest(BaseModel):
+    """POST /v1/equipment/by-id: one equipment item by its id (the frontend's /equipment/{id})."""
+    equipment_id: DbId
+
+
+class BikeRef(BaseModel):
+    id: int
+    brand: str
+    model: str
+
+
+class EquipmentItemResponse(BaseModel):
+    """Identity of one equipment item + the first bike whose spec tree links it (the back target)."""
+    equipment_id: int
+    name: str  # the element name it was opened as
+    category: str
+    company: str  # researched brand, "" until a details search filled it
+    model: str
+    bike: Optional[BikeRef] = None
+
+
+class EquipmentResolveRequest(BaseModel):
+    """POST /v1/equipment/resolve: the equipment row of one element of a bike's spec tree."""
+    bike_id: DbId
+    element_name: str = Field(max_length=512)  # bike_component.element_name width
+
+    @field_validator("element_name")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()
+
+
+class EquipmentResolveResponse(BaseModel):
+    equipment_id: int
+    name: str
+    category: str
 
 
 class EquipmentReviewRequest(BaseModel):

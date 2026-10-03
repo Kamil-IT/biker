@@ -73,15 +73,15 @@ def get_popular_bikes() -> PopularBikesResponse:
     session = get_session()
     try:
         rows = (
-            session.query(Bike.brand, Bike.model, Bike.description)
+            session.query(Bike.id, Bike.brand, Bike.model, Bike.description)
             .select_from(BikePopular)
             .join(Bike, Bike.id == BikePopular.bike_id)
             .order_by(BikePopular.position, BikePopular.id)
             .all()
         )
         bikes = [
-            PopularBike(brand=brand, model=model, description=_blurb(brand, model, description))
-            for brand, model, description in rows
+            PopularBike(id=bike_id, brand=brand, model=model, description=_blurb(brand, model, description))
+            for bike_id, brand, model, description in rows
         ]
         logger.info("popular bikes served from DB | bikes=%d", len(bikes))
         return PopularBikesResponse(bikes=bikes)

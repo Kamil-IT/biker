@@ -4,16 +4,30 @@ AI-powered bike finder. Describe what you're looking for in plain English and ge
 
 ## How it works
 
-Before the first search the home page shows **Najpopularniejsze rowery** — the curated popular bikes (`GET /v1/bike/popular`) as result-style cards with their expert rating in points ("8.4 / 10", from one `POST /v1/bike/review` per bike; "?" / "Brak oceny" without one) and a short description; click one to jump straight to its details page (step 4). The section disappears while a search runs or shows results and returns after "Nowe wyszukiwanie".
+Before the first search the home page shows **Najpopularniejsze rowery** — the curated popular bikes (`GET /v1/bike/popular`) as result-style cards with their expert rating in points ("8.4 / 10", from one `POST /v1/bike/review` per bike; "?" / "Brak oceny" without one) and a short description; click one to jump straight to its details page (step 4). The section is the home page (`/`) only; a search moves to `/search?…`, and Back or "Nowe wyszukiwanie" brings it back.
 
 1. You enter a free-text description (e.g. *"comfortable bike for daily 10 km city commute"*)
 2. The backend first searches its own bike database: every structured filter it can check (brand, model, wheel size, frame size, electric) is matched against stored bike specs. All matching bikes are returned (no cap) with no AI call. Search answers are never served from a response cache, so they always reflect the current database
-3. Only when the database has no match, a single Claude Haiku call recommends every real bike that fits (at least 1 — the closest match when nothing meets every filter)
+3. Only when the database has no match, a single Claude Haiku call recommends every real bike that fits (at least 1 — the closest match when nothing meets every filter). Every result card shows the bike's expert rating from its stored review ("?" without one), and a **Sortuj** select above a list of two or more bikes orders it by expert rating (default: highest first; or lowest first — bikes without a rating stay last either way) or by name, brand then model (A–Z / Z–A); sorting happens in the browser and the choice is kept for later searches
 4. Click a result to open the details page — the description, component specs, photos, review, Allegro offers, Decathlon offers and used OLX listings are all read from the database only (they get there through the on-demand searches below — opening a bike never runs a details, marketplace, photo or review search). The result cards' text is read from the database too: the explanation is the bike's stored two-sentence `short_description` and the chips are drivetrain / brakes / frame-material names from its stored components (both hidden for a bike without stored details). Any section (photos, overview, specs, review, Used / New offers) still without data after 5 s — or with an empty/failed response — shows a **Request data** button instead of its spinner; clicking it records the request via `POST /v1/bike/missing`. Data that arrives later replaces the button
 5. In the **Opis** and **Komponenty** sections the button starts the on-demand details search (`POST /v1/bike/details/search` → the `searcher/` service runs the Claude Code CLI once — `WebSearch` + `WebFetch` — for the Polish description, a Polish two-sentence short description and the 8-category component tree, and stores a usable result in the bike row's `description` / `short_description` and `bike_component`, updated in place, photos untouched); one click fills both sections, it reads "Szukam danych roweru…" while it runs, then the data replaces it — or "Nie znaleziono danych".
    In the **Recenzja eksperta** section the button also starts the on-demand review search (`POST /v1/bike/review/search` → the same `searcher/` service runs the Claude Code CLI once over the curated review sites, computes the weighted rating and stores it in `bike_review` / `bike_review_source` — only when it found at least one professional source; a stored review is never wiped by a bad run); it reads "Szukam recenzji…" while it runs, then the review replaces it — or "Nie znaleziono recenzji".
    In the photo gallery slot the button also starts the on-demand photo search (`POST /v1/bike/photos/search` → the same `searcher/` service finds the manufacturer's product page with the Claude Code CLI, scrapes up to 8 photos from it with Playwright and stores them in `bike_detail_photos` — only for a bike that has none, stored photos are never replaced); it reads "Szukam zdjęć…" while it runs, then the gallery replaces it — or "Nie znaleziono zdjęć". In the **Used** offers card that same button also starts the on-demand OLX search (`POST /v1/bike/used/search` → the `searcher/` service, which runs the Claude Code CLI on your subscription and stores what it finds in `bike_offer`). The button reads "Szukam na OLX…" while it runs, then the real listings with photos replace it — or "Nie znaleziono ofert" when there are none. The **New** card also lists the stored centrumrowerowe.pl offers (`POST /v1/bike/centrumrowerowe`, a DB read of rows written by the local discovery enrichment; no button, the data is either stored or not). Its two search buttons are separate: **Poszukaj na Allegro** (`POST /v1/bike/allegro/search`) and **Poszukaj w Decathlonie** (`POST /v1/bike/decathlon/search`), each shown only while that source has no stored row for the bike; a click records the request and runs that one search ("Szukam na Allegro…" / "Szukam w Decathlonie…"), the rows replace the button, or it becomes a disabled "Nie znaleziono na Allegro" / "Nie znaleziono w Decathlonie" with the backend's `info` under it. Neither search stores photos (Allegro blocks every automated fetch with 403, so its photo scrape was dropped). Allegro is searched for every brand, and a used Allegro listing lands in the **Used** card by its `is_new` flag; Decathlon only for its house brands (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt; `backend/app/decathlon_brands.py`) — any other brand gets an instant empty Decathlon answer with no search spent (closes `TODO_ISSUE_010`)
-6. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel, and bike parts — the default category when the name matches no keyword). Equipment is informational only — no shopping/offer links
+6. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel, and bike parts — the default category when the name matches no keyword). Equipment is informational only — no shopping/offer links. The click finds or creates the item's row (`POST /v1/equipment/resolve`, free); while the item has no stored details its details search runs **by itself** on every visit ("Szukam danych wyposażenia…"), and an item the search finds nothing for is stored as "Opis niedostępny dla tego produktu." so it is never searched again. Its photo search and its review stay behind their buttons
+7. The **Kontakt** tab's **Napisz do nas** form (optional name, e-mail, topic, message) is saved through `POST /v1/contact` into the `contact_message` table. Nobody is e-mailed, so read the messages with SQL (`SELECT * FROM contact_message ORDER BY created_at DESC`)
+
+Every view has its own address — share it, open it in a new tab, reload it or go Back and you see the same thing:
+
+| Address | View |
+|---------|------|
+| `/` | home: empty search form + popular bikes |
+| `/search?q=…&brand=…&model=…&year=…&wheel_size=…&frame_size=…&bike_type=…&is_electric=…` | search results (opening the link runs the search at once and fills the filters) |
+| `/bike/{bike_id}` | bike details ("Nie znaleziono roweru" for an unknown id) |
+| `/equipment/{equipment_id}` | equipment page ("Nie znaleziono wyposażenia" for an unknown id) |
+| `/bike-for-your-fit` | "Rower na Twoją miarę" (old `/rower-na-twoja-miare` redirects here) |
+| `/contact` | "Kontakt" (old `/kontakt` redirects here) |
+
+Back from a bike returns to the same results at the same scroll position without searching again. Details: `frontend/README.md` § Addresses.
 
 ## Running the project
 
@@ -401,11 +415,11 @@ Manual test plan and results (13 of 13 cases pass in round 3, after the merge of
 
 | Command | What it does |
 |---|---|
-| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/bike/popular`, `/v1/bike/used/olx`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`, `/v1/bike/allegro`, `/v1/bike/allegro/search`, `/v1/bike/centrumrowerowe`, `/v1/bike/photos`, `/v1/bike/photos/search`, `/v1/bike/details`, `/v1/bike/details/search`) |
+| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/contact`, `/v1/bike/popular`, `/v1/bike/used/olx`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`, `/v1/bike/allegro`, `/v1/bike/allegro/search`, `/v1/bike/centrumrowerowe`, `/v1/bike/photos`, `/v1/bike/photos/search`, `/v1/bike/details`, `/v1/bike/details/search`) |
 | `cd backend && python scripts/seed_popular_bikes.py` | Fill `bike_popular` — the home page's "Najpopularniejsze rowery" served by `GET /v1/bike/popular` (TODO-034) — with 3 bikes that have details, photos and a stored review (`bike_review`) with a real rating; `--dry-run`, `--count N`, repeatable `--bike "Brand\|Model"`; replaces the table contents |
 | `cd searcher && python scripts/test_searcher.py` | Smoke-test the searcher (`/health`, 401/422 on all six search routes and a stored-photos answer from the DB — free, no CLI run; the single paid live run lives in `backend/scripts/test_search.py` `case_decathlon_search`) |
 | `cd backend && python scripts/copy_review_cache_to_table.py` | One-off (TODO-037): copy the old generic-cache bike reviews into `bike_review` / `bike_review_source`; `--dry-run`, `--force`, `--db` / `--url`; idempotent |
-| `cd backend && pytest` | Unit tests (no API key): stored reviews + cache copy, search database read, details + equipment tables and migrations, searcher client routes (photo, review, details, equipment x2), stored data repository reads |
+| `cd backend && pytest` | Unit tests (no API key): stored reviews + cache copy, search database read, details + equipment tables and migrations, searcher client routes (photo, review, details, equipment x2), stored data repository reads, the contact form endpoint |
 | `cd frontend && npm run build` | TypeScript check + production bundle → `dist/` |
 | `cd frontend && npm run preview` | Serve the production bundle locally |
 | http://localhost:8000/docs | Interactive OpenAPI UI for the backend |
@@ -444,8 +458,11 @@ biker/
 │   │   ├── bike_finder.py             # Single Claude call → all matching bikes, min 1 (DB-miss fallback)
 │   │   ├── reviews_repository.py      # Stored bike review (bike_review + bike_review_source) — DB read for /v1/bike/review
 │   │   ├── photos_repository.py       # Stored bike photos: get_bike_photos (POST /v1/bike/photos) — bike_detail_photos keyed on bike_id
-│   │   ├── equipment_routes.py        # Four POST /v1/equipment/* endpoints (TODO-042): /details, /photos (DB reads); /details/search, /photos/search (searcher proxies)
+│   │   ├── equipment_routes.py        # POST /v1/equipment/*: /details, /photos, /by-id (DB reads); /resolve (find-or-create, no AI); /details/search, /photos/search (searcher proxies, by equipment_id or bike + element)
+│   │   ├── contact_routes.py          # POST /v1/contact: the Kontakt form's message → contact_message (honeypot, 503 on a failed write)
 │   │   ├── equipment_repository.py    # Equipment data access (get_equipment_details, get_equipment_photos, save_equipment_details, save_equipment_photos, bike_has_component)
+│   │   ├── equipment_lookup.py        # /equipment/{id} pages: item by id + first linked bike, resolve (find-or-create + link), search context by id
+│   │   ├── equipment_categories.py    # Copy of the searcher's category inference (resolve picks the same category the searcher would)
 │   │   ├── equipment_models.py        # Equipment ORM: equipment (item + details), equipment_component, equipment_detail_photos; equipment_id FK on bike_component
 │   │   ├── component_tree.py          # Shared tree builder for bike and equipment spec trees
 │   │   ├── equipment_review_finder.py      # Equipment review (review/forum links only)
@@ -459,22 +476,31 @@ biker/
 │       ├── migrate_equipment_tables.py    # One-off, idempotent: create equipment tables and add bike_component.equipment_id (TODO-042); --dry-run, --db, --url
 │       ├── migrate_merge_equipment_detail.py # One-off, idempotent: equipment_detail merged into equipment, equipment_detail_component renamed equipment_component (TODO-044); --dry-run, --db, --url
 │       ├── seed_popular_bikes.py      # Fill bike_popular (home page "Najpopularniejsze rowery") with 3 bikes that have details + photos + a stored review; --dry-run, --count, --bike "Brand|Model"
-│       ├── test_search.py             # Smoke tests for all backend endpoints (bike search/details, offers, photos, review; equipment details/photos x2) — one happy path per endpoint, no AI
+│       ├── test_search.py             # Smoke tests for all backend endpoints (bike search/details/by-id, offers, photos, review; equipment details/photos x2, resolve, by-id) — one happy path per endpoint, no AI
 │       ├── copy_review_cache_to_table.py  # One-off: generic-cache reviews -> bike_review tables (TODO-037)
 │       ├── test_equipment_repository.py   # pytest: get/save equipment details + photos, link preservation after bike re-save, insert-only photos (TODO-042)
 │       ├── test_migrate_equipment_tables.py # pytest: idempotent migration (TODO-042)
 │       ├── test_migrate_merge_equipment_detail.py # pytest: the equipment merge on temp SQLite (TODO-044)
 │       ├── test_searcher_client_equipment.py # pytest: searcher client routes for equipment details + photos (TODO-042)
+│       ├── test_contact.py            # pytest: POST /v1/contact on temp SQLite (validation, honeypot, 503)
 └── frontend/
     └── src/
-        ├── App.tsx                    # App shell, state machine, all API calls
+        ├── App.tsx                    # App shell: the address decides the view; search state, address → loads
         ├── types.ts                   # Shared TypeScript interfaces
+        ├── searchQuery.ts             # /search?… query string <-> SearchPayload (canonical order, validated)
+        ├── sortBikes.ts               # Search-result order for the "Sortuj" select: expert rating (unrated last) or name, both directions
         ├── hooks/
+        │   ├── useRoute.ts            # URL routing: /, /search?…, /bike/{id}, /equipment/{id}, /bike-for-your-fit, /contact; history state (from, scrollY)
+        │   ├── useBikeDetails.ts      # Bike details state + DB reads + on-demand searches; open by id (/v1/bike/by-id)
+        │   ├── useEquipment.ts        # Equipment state; reads by id, automatic details search while nothing is stored
         │   └── usePopularBikes.ts     # Home page: GET /v1/bike/popular once + one POST /v1/bike/review per bike (TODO-034)
         └── components/
+            ├── SearchPage.tsx         # Hero + form; popular bikes on /, results on /search
+            ├── NotFoundPage.tsx       # "Nie znaleziono roweru / wyposażenia" for an unknown id
             ├── SearchInput.tsx        # Search form
-            ├── ResultCard.tsx         # Per-bike result card (with `expertRating` also the home page's popular look: the expert rating — "?" without one; shared by search results and the home page)
-            ├── PopularBikesSection.tsx    # "Najpopularniejsze rowery" under the search form, hidden while searching / showing results
+            ├── SortSelect.tsx         # "Sortuj" select above the search results (shown for 2+ bikes)
+            ├── ResultCard.tsx         # Per-bike result card, a link to /bike/{id} (with `expertRating` also the home page's popular look: the expert rating — "?" without one; shared by search results and the home page)
+            ├── PopularBikesSection.tsx    # "Najpopularniejsze rowery" under the search form, on / only
             ├── LoadingCard.tsx        # Shimmer skeleton for search results
             ├── BikeDetailsView.tsx    # Bike details page: Overview, Offers, Review, Specs
             ├── RequestDataButton.tsx  # "Request data" button for empty bike-details sections (POST /v1/bike/missing); in the Used card also runs the OLX search, in the New card the Decathlon + Allegro searches at once
