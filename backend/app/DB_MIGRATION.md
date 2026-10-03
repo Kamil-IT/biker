@@ -487,6 +487,8 @@ The results tile shows the bike's cover photo with `object-fit: contain` inside 
 
 **Deploy order:** (1) Cloud SQL on-demand backup, (2) run the migration on Cloud SQL through the proxy — **only on the user's explicit go** — and then the backfill (`--allow-remote`, port 6543), (3) deploy the backend and the searcher together, (4) deploy the frontend. The NEW searcher refuses to start on an unmigrated database (its `init_db()` names the script) and the NEW backend answers `photo: null` + an ERROR log until the column exists; the OLD backend and searcher keep working on a migrated database (the column is nullable — an old searcher simply stores new photos without a colour, re-run the backfill for them). The frontend goes last: against an old backend (no `photo` field) the tiles would show no photo.
 
+**Run on Cloud SQL 2026-10-03** (user's go, after the on-demand backup "before migrate_photo_bg_color (PR 156)"): migration `migrated` (6738 rows), rerun `already-migrated`; backfill 876 covers checked, 418 coloured, 458 without colour (mostly transparent PNG cut-outs — white frame), 0 errors. Deployed tag d8aeeb2: searcher `biker-searcher-00011-q2t`, backend `biker-backend-00019-5l4` (the first build failed on a Chrome-for-Testing download timeout, the retry passed), frontend `biker-frontend-00014-zbs` — the same deploy shipped PR #154 (contact form) and PR #155 (URL routing).
+
 ## Benefits
 
 ✅ **Data Integrity** — Foreign keys, unique constraints, cascading deletes
