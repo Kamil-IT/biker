@@ -8,7 +8,7 @@ Before the first search the home page shows **Najpopularniejsze rowery** — the
 
 1. You enter a free-text description (e.g. *"comfortable bike for daily 10 km city commute"*)
 2. The backend first searches its own bike database: every structured filter it can check (brand, model, wheel size, frame size, electric) is matched against stored bike specs. All matching bikes are returned (no cap) with no AI call. Search answers are never served from a response cache, so they always reflect the current database
-3. Only when the database has no match, a single Claude Haiku call recommends every real bike that fits (at least 1 — the closest match when nothing meets every filter)
+3. Only when the database has no match, a single Claude Haiku call recommends every real bike that fits (at least 1 — the closest match when nothing meets every filter). Every result card shows the bike's expert rating from its stored review ("?" without one), and a **Sortuj** select above a list of two or more bikes orders it by expert rating (default: highest first; or lowest first — bikes without a rating stay last either way) or by name, brand then model (A–Z / Z–A); sorting happens in the browser and the choice is kept for later searches
 4. Click a result to open the details page — the description, component specs, photos, review, Allegro offers, Decathlon offers and used OLX listings are all read from the database only (they get there through the on-demand searches below — opening a bike never runs a details, marketplace, photo or review search). The result cards' text is read from the database too: the explanation is the bike's stored two-sentence `short_description` and the chips are drivetrain / brakes / frame-material names from its stored components (both hidden for a bike without stored details). Any section (photos, overview, specs, review, Used / New offers) still without data after 5 s — or with an empty/failed response — shows a **Request data** button instead of its spinner; clicking it records the request via `POST /v1/bike/missing`. Data that arrives later replaces the button
 5. In the **Opis** and **Komponenty** sections the button starts the on-demand details search (`POST /v1/bike/details/search` → the `searcher/` service runs the Claude Code CLI once — `WebSearch` + `WebFetch` — for the Polish description, a Polish two-sentence short description and the 8-category component tree, and stores a usable result in the bike row's `description` / `short_description` and `bike_component`, updated in place, photos untouched); one click fills both sections, it reads "Szukam danych roweru…" while it runs, then the data replaces it — or "Nie znaleziono danych".
    In the **Recenzja eksperta** section the button also starts the on-demand review search (`POST /v1/bike/review/search` → the same `searcher/` service runs the Claude Code CLI once over the curated review sites, computes the weighted rating and stores it in `bike_review` / `bike_review_source` — only when it found at least one professional source; a stored review is never wiped by a bad run); it reads "Szukam recenzji…" while it runs, then the review replaces it — or "Nie znaleziono recenzji".
@@ -469,10 +469,12 @@ biker/
     └── src/
         ├── App.tsx                    # App shell, state machine, all API calls
         ├── types.ts                   # Shared TypeScript interfaces
+        ├── sortBikes.ts               # Search-result order for the "Sortuj" select: expert rating (unrated last) or name, both directions
         ├── hooks/
         │   └── usePopularBikes.ts     # Home page: GET /v1/bike/popular once + one POST /v1/bike/review per bike (TODO-034)
         └── components/
             ├── SearchInput.tsx        # Search form
+            ├── SortSelect.tsx         # "Sortuj" select above the search results (shown for 2+ bikes)
             ├── ResultCard.tsx         # Per-bike result card (with `expertRating` also the home page's popular look: the expert rating — "?" without one; shared by search results and the home page)
             ├── PopularBikesSection.tsx    # "Najpopularniejsze rowery" under the search form, hidden while searching / showing results
             ├── LoadingCard.tsx        # Shimmer skeleton for search results
