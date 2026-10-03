@@ -1,22 +1,26 @@
 import type { MouseEvent } from 'react'
-import { ROUTES, type Route } from '../hooks/useRoute'
+import { PATHS, isPlainClick } from '../hooks/useRoute'
 
-const TABS: { to: Route; label: string }[] = [
-  { to: ROUTES.search,  label: 'Szukanie rowerów' },
-  { to: ROUTES.fit,     label: 'Rower na Twoją miarę' },
-  { to: ROUTES.contact, label: 'Kontakt' },
-]
+export type Tab = 'search' | 'fit' | 'contact'
 
 interface Props {
-  active: Route
-  onNavigate: (to: Route) => void
+  active: Tab
+  // "Szukanie rowerów" leads back to the last search (its results are kept), else to "/".
+  searchHref: string
+  onNavigate: (to: string) => void
 }
 
 // TODO-041: the tab row under the BIKER wordmark. Plain links, so a modified or middle
 // click still opens the tab in a new browser tab; a plain click navigates in place.
-export default function TopTabs({ active, onNavigate }: Props) {
-  const handleClick = (e: MouseEvent<HTMLAnchorElement>, to: Route) => {
-    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+export default function TopTabs({ active, searchHref, onNavigate }: Props) {
+  const tabs: { key: Tab; to: string; label: string }[] = [
+    { key: 'search',  to: searchHref,    label: 'Szukanie rowerów' },
+    { key: 'fit',     to: PATHS.fit,     label: 'Rower na Twoją miarę' },
+    { key: 'contact', to: PATHS.contact, label: 'Kontakt' },
+  ]
+
+  const handleClick = (e: MouseEvent<HTMLAnchorElement>, to: string) => {
+    if (!isPlainClick(e)) return
     e.preventDefault()
     onNavigate(to)
   }
@@ -24,10 +28,10 @@ export default function TopTabs({ active, onNavigate }: Props) {
   return (
     <nav aria-label="Główna nawigacja">
       <ul className="flex gap-4 min-[421px]:gap-7 m-0 p-0 list-none">
-        {TABS.map(({ to, label }) => {
-          const isActive = to === active
+        {tabs.map(({ key, to, label }) => {
+          const isActive = key === active
           return (
-            <li key={to}>
+            <li key={key}>
               <a
                 href={to}
                 onClick={e => handleClick(e, to)}

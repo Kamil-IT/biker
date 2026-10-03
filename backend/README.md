@@ -424,11 +424,11 @@ All fields except `search` default to `null` (no constraint). The backend assemb
 ```json
 {
   "search": "Brand: Trek, Model: FX 3, …",
-  "bikes": [ { "brand": "Trek", "model": "FX 3", "accessories": ["Shimano Deore RD-M6000", "Alloy"], "explanation": "Krótki opis w dwóch zdaniach. Drugie zdanie." } ]
+  "bikes": [ { "id": 42, "brand": "Trek", "model": "FX 3", "accessories": ["Shimano Deore RD-M6000", "Alloy"], "explanation": "Krótki opis w dwóch zdaniach. Drugie zdanie." } ]
 }
 ```
 
-`explanation` is `""` and `accessories` `[]` for a bike without stored details (typical for an AI-found bike) — the UI hides both. No `match_score` (removed in TODO-040): a DB hit is sorted by brand/model, an AI answer keeps the model's order, and the UI re-orders the cards by expert rating.
+`id` is the `bike.id` — the frontend's `/bike/{id}` address; `null` only when the bike row of an AI-found bike could not be saved (a swallowed `save_search` failure). `explanation` is `""` and `accessories` `[]` for a bike without stored details (typical for an AI-found bike) — the UI hides both. No `match_score` (removed in TODO-040): a DB hit is sorted by brand/model, an AI answer keeps the model's order, and the UI re-orders the cards by expert rating.
 
 **Flow:**
 0. DB reads only — the DB details search over `bike` + `bike_component` (skipped when no checkable field is set). **A hit returns immediately, making zero outbound HTTP calls.** No generic-cache lookup. See [Search Cache](#search-cache)
@@ -479,13 +479,13 @@ GET http://localhost:8000/v1/bike/popular
 ```json
 {
   "bikes": [
-    { "brand": "Giant", "model": "Revolt Advanced Pro", "description": "Pierwsze zdanie opisu. Drugie zdanie opisu." },
-    { "brand": "Trek", "model": "Marlin 5", "description": "" }
+    { "id": 7, "brand": "Giant", "model": "Revolt Advanced Pro", "description": "Pierwsze zdanie opisu. Drugie zdanie opisu." },
+    { "id": 12, "brand": "Trek", "model": "Marlin 5", "description": "" }
   ]
 }
 ```
 
-- Rows ordered by `position`, then `id`. `brand` / `model` are the `bike` row's values as stored (the single source of display casing).
+- Rows ordered by `position`, then `id`. `id` is the `bike.id` (the card links to `/bike/{id}`); `brand` / `model` are the `bike` row's values as stored (the single source of display casing).
 - `description` = the `text` of the bike's stored `BikeDescription` JSON (`bike.description`) cut to its **first two sentences** by `popular_repository.first_sentences`: a sentence ends with `.` `!` `?` or `…` (plus an optional closing quote/bracket) followed by whitespace and an upper-case word, so `ok. 12 kg` or `np. 29-calowe` does not split; there is no abbreviation dictionary, so an upper-case brand right after an abbreviation (`m.in. Shimano`) still splits — a rare over-cut on a card blurb, accepted. `""` when the bike has no stored details or its JSON does not parse (logged at WARNING). The details TTL is ignored — an old description is still a fine blurb.
 - Empty table → **200** `{ "bikes": [] }`. A DB error → **200** `{ "bikes": [] }` + ERROR log, never a 500 (the home page must render regardless).
 - `bike_popular` is created at startup by `init_db()` like every other table — no migration step. Deleting a `bike` row cascades to its `bike_popular` row.
@@ -519,6 +519,30 @@ Content-Type: application/json
 **Flow:** none — no outbound HTTP calls; one DB read of `bike` + `bike_component`.
 
 **Tests:** `scripts/test_search.py` `case_details` — a seeded fixture bike with components and a `short_description` → the stored values, no `photos` key, no generic-cache row, under 5 s; a bike without details and an unknown bike → a fast empty 200. `scripts/test_details_repository.py` (pytest) covers the repository helpers.
+
+---
+
+### `POST /v1/bike/by-id`
+
+One bike by its id — what the frontend's `/bike/{id}` address (a shared link, a new tab, F5) opens without the bike in memory. A pure DB read via `repository.get_bike_by_id`: **no** AI call, **no** generic cache.
+
+```http
+POST http://localhost:8000/v1/bike/by-id
+Content-Type: application/json
+
+{
+  "bike_id": 39
+}
+```
+
+**Response:** the search-result shape — `{ "id": 39, "brand": "Cannondale", "model": "Topstone Carbon 4", "accessories": ["Shimano GRX RD-RX812", "Shimano GRX BL-RX400", "Carbon"], "explanation": "" }` (stored casing; `explanation` = the stored short description, `accessories` = the component chips, both empty without stored details). The frontend then reads details, photos, review and offers by brand + model as for a clicked card.
+
+- Unknown id → **404** `{"detail": "Bike not found"}` (the frontend shows "Nie znaleziono roweru" and keeps the address). `bike_id` must be an integer 1 … 2147483647 (422).
+- A DB error → **503** `{"detail": "Bike lookup failed"}` + ERROR log (not a 404 — the bike may exist).
+
+**Flow:** none — no outbound HTTP calls; one DB read of `bike` (+ `bike_component` for the chips).
+
+**Tests:** `scripts/test_search.py` `case_bike_by_id` — a fixture bike found by a DB search carries its `id`; by-id answers the same bike with its chips and short description, < 5 s; unknown id → 404, `bike_id: 0` → 422.
 
 ---
 
@@ -976,12 +1000,12 @@ Content-Type: application/json
 }
 ```
 
-- Resolved by `equipment_id` when given (an unknown id is a miss), otherwise by the Python-normalised `(company, model)` — **ignoring** `category`, oldest row first. The frontend sends the spec-tree element's `equipment_id` when it has one, else `{company: "", model: <element name>}`.
-- `company` optional (default `""`, ≤ 255), `model` required, non-empty, ≤ 512 (the element-name column width), `category` optional (≤ 32), `equipment_id` optional (1 … 2147483647) — 422 otherwise.
+- Resolved by `equipment_id` when given (an unknown id is a miss), otherwise by the Python-normalised `(company, model)` — **ignoring** `category`, oldest row first. The frontend's `/equipment/{id}` page sends just `{"equipment_id": 7}`.
+- `company` optional (default `""`, ≤ 255), `model` ≤ 512 (the element-name column width) and non-empty unless `equipment_id` is given, `category` optional (≤ 32), `equipment_id` optional (1 … 2147483647) — 422 otherwise.
 
 **Response:** `company`, `model`, `category` (the stored row's values), `description` (`{text, segments, citations}` — Polish overview), `components` (same category → subcategory → element → spec tree as bikes), `short_description` (two Polish sentences, `""` when none) and `equipment_id`. **No `photos`** — they come from [`POST /v1/equipment/photos`](#post-v1equipmentphotos).
 
-- Unknown equipment, nothing stored or a DB error (also an ERROR log) → **200** with the empty response `{"company": …, "model": …, "category": …, "description": {"text": "", "segments": [], "citations": []}, "components": [], "short_description": "", "equipment_id": null}`; equipment that has photos but no details row answers the empty details **with** its `equipment_id`. The frontend reads "description text empty **and** no components" as "no data" and shows **Poproś o dane** in the Opis and Komponenty sections.
+- Unknown equipment, nothing stored or a DB error (also an ERROR log) → **200** with the empty response `{"company": …, "model": …, "category": …, "description": {"text": "", "segments": [], "citations": []}, "components": [], "short_description": "", "equipment_id": null}`; equipment without details (`description` NULL — e.g. just created by [`/v1/equipment/resolve`](#post-v1equipmentresolve), or photos only) answers the empty details **with** its `equipment_id`. The frontend reads "description text empty **and** no components" as "nothing stored yet" and starts [`/v1/equipment/details/search`](#post-v1equipmentdetailssearch) by itself. An item the search found nothing for answers the stored placeholder description `"Opis niedostępny dla tego produktu."` (no components).
 
 **Flow:** none — no outbound HTTP calls; one DB read of `equipment` + `equipment_component`.
 
@@ -1011,9 +1035,70 @@ Content-Type: application/json
 
 ---
 
+### `POST /v1/equipment/resolve`
+
+The equipment row of one element of a bike's spec tree — **created empty when missing** — so the bike view's click can open `/equipment/{id}`. **No** AI call, **no** searcher, **no** generic cache (`app/equipment_lookup.py` `resolve_equipment`).
+
+```http
+POST http://localhost:8000/v1/equipment/resolve
+Content-Type: application/json
+
+{
+  "bike_id": 39,
+  "element_name": "Shimano GRX RD-RX812"
+}
+```
+
+**Response:** `{ "equipment_id": 23, "name": "Shimano GRX RD-RX812", "category": "parts" }`
+
+- The element is matched on that bike's `bike_component` rows by Python-normalised name; the row's **stored** name is used, never the caller's spelling. An element already linked (`bike_component.equipment_id`) keeps its item; else an item with the same normalised name (any category, oldest first) is reused; else a new `equipment` row is inserted (`name` = the element name, `company` `""`, `model` = the name, `description` NULL — no details) under the category `app/equipment_categories.py` `infer_category` gives — a verbatim copy of the searcher's inference, so the searcher later finds this very row by its `(category, name_norm)` identity. `INSERT … ON CONFLICT DO NOTHING` on `uq_equipment_name` makes concurrent clicks share one row.
+- **That bike's** rows of the element get `equipment_id` (never other bikes').
+- **404** `"Bike not found"` (unknown `bike_id`) / `"Component not found"` (no such element on that bike); `bike_id` 1 … 2147483647 and `element_name` non-empty, ≤ 512 (422 otherwise); a DB error → **503** `"Equipment lookup failed"`.
+
+**Flow:** none — no outbound HTTP calls; DB reads of `bike`, `bike_component`, `equipment`, then at most one `equipment` insert and one `bike_component` update in one transaction.
+
+**Tests:** `scripts/test_search.py` `case_equipment_resolve_and_by_id` (a fixture bike's element → a new `parts` row, the second call reuses it, the bike's details carry the `equipment_id`, the 404s); `scripts/test_equipment_repository.py` (pytest: inferred category, only this bike linked, existing link / same-name item reused).
+
+---
+
+### `POST /v1/equipment/by-id`
+
+One equipment item by its id — what `/equipment/{id}` (a shared link, a new tab, F5) needs besides the details and photos: its identity and the bike to go back to. A pure DB read (`equipment_lookup.get_equipment_item`), **no** AI call, **no** generic cache.
+
+```http
+POST http://localhost:8000/v1/equipment/by-id
+Content-Type: application/json
+
+{
+  "equipment_id": 23
+}
+```
+
+**Response:** `{ "equipment_id": 23, "name": "Shimano GRX RD-RX812", "category": "parts", "company": "", "model": "Shimano GRX RD-RX812", "bike": { "id": 39, "brand": "Cannondale", "model": "Topstone Carbon 4" } }` — `name` = the element name the item was created from (the page title), `company` / `model` the researched ones (`""` and the name until a details search filled them), `bike` = the first bike whose `bike_component` rows link the item (lowest row id; `null` when none) — the "Wróć do roweru" target of a deep link.
+
+- Unknown id → **404** `"Equipment not found"` (the frontend shows "Nie znaleziono wyposażenia" and keeps the address); `equipment_id` 1 … 2147483647 (422); a DB error → **503** `"Equipment lookup failed"`.
+
+**Flow:** none — no outbound HTTP calls; DB reads of `equipment`, `bike_component`, `bike`.
+
+**Tests:** `scripts/test_search.py` `case_equipment_resolve_and_by_id`; `scripts/test_equipment_repository.py` (pytest).
+
+---
+
 ### `POST /v1/equipment/details/search`
 
-Run the equipment details search **on demand** through the separate searcher service (`searcher/`, TODO-042) and wait for it. The request names the **bike** and the element of its spec tree that was clicked; the searcher runs the Claude Code CLI once (subscription OAuth token, `WebSearch` + `WebFetch`, the category's `equipment_details_{slug}.md` prompt — category inferred when not given — no browser), stores the result **only when usable** (non-empty components or description): `equipment` row found by (category, element name) or created, its `description` / `short_description` updated in place, components replaced, the researched `company` / `model` (asked of the model, required in its answer) filled **only where missing** (a stored value is never overwritten, a `""` never counts), and `equipment_id` set on **that bike's** `bike_component` rows with that element name (never globally). An empty result writes nothing. Triggered by the equipment view's **Poproś o dane** button in the Opis / Komponenty sections (one shared run fills both); also usable from `curl`. Never cached.
+Run the equipment details search **on demand** through the separate searcher service (`searcher/`, TODO-042) and wait for it. The request names the item — by `equipment_id`, or as the **bike** + the element of its spec tree; the searcher runs the Claude Code CLI once (subscription OAuth token, `WebSearch` + `WebFetch`, the category's `equipment_details_{slug}.md` prompt — category inferred when not given — no browser), stores a **usable** result (non-empty components or description): `equipment` row found by (category, element name) or created, its `description` / `short_description` updated in place, components replaced, the researched `company` / `model` (asked of the model, required in its answer) filled **only where missing** (a stored value is never overwritten, a `""` never counts), and `equipment_id` set on **that bike's** `bike_component` rows with that element name (never globally). A run that found nothing usable stores only the placeholder description `"Opis niedostępny dla tego produktu."` on an item that has no description (an existing description is never touched); a failed run (502 / 503 / 400) stores nothing. Started **automatically** by the equipment view (`/equipment/{id}`) on every entry while the item has no details (`description` NULL) — the placeholder ends that, so it runs at most once per item unless it failed; the Opis / Specyfikacja **Poproś o dane** button re-runs it after a failure. Also usable from `curl`. Never cached.
+
+```http
+POST http://localhost:8000/v1/equipment/details/search
+Content-Type: application/json
+
+{
+  "equipment_id": 23,
+  "bike_id": 39
+}
+```
+
+or, by bike and element:
 
 ```http
 POST http://localhost:8000/v1/equipment/details/search
@@ -1027,19 +1112,20 @@ Content-Type: application/json
 }
 ```
 
-**Response:** the same shape as `/v1/equipment/details` — the details now stored, **including `equipment_id`** (the frontend links the spec-tree element with it); the searcher's wrapper `equipment_id` / `saved` are dropped. A search that found nothing usable is a **200** with the empty response.
+**Response:** the same shape as `/v1/equipment/details` — the details now stored (the placeholder after a not-found run), **including `equipment_id`**; the searcher's wrapper `equipment_id` / `saved` are dropped.
 
-- `bike_company`, `bike_model`, `element_name` non-empty, ≤ 255; `category` optional, ≤ 32 (422 otherwise).
-- Order of checks, all **before** any searcher call: **404** `"Bike not found"` when the bike is not in `bike` (`offers_repository.bike_exists`), then **404** `"Component not found"` when that bike has no `bike_component` row whose element name matches (Python-normalised; `equipment_repository.bike_component_name`) — anonymous traffic cannot spend subscription runs on arbitrary strings. The searcher receives the element name **as stored on the bike**, not the caller's casing or whitespace, so a caller cannot choose the equipment row's name or the prompt text, plus that row's subcategory as `element_type` (≤ 255; the request has no such field, so the caller cannot set it). Fix 2026-10-02: a frame is often named exactly like the bike ("Giant Revolt Advanced Pro"), and without its type the searcher answered `found: false`. Stored equipment data is **not** read first; the UI offers the button only while nothing is stored.
+- Either `equipment_id` (1 … 2147483647; `bike_id` optional, same range) or all of `bike_company`, `bike_model`, `element_name` (non-empty, ≤ 255); `category` optional, ≤ 32 (422 otherwise).
+- **By `equipment_id`** (`equipment_lookup.search_context`): **404** `"Equipment not found"` for an unknown id, **404** `"Component not found"` when no bike links the item. The context bike is `bike_id` when that bike links the item (the bike the view was opened from), else the first bike linking it (lowest `bike_component.id`); the searcher gets the item's **stored** `name` as `element_name` and its stored `category`, so it stores into this very row, plus the linking row's subcategory as `element_type`.
+- **By bike + element**, order of checks, all **before** any searcher call: **404** `"Bike not found"` when the bike is not in `bike` (`offers_repository.bike_exists`), then **404** `"Component not found"` when that bike has no `bike_component` row whose element name matches (Python-normalised; `equipment_repository.bike_component_name`) — anonymous traffic cannot spend subscription runs on arbitrary strings. The searcher receives the element name **as stored on the bike**, not the caller's casing or whitespace, so a caller cannot choose the equipment row's name or the prompt text, plus that row's subcategory as `element_type` (≤ 255; the request has no such field, so the caller cannot set it). Fix 2026-10-02: a frame is often named exactly like the bike ("Giant Revolt Advanced Pro"), and without its type the searcher answered `found: false`. Stored equipment data is **not** read first; the UI offers the button only while nothing is stored.
 - **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Equipment details searcher is not configured"`), the searcher is unreachable / does not answer within `SEARCHER_TIMEOUT` (`"Equipment details searcher unavailable"`), or no search slot is free (`"Equipment details searcher is busy — try again in a moment"`; the in-flight cap `SEARCHER_MAX_INFLIGHT` and the searcher's slots are shared with **all eight** searcher routes, Cloud Run's 429 maps to the same 503) — nothing queues. Identical concurrent requests for the same bike + element share one search (single-flight key: path, bike company, bike model, element name — normalised; neither the category nor the element type is part of it).
 - **400** `{"detail": "<the CLI's notice>"}` when the Claude subscription limit is used up (TODO-038, the app-wide `searcher_limit_reached` handler).
 - **502** with the searcher's `detail` (≤ 300 chars) when it fails or answers with a malformed body.
 
 **Flow:**
-1. DB reads of `bike` (404 when missing) and of that bike's `bike_component` element names (keyed on `bike_id`) (404 when the element is missing).
+1. DB reads — by id: `equipment` (404 when missing), the linking `bike_component` row and its `bike` (404 when none); by bike + element: `bike` (404 when missing) and that bike's `bike_component` element names (404 when the element is missing).
 2. `POST {SEARCHER_URL}/v1/search/equipment/details` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{bike_company, bike_model, element_name, category?, element_type?}` — `element_type` = the element's stored subcategory, e.g. `"Frame"`, left out when empty), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once and writes the equipment tables + the bike link. The backend itself makes no Anthropic call.
 
-**Tests:** `scripts/test_search.py` `case_equipment_details_search` — an unknown bike and a known bike with an unknown element are **404** before any searcher call (no paid run); `scripts/test_searcher_client_equipment.py` (pytest) covers the client and both search routes with a mocked transport (request, unwrapping, single-flight, busy 503/429, shared cap, 502, 400, 404 guards, 422).
+**Tests:** `scripts/test_search.py` `case_equipment_details_search` — an unknown bike, a known bike with an unknown element, an unknown `equipment_id` and an item no bike links are **404** before any searcher call (no paid run); `scripts/test_equipment_repository.py` covers `search_context`; `scripts/test_searcher_client_equipment.py` (pytest) covers the client and both search routes with a mocked transport (request, unwrapping, single-flight, busy 503/429, shared cap, 502, 400, 404 guards, 422).
 
 ---
 
@@ -1052,25 +1138,26 @@ POST http://localhost:8000/v1/equipment/photos/search
 Content-Type: application/json
 
 {
-  "bike_company": "Canyon",
-  "bike_model": "Grizl CF 7 ESC",
-  "element_name": "Abus Hyban 2.0"
+  "equipment_id": 23,
+  "bike_id": 39
 }
 ```
+
+(or `{bike_company, bike_model, element_name}` as for the details search; the equipment view sends the id form.)
 
 **Response:** `{ "photos": [...], "equipment_id": 7 }` — the equipment's photos as now stored, in display order (`saved` dropped); nothing found → **200** `{ "photos": [], "equipment_id": null }`.
 
 **Flow:**
-1. DB reads of `bike` and of that bike's component element names (the two 404 guards).
+1. DB reads for the 404 guards (by id: `equipment` + the linking bike; by bike + element: `bike` and that bike's component element names).
 2. `POST {SEARCHER_URL}/v1/search/equipment/photos` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{bike_company, bike_model, element_name, category?, element_type?}` — `element_type` = the element's stored subcategory, e.g. `"Frame"`, left out when empty), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once (`WebSearch` only), opens the manufacturer page with Playwright once and writes `equipment_detail_photos` + the bike link. The backend makes no Anthropic call and launches no browser.
 
-**Tests:** `scripts/test_search.py` `case_equipment_photos_search` — the same two 404s, no paid run; `scripts/test_searcher_client_equipment.py` (pytest).
+**Tests:** `scripts/test_search.py` `case_equipment_photos_search` — the same four 404s, no paid run; `scripts/test_searcher_client_equipment.py` (pytest).
 
 ---
 
 ### `POST /v1/equipment/review`
 
-Return an aggregated review score, explanation, and source links for a piece of cycling equipment. Review/forum **source** links are allowed; offer/buy links are never included.
+Return an aggregated review score, explanation, and source links for a piece of cycling equipment. Review/forum **source** links are allowed; offer/buy links are never included. The equipment view calls it only from its review section's **Poproś o dane** button (no longer on open).
 
 ```http
 POST http://localhost:8000/v1/equipment/review

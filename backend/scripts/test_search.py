@@ -18,6 +18,7 @@ it passes on a cold or aged database. Endpoints covered here:
            /v1/bike/review · /v1/bike/review/search (404 only — no paid run)
            /v1/equipment/details · /v1/equipment/photos (by id and by name)
            /v1/equipment/details/search · /v1/equipment/photos/search (404 only — no paid run)
+           /v1/bike/by-id · /v1/equipment/resolve · /v1/equipment/by-id (URL routing, no AI)
   --ai     /v1/bike/search (free text) · /v1/bike/parse · /v1/bike/ceneo
 
 /v1/equipment/review (Anthropic API, generic cache) has its own focused script,
@@ -74,6 +75,9 @@ EQUIP_DETAILS_URL = f"{BASE}/v1/equipment/details"
 EQUIP_PHOTOS_URL = f"{BASE}/v1/equipment/photos"
 EQUIP_DETAILS_SEARCH_URL = f"{BASE}/v1/equipment/details/search"
 EQUIP_PHOTOS_SEARCH_URL = f"{BASE}/v1/equipment/photos/search"
+BIKE_BY_ID_URL = f"{BASE}/v1/bike/by-id"
+EQUIP_BY_ID_URL = f"{BASE}/v1/equipment/by-id"
+EQUIP_RESOLVE_URL = f"{BASE}/v1/equipment/resolve"
 SEARCHER_URL = os.getenv("SEARCHER_URL", "").strip().rstrip("/")
 
 
@@ -881,14 +885,18 @@ def case_equipment_photos():
 
 
 def _equipment_search_404s(url: str) -> None:
-    """Unknown bike -> 404 "Bike not found"; known bike + an element it does not have -> 404 "Component not found".
+    """Unknown bike -> 404 "Bike not found"; known bike + an element it does not have -> 404 "Component not found";
+    by id: unknown item -> 404 "Equipment not found", an item no bike links -> 404 "Component not found".
 
     No live run: every searcher run is a paid subscription search (the suite's one
     live run is case_decathlon_search, same searcher_client code path)."""
     body = {"bike_company": "FakeBrand", "bike_model": "NoSuchModel XYZ999", "element_name": FIX_EQUIP_MODEL}
     resp = _post(url, body, timeout=30)
     assert resp.status_code == 404 and resp.json() == {"detail": "Bike not found"}, f"{resp.status_code}: {resp.text[:200]}"
+    resp = _post(url, {"equipment_id": 999999999}, timeout=30)
+    assert resp.status_code == 404 and resp.json() == {"detail": "Equipment not found"}, f"{resp.status_code}: {resp.text[:200]}"
     _delete_bike(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL)
+    _delete_equipment(FIX_EQUIP_MODEL)
     _seed_bike_details(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL, "", _full_components())
     try:
         body = {"bike_company": FIX_EQUIP_BIKE_BRAND, "bike_model": FIX_EQUIP_BIKE_MODEL,
@@ -896,8 +904,81 @@ def _equipment_search_404s(url: str) -> None:
         resp = _post(url, body, timeout=30)
         assert resp.status_code == 404 and resp.json() == {"detail": "Component not found"}, \
             f"{resp.status_code}: {resp.text[:200]}"
+        orphan, _ = equipment_repository.save_equipment_photos(
+            "", FIX_EQUIP_MODEL, FIX_EQUIP_CATEGORY, ["https://example.com/smoke-orphan.jpg"])
+        resp = _post(url, {"equipment_id": orphan}, timeout=30)
+        assert resp.status_code == 404 and resp.json() == {"detail": "Component not found"}, \
+            f"{resp.status_code}: {resp.text[:200]}"
     finally:
         _delete_bike(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL)
+        _delete_equipment(FIX_EQUIP_MODEL)
+
+
+FIX_ID_BRAND, FIX_ID_MODEL = "Smoke Fixture", "By Id Bike"
+
+
+def case_bike_by_id():
+    """/v1/bike/by-id answers one bike by its id (the /bike/{id} deep link): stored casing, short description,
+    chips; an unknown id -> 404, a non-positive id -> 422. Search and popular answers carry the same id."""
+    _delete_bike(FIX_ID_BRAND, FIX_ID_MODEL)
+    _seed_bike_details(FIX_ID_BRAND, FIX_ID_MODEL, FIX_SHORT, _full_components())
+    try:
+        found = _post(SEARCH_URL, {"brand": FIX_ID_BRAND, "model": FIX_ID_MODEL.upper()}, timeout=60)
+        assert found.status_code == 200, found.text[:200]
+        (hit,) = found.json()["bikes"]
+        bike_id = hit["id"]
+        assert isinstance(bike_id, int), f"search results carry the bike id: {hit}"
+        t0 = time.perf_counter()
+        resp = _post(BIKE_BY_ID_URL, {"bike_id": bike_id}, timeout=10)
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        assert resp.json() == {"id": bike_id, "brand": FIX_ID_BRAND, "model": FIX_ID_MODEL,
+                               "accessories": FIX_CHIPS, "explanation": FIX_SHORT}, resp.json()
+        assert time.perf_counter() - t0 < 5.0
+        resp = _post(BIKE_BY_ID_URL, {"bike_id": 999999999}, timeout=10)
+        assert resp.status_code == 404 and resp.json() == {"detail": "Bike not found"}, resp.text[:200]
+        assert _post(BIKE_BY_ID_URL, {"bike_id": 0}, timeout=10).status_code == 422
+    finally:
+        _delete_bike(FIX_ID_BRAND, FIX_ID_MODEL)
+
+
+def case_equipment_resolve_and_by_id():
+    """/v1/equipment/resolve finds or creates the (empty) equipment row of a bike's element and links that bike;
+    /v1/equipment/by-id answers its identity + the first bike linking it. No AI, no searcher call."""
+    element = "Smoke Frame"  # a namespaced element of _full_components(), category "parts" (frame)
+    _delete_bike(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL)
+    _delete_equipment(element)
+    _seed_bike_details(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL, "", _full_components())
+    try:
+        found = _post(SEARCH_URL, {"brand": FIX_EQUIP_BIKE_BRAND, "model": FIX_EQUIP_BIKE_MODEL}, timeout=60)
+        bike_id = found.json()["bikes"][0]["id"]
+        t0 = time.perf_counter()
+        resp = _post(EQUIP_RESOLVE_URL, {"bike_id": bike_id, "element_name": element.lower()}, timeout=10)
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        eid = resp.json()["equipment_id"]
+        assert resp.json() == {"equipment_id": eid, "name": element, "category": "parts"}, resp.json()
+        assert time.perf_counter() - t0 < 5.0
+        again = _post(EQUIP_RESOLVE_URL, {"bike_id": bike_id, "element_name": element}, timeout=10)
+        assert again.json()["equipment_id"] == eid, "the second click reuses the row"
+        details = _post(DETAILS_URL, {"company": FIX_EQUIP_BIKE_BRAND, "model": FIX_EQUIP_BIKE_MODEL}, timeout=10).json()
+        linked = [el["equipment_id"] for c in details["components"] for s in c["subcategories"] for el in s["elements"]
+                  if el["name"] == element]
+        assert linked == [eid], f"the bike's element is linked: {linked}"
+        item = _post(EQUIP_BY_ID_URL, {"equipment_id": eid}, timeout=10)
+        assert item.status_code == 200, item.text[:200]
+        assert item.json() == {"equipment_id": eid, "name": element, "category": "parts", "company": "", "model": element,
+                               "bike": {"id": bike_id, "brand": FIX_EQUIP_BIKE_BRAND, "model": FIX_EQUIP_BIKE_MODEL}}
+        empty = _post(EQUIP_DETAILS_URL, {"equipment_id": eid}, timeout=10).json()  # by id alone, nothing stored yet
+        assert (empty["equipment_id"], empty["description"], empty["components"]) == (eid, EMPTY_DESC, []), empty
+        for url, body, detail in (
+            (EQUIP_BY_ID_URL, {"equipment_id": 999999999}, "Equipment not found"),
+            (EQUIP_RESOLVE_URL, {"bike_id": 999999999, "element_name": element}, "Bike not found"),
+            (EQUIP_RESOLVE_URL, {"bike_id": bike_id, "element_name": "No Such Element XYZ999"}, "Component not found"),
+        ):
+            resp = _post(url, body, timeout=10)
+            assert resp.status_code == 404 and resp.json() == {"detail": detail}, f"{resp.status_code}: {resp.text[:200]}"
+    finally:
+        _delete_bike(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL)
+        _delete_equipment(element)
 
 
 def case_equipment_details_search():
@@ -964,6 +1045,8 @@ CASES = [
     (case_equipment_photos, False),
     (case_equipment_details_search, False),
     (case_equipment_photos_search, False),
+    (case_bike_by_id, False),
+    (case_equipment_resolve_and_by_id, False),
     (case_search_free_text, True),
     (case_parse, True),
     (case_ceneo, True),

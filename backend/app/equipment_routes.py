@@ -1,22 +1,27 @@
 """Equipment details and photos (TODO-042): DB reads plus the on-demand searches.
 
 POST /v1/equipment/details and POST /v1/equipment/photos are pure DB reads
-(no AI, no generic cache, no TTL). POST /v1/equipment/details/search and
-POST /v1/equipment/photos/search proxy to the searcher service through
-app/searcher_client.py, after two 404 guards (unknown bike, unknown element of
-its stored spec tree). A SearcherLimitReached becomes a 400 through the
-app-wide handler in app/main.py. POST /v1/equipment/review stays in main.py.
+(no AI, no generic cache, no TTL). POST /v1/equipment/by-id (identity + first
+linked bike) and POST /v1/equipment/resolve (the row of a clicked element,
+created empty when missing) serve the frontend's /equipment/{id} pages, no AI.
+POST /v1/equipment/details/search and POST /v1/equipment/photos/search proxy
+to the searcher service through app/searcher_client.py, after the 404 guards
+(unknown item / bike / element of its stored spec tree). A SearcherLimitReached
+becomes a 400 through the app-wide handler in app/main.py. POST
+/v1/equipment/review stays in main.py.
 """
 import logging
 import time
 
 from fastapi import APIRouter, HTTPException
 
+from .equipment_lookup import NotFound, SearchContext, get_equipment_item, resolve_equipment, search_context
 from .equipment_repository import bike_component_name, get_equipment_details, get_equipment_photos
 from .offers_repository import bike_exists
 from .schemas import (
-    EquipmentDetailsRequest, EquipmentDetailsResponse,
-    EquipmentPhotosRequest, EquipmentPhotosResponse, EquipmentSearchRequest,
+    EquipmentByIdRequest, EquipmentDetailsRequest, EquipmentDetailsResponse, EquipmentItemResponse,
+    EquipmentPhotosRequest, EquipmentPhotosResponse, EquipmentResolveRequest, EquipmentResolveResponse,
+    EquipmentSearchRequest,
 )
 from .searcher_client import (
     SearcherBusy, SearcherFailed, SearcherNotConfigured, SearcherUnavailable,
@@ -65,16 +70,63 @@ async def equipment_photos(req: EquipmentPhotosRequest) -> EquipmentPhotosRespon
     return result
 
 
-def _check_equipment_search(req: EquipmentSearchRequest, label: str) -> tuple[str, str]:
-    """The 404 guards of the equipment searches, before any searcher call; returns the stored
-    (element name, element type = its subcategory, e.g. "Frame").
+@router.post("/v1/equipment/by-id", response_model=EquipmentItemResponse)
+async def equipment_by_id(req: EquipmentByIdRequest) -> EquipmentItemResponse:
+    """One equipment item by its id — the frontend's /equipment/{id} deep link. A pure DB read.
 
-    Only an element of a known bike's stored spec tree can be searched, so
-    anonymous traffic cannot spend subscription runs on arbitrary strings. The
-    searcher gets the element name as stored on the bike, never the caller's spelling, and
-    the element type, so an element named exactly like the bike (a frame) is searched as
-    that part, not as the complete bike.
+    Answers the item's identity (name, category, researched company / model) and the
+    first bike whose spec tree links it (`bike`, null when none — the back target).
+    404 "Equipment not found" for an unknown id, 503 when the DB read fails.
     """
+    try:
+        item = get_equipment_item(req.equipment_id)
+    except Exception as exc:  # noqa: BLE001 — a DB error is not "not found"
+        logger.error("equipment by id read failed | equipment_id=%d | %s", req.equipment_id, exc)
+        raise HTTPException(status_code=503, detail="Equipment lookup failed") from exc
+    if item is None:
+        raise HTTPException(status_code=404, detail="Equipment not found")
+    return item
+
+
+@router.post("/v1/equipment/resolve", response_model=EquipmentResolveResponse)
+async def equipment_resolve(req: EquipmentResolveRequest) -> EquipmentResolveResponse:
+    """The equipment row of one element of a bike's spec tree — created empty when missing. No AI, free.
+
+    The bike view's click on a linkable element calls it, then opens /equipment/{id}:
+    the row (name = the stored element name, category inferred like the searcher's)
+    is reused when the element is already linked or an item of that name exists,
+    and THIS bike's rows of the element are linked. 404 "Bike not found" /
+    "Component not found" for an unknown bike / element, 503 on a DB error.
+    """
+    logger.info("equipment resolve request | bike_id=%d element=%r", req.bike_id, req.element_name)
+    try:
+        return resolve_equipment(req.bike_id, req.element_name)
+    except NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        logger.error("equipment resolve failed | bike_id=%d element=%r | %s", req.bike_id, req.element_name, exc)
+        raise HTTPException(status_code=503, detail="Equipment lookup failed") from exc
+
+
+def _check_equipment_search(req: EquipmentSearchRequest, label: str) -> SearchContext:
+    """The 404 guards of the equipment searches, before any searcher call; returns what the searcher gets.
+
+    By `equipment_id`: 404 "Equipment not found" / "Component not found" (no bike
+    links it); the context bike is `bike_id` when it links the item, else the first
+    bike linking it, and the item's stored name and category are sent, so the
+    searcher stores into this very row. By bike + element name: only an element of
+    a known bike's stored spec tree can be searched, so anonymous traffic cannot
+    spend subscription runs on arbitrary strings; the searcher gets the element name
+    as stored on the bike, never the caller's spelling. Either way the element type
+    (its subcategory, e.g. "Frame") goes along, so an element named exactly like the
+    bike (a frame) is searched as that part, not as the complete bike.
+    """
+    if req.equipment_id is not None:
+        try:
+            return search_context(req.equipment_id, req.bike_id)
+        except NotFound as exc:
+            logger.warning("%s search refused: %s | equipment_id=%d", label, exc, req.equipment_id)
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
     if not bike_exists(req.bike_company, req.bike_model):
         logger.warning("%s search refused: unknown bike | bike=%r %r", label, req.bike_company, req.bike_model)
         raise HTTPException(status_code=404, detail="Bike not found")
@@ -85,7 +137,7 @@ def _check_equipment_search(req: EquipmentSearchRequest, label: str) -> tuple[st
             label, req.bike_company, req.bike_model, req.element_name,
         )
         raise HTTPException(status_code=404, detail="Component not found")
-    return found
+    return SearchContext(req.bike_company, req.bike_model, found[0], found[1], req.category)
 
 
 def _equipment_searcher_error(exc: Exception, label: str, name: str) -> HTTPException:
@@ -121,14 +173,14 @@ async def equipment_details_search(req: EquipmentSearchRequest) -> EquipmentDeta
     limit (handler above). Never cached.
     """
     logger.info(
-        "equipment details search request | bike=%r %r element=%r category=%r",
-        req.bike_company, req.bike_model, req.element_name, req.category,
+        "equipment details search request | id=%r bike_id=%r bike=%r %r element=%r category=%r",
+        req.equipment_id, req.bike_id, req.bike_company, req.bike_model, req.element_name, req.category,
     )
-    element_name, element_type = _check_equipment_search(req, "equipment details")
+    ctx = _check_equipment_search(req, "equipment details")
     t_start = time.perf_counter()
     try:
         result = await search_equipment_details(
-            req.bike_company, req.bike_model, element_name, req.category, element_type=element_type,
+            ctx.bike_company, ctx.bike_model, ctx.element_name, ctx.category, element_type=ctx.element_type,
         )
     except _PROXIED_ERRORS as exc:
         raise _equipment_searcher_error(exc, "equipment details", "Equipment details") from exc
@@ -149,14 +201,14 @@ async def equipment_photos_search(req: EquipmentSearchRequest) -> EquipmentPhoto
     for equipment that has none. Returns {photos, equipment_id} as stored. Never cached.
     """
     logger.info(
-        "equipment photos search request | bike=%r %r element=%r category=%r",
-        req.bike_company, req.bike_model, req.element_name, req.category,
+        "equipment photos search request | id=%r bike_id=%r bike=%r %r element=%r category=%r",
+        req.equipment_id, req.bike_id, req.bike_company, req.bike_model, req.element_name, req.category,
     )
-    element_name, element_type = _check_equipment_search(req, "equipment photos")
+    ctx = _check_equipment_search(req, "equipment photos")
     t_start = time.perf_counter()
     try:
         result = await search_equipment_photos(
-            req.bike_company, req.bike_model, element_name, req.category, element_type=element_type,
+            ctx.bike_company, ctx.bike_model, ctx.element_name, ctx.category, element_type=ctx.element_type,
         )
     except _PROXIED_ERRORS as exc:
         raise _equipment_searcher_error(exc, "equipment photos", "Equipment photos") from exc

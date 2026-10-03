@@ -9,7 +9,7 @@ import anthropic  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import JSONResponse  # noqa: E402
 from .schemas import (  # noqa: E402
-    SearchRequest, BikeSearchResponse,
+    SearchRequest, BikeSearchResponse, BikeResult, BikeByIdRequest,
     BikeDetailsRequest, BikeDetailsResponse,
     BikeReviewRequest, BikeReviewResponse,
     BikeOfferRequest, BikeOfferResponse,
@@ -31,7 +31,7 @@ from .store import (  # noqa: E402
 # not the retired bike_details_cache blob — see TODO-019.
 from .repository import (  # noqa: E402
     get_bike_details, find_bikes_by_details, record_missing_request,
-    empty_details, fill_bike_results,
+    empty_details, fill_bike_results, get_bike_by_id,
 )
 from .offers_repository import (  # noqa: E402
     get_used_offers, get_decathlon_offers, get_allegro_offers, get_centrumrowerowe_offers,
@@ -146,6 +146,23 @@ async def bike_details(req: BikeDetailsRequest) -> BikeDetailsResponse:
     if stored is None:
         return empty_details(req.company, req.model)
     return stored.model_copy(update={"company": req.company, "model": req.model})
+
+
+@app.post("/v1/bike/by-id", response_model=BikeResult)
+async def bike_by_id(req: BikeByIdRequest) -> BikeResult:
+    """One bike by its id — the frontend's /bike/{id} deep link. A pure DB read, no AI, no cache.
+
+    Answers the search-result shape (stored casing, short description, chips); 404
+    "Bike not found" for an unknown id, 503 when the DB read fails.
+    """
+    try:
+        bike = get_bike_by_id(req.bike_id)
+    except Exception as exc:  # noqa: BLE001 — a DB error is not "not found"
+        logger.error("bike by id read failed | bike_id=%d | %s", req.bike_id, exc)
+        raise HTTPException(status_code=503, detail="Bike lookup failed") from exc
+    if bike is None:
+        raise HTTPException(status_code=404, detail="Bike not found")
+    return bike
 
 
 @app.post("/v1/bike/details/search", response_model=BikeDetailsResponse)

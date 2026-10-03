@@ -24,6 +24,7 @@ from app.equipment_details_finder import (
     user_message,
 )
 from app.equipment_repository import (
+    NOT_FOUND_TEXT,
     get_equipment_details,
     get_equipment_photos,
     save_equipment_details,
@@ -249,12 +250,21 @@ def test_photos_save_leaves_company_and_model_alone(db):
     assert get_equipment_details(_q("SELECT id FROM equipment WHERE name = 'Fresh item'")[0][0]) is None, "photos only: no details"
 
 
-def test_unusable_result_writes_and_links_nothing(db):
+def test_unusable_result_stores_the_placeholder_once(db):
     canyon = _bike()
     empty = build_equipment_details("Abus Hyban 2.0", "helmets", _data(found=False))
-    assert save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", empty) == (None, False)
-    assert _q("SELECT id FROM equipment") == []
-    assert all(e is None for _, e in _links(canyon))
+    eid, saved = save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", empty)
+    assert eid is not None and saved is False
+    stored = get_equipment_details(eid)
+    assert stored.description.text == NOT_FOUND_TEXT and stored.components == [] and stored.short_description == ""
+    assert _q("SELECT company, model FROM equipment") == [("", "Abus Hyban 2.0")], "no researched identity"
+    assert _links(canyon)[0][1] == eid
+    # a later usable run replaces the placeholder; a later empty run never wipes a real description
+    eid2, _ = save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets",
+                                     build_equipment_details("Abus Hyban 2.0", "helmets", _data()))
+    assert eid2 == eid and get_equipment_details(eid).description.text.startswith("Kask miejski")
+    assert save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", empty) == (eid, False)
+    assert get_equipment_details(eid).description.text.startswith("Kask miejski")
 
 
 def test_resave_in_place_keeps_other_half(db):
@@ -383,8 +393,10 @@ def test_details_route_stores_links_and_answers_stored(client, monkeypatch):
     monkeypatch.setattr(searcher_main, "find_equipment_details", nothing)
     r = client.post("/v1/search/equipment/details", json=dict(BODY, element_name="Unknown lock"), headers=KEY)
     assert r.status_code == 200
-    assert r.json() == {"details": empty_equipment_details("Unknown lock", "locks").model_dump(mode="json"),
-                        "equipment_id": None, "saved": 0}
+    body = r.json()
+    assert body["saved"] == 0 and body["equipment_id"] is not None, "the placeholder is stored, not a result"
+    assert body["details"]["description"]["text"] == NOT_FOUND_TEXT and body["details"]["components"] == []
+    assert body["details"] == get_equipment_details(body["equipment_id"]).model_dump(mode="json")
 
 
 def test_photos_route(client, monkeypatch):
@@ -530,7 +542,7 @@ def test_null_id_when_nothing_written_or_linked(db):
     eid, _ = save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets",
                                     build_equipment_details("Abus Hyban 2.0", "helmets", _data()))
     empty = build_equipment_details("Abus Hyban 2.0", "helmets", _data(found=False))
-    assert save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", empty) == (None, False)
+    assert save_equipment_details("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", empty) == (eid, False)  # kept
     assert save_equipment_photos("Canyon", "Grizl", "Abus Hyban 2.0", "helmets", []) == (None, [], 0)
     save_equipment_photos("No", "Bike", "Abus Hyban 2.0", "helmets", ["https://a/1.jpg"])  # stored, not linked
     # photos already stored + unknown bike: nothing written, nothing linked -> no id

@@ -401,7 +401,9 @@ async def search_equipment_details(req: EquipmentSearchRequest) -> EquipmentDeta
     equipment row created if missing, description columns updated in place (company / model filled where missing),
     components replaced — and the element is linked on THIS bike's
     bike_component rows (bike missing: stored, not linked); saved 1.
-    Anything less writes nothing (saved 0). Same 400 / 401 / 422 / 502 / 503 /
+    Anything less stores only the "Opis niedostępny dla tego produktu."
+    placeholder on an item without a description and answers it (saved 0); a
+    failed run writes nothing. Same 400 / 401 / 422 / 502 / 503 /
     500 mapping and the SAME SEARCHER_MAX_CONCURRENT slots as the other routes.
     """
     logger.info("equipment details search request | bike=%r %r element=%r type=%r category=%r",

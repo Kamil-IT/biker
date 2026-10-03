@@ -1,8 +1,8 @@
 import type { MouseEvent } from 'react'
-import { ROUTES, type Route } from '../hooks/useRoute'
+import { PATHS, isPlainClick } from '../hooks/useRoute'
 
 interface Props {
-  onNavigate: (to: Route) => void
+  onNavigate: (to: string) => void
 }
 
 const STEPS = [
@@ -15,9 +15,9 @@ const STEPS = [
 // Nothing here calls the backend.
 export default function FitComingSoonPage({ onNavigate }: Props) {
   const goSearch = (e: MouseEvent<HTMLAnchorElement>) => {
-    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+    if (!isPlainClick(e)) return
     e.preventDefault()
-    onNavigate(ROUTES.search)
+    onNavigate(PATHS.home)
   }
 
   return (
@@ -124,7 +124,7 @@ export default function FitComingSoonPage({ onNavigate }: Props) {
         <div className="mt-12 pt-7 border-t border-border flex flex-wrap items-center justify-between gap-4">
           <p className="font-body text-ink">Do tego czasu możesz opisać swój rower w wyszukiwarce.</p>
           <a
-            href={ROUTES.search}
+            href={PATHS.home}
             onClick={goSearch}
             className="
               inline-flex items-center justify-center px-6 py-3 rounded-xl

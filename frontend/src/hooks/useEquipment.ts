@@ -1,169 +1,185 @@
-import { useRef, useState, type RefObject } from 'react'
-import { postJson } from '../api'
+import { useRef, useState } from 'react'
+import { ApiError, errorMessage, postJson } from '../api'
 import type {
-  Bike, BikeCategory, BikeDescription, EquipmentDetailsPayload, EquipmentDetailsResponse,
-  EquipmentPhotosResponse, EquipmentReviewResponse, EquipmentSearchPayload, EquipmentSelection,
+  BikeCategory, BikeDescription, EquipmentDetailsResponse, EquipmentItemResponse, EquipmentPhotosResponse,
+  EquipmentReviewResponse, EquipmentSearchPayload,
 } from '../types'
 
 type LoadState = 'loading' | 'loaded' | 'error'
 
-// Sets `equipment_id` on every element of that name — only in this bike's tree, which is the
-// one the search ran for — so going back and re-entering reads the stored data by id.
-function linkElements(categories: BikeCategory[] | null, name: string, id: number): BikeCategory[] | null {
-  if (!categories) return categories
-  return categories.map(cat => ({
-    ...cat,
-    subcategories: cat.subcategories.map(sub => ({
-      ...sub,
-      elements: sub.elements.map(el => (el.name === name ? { ...el, equipment_id: id } : el)),
-    })),
-  }))
+// What /equipment/{id} shows: the item, and the bike it was opened from when known (the
+// address of the history entry it came from) — the details search's context bike.
+interface Opened {
+  id: number
+  fromBikeId: number | null
 }
 
-// State and calls of the equipment view (TODO-042). Opening it reads the stored details and
-// photos from the DB — two fast reads, no AI; an empty answer is "no data", not an error.
-// The paid searcher runs happen only through `searchDetails` / `searchPhotos` (the
-// "Poproś o dane" buttons): they throw on failure so the button becomes clickable again,
-// write their answer into the state WITHOUT flipping it to 'loading', and drop it when the
-// user has opened another item (or reset) in the meantime — it is stored in the DB anyway.
-export function useEquipment(
-  selectedBikeRef: RefObject<Bike | null>,
-  setBikeCategories: (update: (prev: BikeCategory[] | null) => BikeCategory[] | null) => void,
-) {
-  const itemRef = useRef<EquipmentSelection | null>(null)
-  const [item, setItem]               = useState<EquipmentSelection | null>(null)
+const hasDetails = (data: EquipmentDetailsResponse) =>
+  !!data.description?.text?.trim() || !!data.description?.segments.some(s => s.text.trim()) ||
+  data.components.some(c => c.subcategories.some(s => s.elements.length > 0))
+
+// State and calls of the equipment view (/equipment/{id}). Opening it reads the item (name,
+// category, the first bike linking it), its stored details and photos — fast DB reads. While
+// the item has no details stored (description NULL) the details search runs AUTOMATICALLY,
+// on every entry; it ends with a description either way (the searcher stores "Opis
+// niedostępny dla tego produktu." when it finds nothing), so it never runs twice for one item.
+// A failed run stores nothing: the next entry, or the button, tries again. The photo search
+// and the review stay behind their buttons. Answers for another item are dropped.
+export function useEquipment() {
+  const openedRef = useRef<Opened | null>(null)
+  const [opened, setOpened]           = useState<Opened | null>(null)
+  const [item, setItem]               = useState<EquipmentItemResponse | null>(null)
+  const [lookup, setLookup]           = useState<'loading' | 'loaded' | 'missing' | 'error'>('loading')
   const [category, setCategory]       = useState<string | null>(null)
   const [categories, setCategories]   = useState<BikeCategory[] | null>(null)
   const [description, setDescription] = useState<BikeDescription | null>(null)
-  const [photos, setPhotos]           = useState<string[]>([])
   const [state, setState]             = useState<LoadState>('loading')
-  const [photosState, setPhotosState] = useState<LoadState>('loading')
   const [error, setError]             = useState<string | null>(null)
+  const [photos, setPhotos]           = useState<string[]>([])
+  const [photosState, setPhotosState] = useState<LoadState>('loading')
   const [review, setReview]           = useState<EquipmentReviewResponse | null>(null)
-  const [reviewState, setReviewState] = useState<LoadState>('loading')
+  // The details search in flight: both the Opis and Specyfikacja slots watch it (one run).
+  const runRef = useRef<Promise<void> | null>(null)
+  const [detailsRun, setDetailsRun]   = useState<Promise<void> | null>(null)
+  const failedRef = useRef(false)
 
-  const isCurrent = (sel: EquipmentSelection) => itemRef.current === sel
+  const isCurrent = (it: Opened) => openedRef.current === it
 
-  // After a successful search: remember the id on the bike's matching elements, unless
-  // another bike is open by now.
-  const linkToBike = (sel: EquipmentSelection, id: number | null) => {
-    if (id == null) return
-    const bike = selectedBikeRef.current
-    if (!bike || bike.brand !== sel.bikeCompany || bike.model !== sel.bikeModel) return
-    setBikeCategories(prev => linkElements(prev, sel.name, id))
-  }
+  const searchBody = (it: Opened): EquipmentSearchPayload =>
+    it.fromBikeId != null ? { equipment_id: it.id, bike_id: it.fromBikeId } : { equipment_id: it.id }
 
-  // By id when the element carries one, else by name (company '' + model = element name).
-  const readBody = (sel: EquipmentSelection): EquipmentDetailsPayload =>
-    sel.equipmentId != null
-      ? { company: '', model: sel.name, equipment_id: sel.equipmentId }
-      : { company: '', model: sel.name }
-
-  const searchBody = (sel: EquipmentSelection): EquipmentSearchPayload => ({
-    bike_company: sel.bikeCompany,
-    bike_model:   sel.bikeModel,
-    element_name: sel.name,
-    ...(category ? { category } : {}),
-  })
-
-  const fetchDetails = async (sel: EquipmentSelection) => {
-    setState('loading')
-    setError(null)
-    setCategories(null)
-    setDescription(null)
-    setCategory(null)
-    try {
-      const data = await postJson<EquipmentDetailsResponse>('/v1/equipment/details', readBody(sel))
-      if (!isCurrent(sel)) return
-      setCategories(data.components)
-      setDescription(data.description ?? null)
-      setCategory(data.category || null)
-      setState('loaded')
-    } catch (err) {
-      if (!isCurrent(sel)) return
-      setError(err instanceof Error ? err.message : 'Coś poszło nie tak. Spróbuj ponownie.')
-      setState('error')
-    }
-  }
-
-  const fetchPhotos = async (sel: EquipmentSelection) => {
-    setPhotosState('loading')
-    setPhotos([])
-    try {
-      const data = await postJson<EquipmentPhotosResponse>('/v1/equipment/photos', readBody(sel))
-      if (!isCurrent(sel)) return
-      setPhotos(data.photos ?? [])
-      setPhotosState('loaded')
-    } catch {
-      if (isCurrent(sel)) setPhotosState('error')
-    }
-  }
-
-  // Unchanged behaviour: the review is fetched automatically (SDK + generic cache, no button).
-  const fetchReview = async (sel: EquipmentSelection) => {
-    setReviewState('loading')
-    setReview(null)
-    try {
-      const data = await postJson<EquipmentReviewResponse>('/v1/equipment/review', { company: '', model: sel.name })
-      if (!isCurrent(sel)) return
-      setReview(data)
-      setReviewState('loaded')
-    } catch {
-      if (isCurrent(sel)) setReviewState('error')
-    }
-  }
-
-  const open = (sel: EquipmentSelection) => {
-    itemRef.current = sel
-    setItem(sel)
-    fetchDetails(sel)
-    fetchPhotos(sel)
-    fetchReview(sel)
-  }
-
-  const retry = () => { if (itemRef.current) fetchDetails(itemRef.current) }
-
-  // The Opis / Komponenty button: one run fills both sections. An empty answer leaves both
-  // buttons on screen, which then read "Nie znaleziono danych".
-  const searchDetails = async () => {
-    const sel = itemRef.current
-    if (!sel) return
-    const data = await postJson<EquipmentDetailsResponse>('/v1/equipment/details/search', searchBody(sel))
-    if (!isCurrent(sel)) return
+  const showDetails = (data: EquipmentDetailsResponse) => {
     setCategories(data.components)
     setDescription(data.description ?? null)
     setCategory(data.category || null)
     setState('loaded')
-    linkToBike(sel, data.equipment_id)
   }
 
-  // The gallery's button; the searcher writes photos only for equipment that has none.
-  const searchPhotos = async () => {
-    const sel = itemRef.current
-    if (!sel) return
-    const data = await postJson<EquipmentPhotosResponse>('/v1/equipment/photos/search', searchBody(sel))
-    if (!isCurrent(sel)) return
-    setPhotos(data.photos ?? [])
-    setPhotosState('loaded')
-    linkToBike(sel, data.equipment_id)
+  // The details search; a call while one is running joins it. Throws on failure (502 / 503 /
+  // the subscription limit) so the slots become clickable again.
+  const searchDetails = (): Promise<void> => {
+    const it = openedRef.current
+    if (!it) return Promise.resolve()
+    if (runRef.current) return runRef.current
+    const run = (async () => {
+      try {
+        const data = await postJson<EquipmentDetailsResponse>('/v1/equipment/details/search', searchBody(it))
+        if (isCurrent(it)) showDetails(data)
+      } catch (err) {
+        if (isCurrent(it)) failedRef.current = true
+        throw err
+      }
+    })()
+    failedRef.current = false
+    runRef.current = run
+    setDetailsRun(run)
+    const clear = () => {
+      if (runRef.current !== run) return
+      runRef.current = null
+      setDetailsRun(null)
+    }
+    run.then(clear, clear)
+    return run
   }
 
-  const reset = () => {
-    itemRef.current = null
+  const fetchItem = async (it: Opened) => {
+    try {
+      const data = await postJson<EquipmentItemResponse>('/v1/equipment/by-id', { equipment_id: it.id })
+      if (!isCurrent(it)) return
+      setItem(data)
+      setCategory(prev => prev ?? (data.category || null))
+      setLookup('loaded')
+    } catch (err) {
+      if (isCurrent(it)) setLookup(err instanceof ApiError && err.status === 404 ? 'missing' : 'error')
+    }
+  }
+
+  const fetchDetails = async (it: Opened) => {
+    setState('loading')
+    setError(null)
+    try {
+      const data = await postJson<EquipmentDetailsResponse>('/v1/equipment/details', { equipment_id: it.id })
+      if (!isCurrent(it)) return
+      showDetails(data)
+      // Nothing stored yet (an unknown id answers empty too, but has no bike to search with:
+      // its search fails with 404 and the page shows "Nie znaleziono wyposażenia" anyway).
+      if (!hasDetails(data)) searchDetails().catch(() => {})
+    } catch (err) {
+      if (!isCurrent(it)) return
+      setError(errorMessage(err))
+      setState('error')
+    }
+  }
+
+  const fetchPhotos = async (it: Opened) => {
+    try {
+      const data = await postJson<EquipmentPhotosResponse>('/v1/equipment/photos', { equipment_id: it.id })
+      if (!isCurrent(it)) return
+      setPhotos(data.photos ?? [])
+      setPhotosState('loaded')
+    } catch {
+      if (isCurrent(it)) setPhotosState('error')
+    }
+  }
+
+  const open = (id: number, fromBikeId: number | null) => {
+    const it = { id, fromBikeId }
+    openedRef.current = it
+    runRef.current = null
+    failedRef.current = false
+    setOpened(it)
+    setDetailsRun(null)
     setItem(null)
+    setLookup('loading')
     setCategory(null)
     setCategories(null)
     setDescription(null)
     setPhotos([])
-    setState('loading')
     setPhotosState('loading')
-    setError(null)
     setReview(null)
-    setReviewState('loading')
+    fetchItem(it)
+    fetchDetails(it)
+    fetchPhotos(it)
+  }
+
+  // Every entry of /equipment/{id}. The item already shown stays as it is (Back from the bike
+  // and Forward again cost nothing) — unless its details search or a read failed, then it is
+  // read and searched again.
+  const enter = (id: number, fromBikeId: number | null) => {
+    const cur = openedRef.current
+    const intact = cur?.id === id && !failedRef.current && lookup !== 'error' && state !== 'error'
+    if (!intact) open(id, fromBikeId)
+  }
+
+  // The gallery's button; the searcher writes photos only for an item that has none.
+  const searchPhotos = async () => {
+    const it = openedRef.current
+    if (!it) return
+    const data = await postJson<EquipmentPhotosResponse>('/v1/equipment/photos/search', searchBody(it))
+    if (!isCurrent(it)) return
+    setPhotos(data.photos ?? [])
+    setPhotosState('loaded')
+  }
+
+  // The review's button (POST /v1/equipment/review — the Anthropic API, generic cache).
+  const requestReview = async () => {
+    const it = openedRef.current
+    if (!it || !item) return
+    const data = await postJson<EquipmentReviewResponse>('/v1/equipment/review', { company: '', model: item.name })
+    if (isCurrent(it)) setReview(data)
+  }
+
+  const retry = () => { if (openedRef.current) open(openedRef.current.id, openedRef.current.fromBikeId) }
+
+  const reset = () => {
+    openedRef.current = null
+    runRef.current = null
+    setOpened(null)
+    setDetailsRun(null)
   }
 
   return {
-    item, category, categories, description, photos, state, photosState, error, review, reviewState,
-    open, retry, searchDetails, searchPhotos, reset,
+    opened, item, lookup, category, categories, description, state, error, photos, photosState, review, detailsRun,
+    enter, retry, reset, searchDetails, searchPhotos, requestReview,
   }
 }

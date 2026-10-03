@@ -1,31 +1,21 @@
-import { useMemo, useRef, useState } from 'react'
-import SearchInput from './components/SearchInput'
-import ResultCard from './components/ResultCard'
-import LoadingCard from './components/LoadingCard'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import SearchPage, { type SearchState } from './components/SearchPage'
 import BikeDetailsView from './components/BikeDetailsView'
 import EquipmentDetailsView from './components/EquipmentDetailsView'
-import PopularBikesSection from './components/PopularBikesSection'
-import TopTabs from './components/TopTabs'
+import TopTabs, { type Tab } from './components/TopTabs'
 import FitComingSoonPage from './components/FitComingSoonPage'
 import ContactPage from './components/ContactPage'
-import useRoute, { ROUTES, type Route } from './hooks/useRoute'
+import NotFoundPage from './components/NotFoundPage'
+import useRoute, { PATHS, bikePath, equipmentPath, searchPath, type Route } from './hooks/useRoute'
 import usePopularBikes from './hooks/usePopularBikes'
 import useCachedRatings from './hooks/useCachedRatings'
+import { useBikeDetails } from './hooks/useBikeDetails'
 import { useEquipment } from './hooks/useEquipment'
-import { postJson } from './api'
-import { PENDING_RATING, bikeKey } from './ratings'
-import type { Bike, BikeCategory, BikeDescription, BikeDetailsResponse, BikePhotosResponse, BikeReviewResponse, BikeOfferResponse, UsedBikeResponse, ComponentElement, SearchPayload, ParseResponse, SearchFilters } from './types'
+import { errorMessage, postJson } from './api'
+import { bikeKey } from './ratings'
+import { payloadToFilters, payloadToQuery, queryToPayload } from './searchQuery'
+import type { Bike, ComponentElement, EquipmentResolveResponse, ParseResponse, SearchFilters, SearchPayload } from './types'
 import { EMPTY_FILTERS } from './types'
-
-type AppState     = 'idle' | 'loading' | 'results' | 'error'
-type AppView      = 'search' | 'details' | 'equipment'
-type DetailsState = 'loading' | 'loaded' | 'error'
-type ReviewState  = 'loading' | 'loaded' | 'error'
-type OfferState   = 'loading' | 'loaded' | 'error'
-type UsedBikeState = 'loading' | 'loaded' | 'error'
-
-// Search has no fixed result count (TODO-025), so the skeleton count is neutral.
-const LOADING_CARDS = 3
 
 interface SearchResponse {
   search: string
@@ -36,13 +26,33 @@ interface SearchResponse {
 // so the UI shows its own Polish message instead.
 const NO_MATCH_MSG = 'Nie mamy tego roweru w naszej bazie'
 
+const TAB_OF: Record<Route['name'], Tab> = {
+  home: 'search', search: 'search', bike: 'search', equipment: 'search', fit: 'fit', contact: 'contact',
+}
+
+// The parents the "Wróć" buttons go back to: a search address (or home) for a bike, a bike for equipment.
+const isSearchUrl = (url: string) => url === PATHS.home || url.startsWith('/search?')
+const bikeIdOf = (url: string | null): number | null => {
+  const m = url ? /^\/bike\/(\d+)$/.exec(url) : null
+  return m ? Number(m[1]) : null
+}
+
+function PageLoading() {
+  return (
+    <div className="max-w-2xl mx-auto px-4 sm:px-6 pt-14 pb-20 flex items-center gap-2.5" aria-busy="true">
+      <span className="spin w-3.5 h-3.5 rounded-full border-2 border-terra/25 border-t-terra shrink-0" aria-hidden="true" />
+      <span className="font-mono text-[11px] text-muted uppercase tracking-wider">Wczytuję…</span>
+    </div>
+  )
+}
+
 export default function App() {
-  // TODO-041: top tabs. The search flow stays mounted in App, so leaving for another
-  // tab and coming back keeps the results.
-  const [route, navigate] = useRoute()
+  // Every view has its own address (useRoute); the state below is kept in memory across
+  // them, so Back from a bike shows the same results without a request.
+  const { route, from, navigate, goBack } = useRoute()
 
   // Search state
-  const [appState, setAppState]             = useState<AppState>('idle')
+  const [searchState, setSearchState]       = useState<SearchState>('idle')
   const [query, setQuery]                   = useState('')
   const [filters, setFilters]               = useState<SearchFilters>(EMPTY_FILTERS)
   const [bikes, setBikes]                   = useState<Bike[]>([])
@@ -56,12 +66,15 @@ export default function App() {
   // text differs from it re-runs /v1/bike/parse on a cleared filter panel, so a brand
   // or model left over from the previous text never rides along with a new search.
   const parsedQueryRef                      = useRef('')
+  // The canonical query of the results in memory (or in flight): a /search address with it
+  // shows them again without a request. `lastSearchUrl` is where "Szukanie rowerów" leads.
+  const searchKeyRef                        = useRef<string | null>(null)
+  const [lastSearchUrl, setLastSearchUrl]   = useState<string | null>(null)
 
   const updateFilter = <K extends keyof SearchFilters>(key: K, val: SearchFilters[K]) =>
     setFilters(prev => ({ ...prev, [key]: val }))
 
-  // Home-page "Najpopularniejsze rowery" (TODO-034): fetched once for the app's
-  // lifetime — coming back from the details view does not refetch.
+  // Home-page "Najpopularniejsze rowery" (TODO-034): fetched once for the app's lifetime.
   const { bikes: popularBikes, ratings: popularRatings } = usePopularBikes()
   // TODO-040: expert ratings of the search results (stored reviews only). Until every
   // rating has settled the backend order is kept so cards do not jump; then rated bikes
@@ -73,43 +86,49 @@ export default function App() {
     return [...bikes].sort((a, b) => value(b) - value(a))
   }, [bikes, resultRatings, ratingsSettled])
 
-  // Details state
-  const [view, setView]                         = useState<AppView>('search')
-  const [selectedBike, setSelectedBike]         = useState<Bike | null>(null)
-  // Mirrors selectedBike for the slow on-demand searches (OLX, Decathlon, Allegro): a
-  // result that lands after the user has opened another bike must not overwrite that
-  // bike's card (TODO-031 / TODO-032 / TODO-033).
-  const selectedBikeRef                         = useRef<Bike | null>(null)
-  const [detailsState, setDetailsState]         = useState<DetailsState>('loading')
-  const [bikeCategories, setBikeCategories]     = useState<BikeCategory[] | null>(null)
-  const [bikeDescription, setBikeDescription]   = useState<BikeDescription | null>(null)
-  // Photos are their own DB read (POST /v1/bike/photos), independent of the details request.
-  const [bikePhotos, setBikePhotos]             = useState<BikePhotosResponse | null>(null)
-  const [photosState, setPhotosState]           = useState<OfferState>('loading')
-  const [detailsError, setDetailsError]         = useState<string | null>(null)
+  const details = useBikeDetails()
+  // Equipment view (/equipment/{id}, entered from a component name in a bike's spec tree).
+  const equipment = useEquipment()
 
-  // Review state
-  const [reviewState, setReviewState]       = useState<ReviewState>('loading')
-  const [review, setReview]                 = useState<BikeReviewResponse | null>(null)
+  /* ── Search ───────────────────────────────────────── */
 
-  // Offer state
-  const [offerState, setOfferState]         = useState<OfferState>('loading')
-  const [offers, setOffers]                 = useState<BikeOfferResponse | null>(null)
-  const [decathlonState, setDecathlonState] = useState<OfferState>('loading')
-  const [decathlonOffers, setDecathlonOffers] = useState<BikeOfferResponse | null>(null)
-  // centrumrowerowe.pl offers: stored by the discovery enrichment, read only — no search.
-  const [centrumState, setCentrumState]     = useState<OfferState>('loading')
-  const [centrumOffers, setCentrumOffers]   = useState<BikeOfferResponse | null>(null)
+  // The form as a search address fills it (its text counts as already parsed), or empty.
+  const fillForm = (payload: SearchPayload) => {
+    const f = payloadToFilters(payload)
+    setQuery(payload.search ?? '')
+    setFilters(f)
+    setShowFilters(Object.entries(f).some(([, v]) => v !== '' && v !== undefined))
+    setNoMatchMsg(null)
+    parsedQueryRef.current = payload.search ?? ''
+  }
+  const clearForm = () => fillForm({})
 
-  // Used bikes (OLX) state
-  const [usedBikeState, setUsedBikeState]   = useState<UsedBikeState>('loading')
-  const [usedBikes, setUsedBikes]           = useState<UsedBikeResponse | null>(null)
-
-  // Equipment view (entered by clicking a component name in the bike's spec tree, TODO-042):
-  // stored details + photos are DB reads on open, the searches run only on a button click.
-  const equipment = useEquipment(selectedBikeRef, setBikeCategories)
-
-  /* ── Handlers ─────────────────────────────────────── */
+  // Runs a search. From the form it is a new history entry (/search?…); opened by address
+  // (link, F5, Back to a search not in memory) it runs for the address as it stands.
+  const runSearch = async (input: SearchPayload, fromForm: boolean) => {
+    // Through the address form, so the request and the address always agree.
+    const payload = queryToPayload(payloadToQuery(input))
+    const key = payloadToQuery(payload)
+    searchKeyRef.current = key
+    setLastSearchUrl(searchPath(key))
+    if (fromForm) navigate(searchPath(key))
+    setSearchState('loading')
+    setErrorMsg(null)
+    try {
+      const data = await postJson<SearchResponse>('/v1/bike/search', payload)
+      if (searchKeyRef.current !== key) return
+      setBikes(data.bikes)
+      setSubmittedQuery(data.search)
+      setSearchState('results')
+      if (fromForm) {
+        setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
+      }
+    } catch (err) {
+      if (searchKeyRef.current !== key) return
+      setErrorMsg(errorMessage(err))
+      setSearchState('error')
+    }
+  }
 
   const handleSearch = async (payload: SearchPayload) => {
     const hasStructured = Object.entries(payload).some(([k, v]) => k !== 'search' && v !== undefined)
@@ -122,7 +141,8 @@ export default function App() {
 
     // Parse the free text into structured fields when it is all we have, and also
     // whenever the text changed since the filters were filled — then the stale
-    // filters go first, so the new text alone decides them.
+    // filters go first, so the new text alone decides them. The address changes only
+    // when a search runs, not for the parse.
     if (searchText && (textChanged || !hasStructured)) {
       // The panel — and with it the payload SearchInput built from it — is cleared, so
       // a parse that extracts nothing falls through to a text-only search.
@@ -171,276 +191,117 @@ export default function App() {
       setIsParsing(false)
     }
 
-    setAppState('loading')
-    setErrorMsg(null)
+    runSearch(payload, true)
+  }
 
-    try {
-      // payload already contains only the populated fields (built in SearchInput)
-      const body: SearchPayload = { ...payload }
+  /* ── Address → view ───────────────────────────────── */
 
-      const res = await fetch('/v1/bike/search', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      })
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error((data as { detail?: string }).detail ?? `Błąd serwera ${res.status}`)
+  // The address decides what is shown; this loads what the new address needs. A bike or
+  // equipment item already in memory is shown as it is (Back / Forward cost no request).
+  useEffect(() => {
+    switch (route.name) {
+      case 'home':
+        // "/" is the home page: the popular bikes and an empty form. The last search stays
+        // in memory, so Forward shows it again. (The address is the external system this
+        // effect syncs from — Back/Forward change it outside React.)
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        clearForm()
+        break
+      case 'search': {
+        // Opened by address the search runs at once — no parse step — and fills the form.
+        const payload = queryToPayload(route.query)
+        fillForm(payload)
+        if (route.query !== searchKeyRef.current || searchState === 'error') runSearch(payload, false)
+        break
       }
-
-      const data: SearchResponse = await res.json()
-      setBikes(data.bikes)
-      setSubmittedQuery(data.search)
-      setAppState('results')
-
-      setTimeout(() => {
-        resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }, 80)
-    } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Coś poszło nie tak. Spróbuj ponownie.')
-      setAppState('error')
+      case 'bike':
+        if (route.id != null && details.bikeRef.current?.id !== route.id) details.openById(route.id)
+        break
+      case 'equipment':
+        if (route.id != null) equipment.enter(route.id, bikeIdOf(from))
+        break
     }
-  }
+    // Runs per address only: the handlers read the state of the render the address changed in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route])
 
-  const fetchDetails = async (bike: Bike) => {
-    setDetailsState('loading')
-    setDetailsError(null)
-    setBikeCategories(null)
-    setBikeDescription(null)
-
-    try {
-      const res = await fetch('/v1/bike/details', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ company: bike.brand, model: bike.model }),
-      })
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error((data as { detail?: string }).detail ?? `Błąd serwera ${res.status}`)
-      }
-
-      const data: BikeDetailsResponse = await res.json()
-      setBikeCategories(data.components)
-      setBikeDescription(data.description ?? null)
-      setDetailsState('loaded')
-    } catch (err) {
-      setDetailsError(err instanceof Error ? err.message : 'Coś poszło nie tak. Spróbuj ponownie.')
-      setDetailsState('error')
-    }
-  }
-
-  const fetchReview = async (bike: Bike) => {
-    setReviewState('loading')
-    setReview(null)
-    try {
-      const res = await fetch('/v1/bike/review', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ company: bike.brand, model: bike.model }),
-      })
-      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
-      const data: BikeReviewResponse = await res.json()
-      setReview(data)
-      setReviewState('loaded')
-    } catch {
-      setReviewState('error')
-    }
-  }
-
-  // Stored offers of one marketplace, read when the details view opens. All four
-  // (/v1/bike/allegro, /v1/bike/used/olx, /v1/bike/decathlon, /v1/bike/centrumrowerowe)
-  // are fast DB reads — no AI call (TODO-031 / TODO-032 / TODO-033); the searcher writes
-  // the first three, the discovery enrichment the centrumrowerowe.pl rows — and differ
-  // only in path and state pair, hence one reader. The stored photos (/v1/bike/photos)
-  // are read the same way. An answer (or failure) that lands after another bike was
-  // opened is dropped, like the on-demand searches' — it would show the previous bike's
-  // rows or flip the new bike's section to the button.
-  const fetchStoredOffers = async <T,>(
-    path: string,
-    bike: Bike,
-    setData: (data: T | null) => void,
-    setState: (state: OfferState) => void,
-  ) => {
-    setState('loading')
-    setData(null)
-    try {
-      const res = await fetch(path, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ company: bike.brand, model: bike.model }),
-      })
-      if (!res.ok) throw new Error(`Błąd serwera ${res.status}`)
-      const data = await res.json() as T
-      if (selectedBikeRef.current !== bike) return
-      setData(data)
-      setState('loaded')
-    } catch {
-      if (selectedBikeRef.current !== bike) return
-      setState('error')
-    }
-  }
-
-  // On-demand searches behind the offer cards' buttons — three of them: OLX in the
-  // Used card (TODO-031), and one button each for Decathlon (TODO-032) and Allegro
-  // (TODO-033) in the New card. The card's state is deliberately not set to 'loading':
-  // the button shows its own spinner, and 'loading' would restart the 5 s skeleton
-  // grace in the offers section. Throws on failure (with the backend's `detail`) so
-  // the button can return to clickable. A search can take minutes; if another bike is
-  // open by then the result is dropped — it is stored in the DB anyway and shows when
-  // this bike is opened again.
-  const postOnDemandSearch = async <T,>(path: string, bike: Bike): Promise<T | null> => {
-    const data = await postJson<T>(path, { company: bike.brand, model: bike.model })
-    return selectedBikeRef.current === bike ? data : null
-  }
-
-  const searchUsedBikes = async (bike: Bike) => {
-    const data = await postOnDemandSearch<UsedBikeResponse>('/v1/bike/used/search', bike)
-    if (!data) return
-    setUsedBikes(data)
-    setUsedBikeState('loaded')
-  }
-
-  // For a non-Decathlon brand the backend answers at once with no offers (no searcher run)
-  // and a Polish `info` naming the house brands. Both searches resolve to their `info`,
-  // which the button shows next to its "nothing found" label.
-  const searchDecathlon = async (bike: Bike): Promise<string> => {
-    const data = await postOnDemandSearch<BikeOfferResponse>('/v1/bike/decathlon/search', bike)
-    if (!data) return ''
-    setDecathlonOffers(data)
-    setDecathlonState('loaded')
-    return data.info
-  }
-
-  // Allegro listings can be used (`is_new: false`) — the returned rows land in
-  // whichever card their flag says, through the same `offers` state the DB read fills.
-  const searchAllegro = async (bike: Bike): Promise<string> => {
-    const data = await postOnDemandSearch<BikeOfferResponse>('/v1/bike/allegro/search', bike)
-    if (!data) return ''
-    setOffers(data)
-    setOfferState('loaded')
-    return data.info
-  }
-
-  // The gallery's "Poproś o dane" button. The searcher only writes photos for a bike
-  // that has none, so the answer is the full gallery in display order.
-  const searchPhotos = async (bike: Bike) => {
-    const data = await postOnDemandSearch<BikePhotosResponse>('/v1/bike/photos/search', bike)
-    if (!data) return
-    setBikePhotos(data)
-    setPhotosState('loaded')
-  }
-
-  // The Review section's "Poproś o dane" button (TODO-037): the searcher runs the review
-  // prompt and stores the result. An empty answer (no `ref`, `sources_used` 0) keeps the
-  // button on screen, which then reads "Nie znaleziono recenzji".
-  const searchReview = async (bike: Bike) => {
-    const data = await postOnDemandSearch<BikeReviewResponse>('/v1/bike/review/search', bike)
-    if (!data) return
-    setReview(data)
-    setReviewState('loaded')
-  }
-
-  // The Opis / Komponenty "Poproś o dane" button (TODO-041): one searcher run fills both
-  // sections. POST /v1/bike/details answers an empty response (no description, no
-  // components) when nothing is stored; that stays the "no data" state, so the button
-  // then reads "Nie znaleziono danych".
-  const searchDetails = async (bike: Bike) => {
-    const data = await postOnDemandSearch<BikeDetailsResponse>('/v1/bike/details/search', bike)
-    if (!data) return
-    setBikeCategories(data.components)
-    setBikeDescription(data.description ?? null)
-    setDetailsState('loaded')
-  }
-
-  const handleEquipmentSelect = (element: ComponentElement) => {
-    const bike = selectedBikeRef.current
-    if (!bike) return
-    equipment.open({
-      name:        element.name,
-      equipmentId: element.equipment_id ?? null,
-      bikeCompany: bike.brand,
-      bikeModel:   bike.model,
-    })
-    setView('equipment')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
-  const handleBackFromEquipment = () => {
-    setView('details')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
+  /* ── Handlers ─────────────────────────────────────── */
 
   const handleBikeSelect = (bike: Bike) => {
-    setSelectedBike(bike)
-    selectedBikeRef.current = bike
-    setView('details')
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-    fetchDetails(bike)
-    fetchReview(bike)
-    fetchStoredOffers<BikeOfferResponse>('/v1/bike/allegro', bike, setOffers, setOfferState)
-    fetchStoredOffers<UsedBikeResponse>('/v1/bike/used/olx', bike, setUsedBikes, setUsedBikeState)
-    fetchStoredOffers<BikeOfferResponse>('/v1/bike/decathlon', bike, setDecathlonOffers, setDecathlonState)
-    fetchStoredOffers<BikeOfferResponse>('/v1/bike/centrumrowerowe', bike, setCentrumOffers, setCentrumState)
-    fetchStoredOffers<BikePhotosResponse>('/v1/bike/photos', bike, setBikePhotos, setPhotosState)
+    if (bike.id == null) return  // only when the AI-found bike's row could not be saved
+    details.open(bike)
+    navigate(bikePath(bike.id))
   }
 
-  const handleBackToResults = () => {
-    setView('search')
-    setTimeout(() => {
-      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }, 80)
+  // A linkable element of the bike's spec tree → its equipment row (created empty when
+  // missing — free, no AI), then /equipment/{id}; the id is remembered on the element.
+  const handleEquipmentSelect = async (element: ComponentElement) => {
+    const bike = details.bikeRef.current
+    if (bike?.id == null) return
+    let id = element.equipment_id ?? null
+    if (id == null) {
+      try {
+        const res = await postJson<EquipmentResolveResponse>(
+          '/v1/equipment/resolve', { bike_id: bike.id, element_name: element.name },
+        )
+        id = res.equipment_id
+        details.linkElement(bike, element.name, id)
+      } catch (err) {
+        console.error('equipment resolve failed', err)
+        return
+      }
+    }
+    if (details.bikeRef.current === bike) navigate(equipmentPath(id))
   }
 
+  // The wordmark and "Nowe wyszukiwanie": home, with nothing kept in memory.
   const handleReset = () => {
-    setAppState('idle')
+    setSearchState('idle')
     setBikes([])
     setErrorMsg(null)
-    setQuery('')
-    setFilters(EMPTY_FILTERS)
-    parsedQueryRef.current = ''
-    setShowFilters(false)
+    clearForm()
+    searchKeyRef.current = null
+    setLastSearchUrl(null)
     setIsParsing(false)
-    setView('search')
-    setSelectedBike(null)
-    selectedBikeRef.current = null
-    setBikeCategories(null)
-    setBikeDescription(null)
-    setBikePhotos(null)
-    setPhotosState('loading')
-    setDetailsState('loading')
-    setDetailsError(null)
-    setReviewState('loading')
-    setReview(null)
-    setOfferState('loading')
-    setOffers(null)
-    setUsedBikeState('loading')
-    setUsedBikes(null)
-    setDecathlonState('loading')
-    setDecathlonOffers(null)
-    setCentrumState('loading')
-    setCentrumOffers(null)
+    details.reset()
     equipment.reset()
-    window.scrollTo({ top: 0, behavior: 'smooth' })
+    navigate(PATHS.home)
   }
 
-  const showResults = appState === 'loading' || appState === 'results'
+  /* ── Address-specific views ───────────────────────── */
 
-  // "Szukanie rowerów" from the details or equipment view goes back to the result list;
-  // from another tab it only switches the tab, the search state is kept.
-  const handleNavigate = (to: Route) => {
-    if (to === ROUTES.search && route === ROUTES.search && view !== 'search') {
-      handleBackToResults()
-      return
+  const routeId = route.name === 'bike' || route.name === 'equipment' ? route.id : null
+
+  const shownBike  = route.name === 'bike' && details.bike?.id === routeId ? details.bike : null
+  const bikeLookup = route.name === 'bike' && details.lookup?.id === routeId ? details.lookup : null
+  const bikeMissing = route.name === 'bike' && (routeId == null || bikeLookup?.state === 'missing')
+  // "Wróć" from a bike: the search (or home) it was opened from, else the last search, else home.
+  const bikeBackTarget = from && isSearchUrl(from) ? from : (lastSearchUrl ?? PATHS.home)
+
+  const equipmentOpen = route.name === 'equipment' && routeId != null && equipment.opened?.id === routeId
+  const equipmentMissing = route.name === 'equipment' && (routeId == null || (equipmentOpen && equipment.lookup === 'missing'))
+  // "Wróć" from equipment: the bike it was opened from, else the first bike containing it.
+  const equipmentBackBike = bikeIdOf(from) ?? equipment.item?.bike?.id ?? null
+  const equipmentBack = () => {
+    if (equipmentBackBike == null) navigate(PATHS.home)
+    else goBack(url => url === bikePath(equipmentBackBike), bikePath(equipmentBackBike))
+  }
+
+  const title = (() => {
+    switch (route.name) {
+      case 'home':      return 'Biker — Znajdź swój idealny rower'
+      case 'search':    return 'Wyniki wyszukiwania — Biker'
+      case 'fit':       return 'Rower na Twoją miarę — Biker'
+      case 'contact':   return 'Kontakt — Biker'
+      case 'bike':
+        if (shownBike) return `${shownBike.brand} ${shownBike.model} — Biker`
+        return bikeMissing ? 'Nie znaleziono roweru — Biker' : 'Biker'
+      case 'equipment':
+        if (equipmentOpen && equipment.item) return `${equipment.item.name} — Biker`
+        return equipmentMissing ? 'Nie znaleziono wyposażenia — Biker' : 'Biker'
     }
-    navigate(to)
-  }
-
-  const handleWordmark = () => {
-    navigate(ROUTES.search)
-    handleReset()
-  }
+  })()
+  useEffect(() => { document.title = title }, [title])
 
   /* ── Render ───────────────────────────────────────── */
 
@@ -451,7 +312,7 @@ export default function App() {
       <header className="sticky top-0 z-20 bg-sand/90 backdrop-blur-sm border-b border-border">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
           <button
-            onClick={handleWordmark}
+            onClick={handleReset}
             className="
               -ml-1 px-1 py-2
               font-display font-bold text-xl tracking-[0.18em] text-charcoal
@@ -471,216 +332,111 @@ export default function App() {
           </span>
         </div>
         <div className="max-w-2xl mx-auto px-4 sm:px-6">
-          <TopTabs active={route} onNavigate={handleNavigate} />
+          <TopTabs active={TAB_OF[route.name]} searchHref={lastSearchUrl ?? PATHS.home} onNavigate={navigate} />
         </div>
       </header>
 
       <main className="flex-1">
 
-        {route === ROUTES.fit && <FitComingSoonPage onNavigate={navigate} />}
-        {route === ROUTES.contact && <ContactPage />}
+        {route.name === 'fit' && <FitComingSoonPage onNavigate={navigate} />}
+        {route.name === 'contact' && <ContactPage />}
 
-        {/* ── Search view ──────────────────────────────── */}
-        {route === ROUTES.search && view === 'search' && (
-          <>
-            {/* Hero / Search */}
-            <section
-              className="max-w-2xl mx-auto px-4 sm:px-6 pt-14 pb-10 md:pt-20 md:pb-14"
-              aria-labelledby="hero-heading"
-            >
-              <div className="mb-9">
-                <h1
-                  id="hero-heading"
-                  className="font-display font-bold leading-[0.92] tracking-tight text-charcoal text-[52px] sm:text-[68px] md:text-[80px] mb-4"
-                >
-                  Znajdź swój<br />
-                  <span className="text-terra">idealny rower.</span>
-                </h1>
-                <p className="font-body text-ink text-base md:text-[17px] leading-relaxed max-w-sm">
-                  Opisz, czego szukasz, a znajdziemy dla Ciebie najlepsze rowery.
-                </p>
-              </div>
-
-              {noMatchMsg && (
-                <div
-                  role="alert"
-                  className="mb-4 px-4 py-3 bg-parchment border border-terra/30 rounded-xl font-body text-sm text-ink"
-                >
-                  <strong className="font-medium text-terra">Nie znaleziono: </strong>
-                  {noMatchMsg}
-                </div>
-              )}
-
-              <SearchInput
-                value={query}
-                onChange={setQuery}
-                filters={filters}
-                onFilterChange={updateFilter}
-                showFilters={showFilters}
-                onShowFiltersChange={setShowFilters}
-                isParsing={isParsing}
-                onSubmit={handleSearch}
-                isLoading={appState === 'loading'}
-              />
-
-              {appState === 'error' && (
-                <div
-                  role="alert"
-                  className="mt-4 px-4 py-3 bg-parchment border border-terra/30 rounded-xl font-body text-sm text-ink"
-                >
-                  <strong className="font-medium text-terra">Błąd: </strong>
-                  {errorMsg}
-                </div>
-              )}
-            </section>
-
-            {/* Popular bikes — home page only: gone while a search runs or shows results */}
-            {!showResults && popularBikes.length > 0 && (
-              <PopularBikesSection
-                bikes={popularBikes}
-                ratings={popularRatings}
-                onSelect={handleBikeSelect}
-              />
-            )}
-
-            {/* Results */}
-            {showResults && (
-              <section
-                ref={resultsRef}
-                className="max-w-2xl mx-auto px-4 sm:px-6 pb-20"
-                aria-label="Rekomendowane rowery"
-                aria-live="polite"
-                aria-busy={appState === 'loading'}
-              >
-                <div className="border-t border-border pt-8">
-
-                  {/* Status row */}
-                  <div className="flex items-center justify-between mb-6 min-h-[28px]">
-                    {appState === 'loading' ? (
-                      <div className="flex items-center gap-2.5">
-                        <span
-                          className="spin w-3.5 h-3.5 rounded-full border-2 border-terra/25 border-t-terra shrink-0"
-                          aria-hidden="true"
-                        />
-                        <span className="font-mono text-[11px] text-muted uppercase tracking-wider">
-                          Szukamy Twojego idealnego roweru…
-                        </span>
-                      </div>
-                    ) : (
-                      <div>
-                        <span className="font-mono text-[11px] text-muted uppercase tracking-wider block mb-0.5">
-                          Wyniki dla
-                        </span>
-                        <p className="font-body text-charcoal text-sm font-medium leading-snug">
-                          "{submittedQuery}"
-                        </p>
-                      </div>
-                    )}
-
-                    {appState === 'results' && (
-                      <button
-                        onClick={handleReset}
-                        aria-label="Rozpocznij nowe wyszukiwanie"
-                        className="
-                          px-2 py-2 -mr-1 shrink-0
-                          font-mono text-[11px] text-terra uppercase tracking-wider
-                          hover:text-terra-dark
-                          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/40 focus-visible:rounded
-                          transition-colors duration-150
-                        "
-                      >
-                        Nowe wyszukiwanie
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Card list */}
-                  <div className="space-y-4">
-                    {appState === 'loading' &&
-                      Array.from({ length: LOADING_CARDS }).map((_, i) => (
-                        <LoadingCard key={i} delay={i * 90} />
-                      ))
-                    }
-                    {appState === 'results' && bikes.length === 0 && (
-                      <div
-                        role="alert"
-                        className="px-4 py-3 bg-parchment border border-terra/30 rounded-xl font-body text-sm text-ink"
-                      >
-                        <strong className="font-medium text-terra">Nie znaleziono: </strong>
-                        Żaden rower nie pasuje do tego wyszukiwania. Spróbuj innych słów lub mniejszej liczby filtrów.
-                      </div>
-                    )}
-                    {appState === 'results' &&
-                      sortedBikes.map((bike, i) => (
-                        <ResultCard
-                          key={`${bike.brand}-${bike.model}`}
-                          bike={bike}
-                          rank={i + 1}
-                          isTop={false}
-                          expertRating={resultRatings[bikeKey(bike)] ?? PENDING_RATING}
-                          animationDelay={Math.min(i, 8) * 65}
-                          onSelect={handleBikeSelect}
-                        />
-                      ))
-                    }
-                  </div>
-                </div>
-              </section>
-            )}
-          </>
-        )}
-
-        {/* ── Details view ─────────────────────────────── */}
-        {route === ROUTES.search && view === 'details' && selectedBike && (
-          <BikeDetailsView
-            bike={selectedBike}
-            categories={bikeCategories}
-            description={bikeDescription}
-            photos={bikePhotos?.photos ?? []}
-            photosState={photosState}
-            state={detailsState}
-            error={detailsError}
-            review={review}
-            reviewState={reviewState}
-            offers={offers}
-            offerState={offerState}
-            usedBikes={usedBikes}
-            usedBikeState={usedBikeState}
-            decathlonOffers={decathlonOffers}
-            decathlonState={decathlonState}
-            centrumOffers={centrumOffers}
-            centrumState={centrumState}
-            onBack={handleBackToResults}
-            onRetry={() => fetchDetails(selectedBike)}
-            onEquipmentSelect={handleEquipmentSelect}
-            onSearchUsed={() => searchUsedBikes(selectedBike)}
-            onSearchAllegro={() => searchAllegro(selectedBike)}
-            onSearchDecathlon={() => searchDecathlon(selectedBike)}
-            onSearchPhotos={() => searchPhotos(selectedBike)}
-            onSearchReview={() => searchReview(selectedBike)}
-            onSearchDetails={() => searchDetails(selectedBike)}
+        {/* ── Home (/) and results (/search?…) ─────────── */}
+        {(route.name === 'home' || route.name === 'search') && (
+          <SearchPage
+            showResults={route.name === 'search'}
+            state={searchState}
+            errorMsg={errorMsg}
+            noMatchMsg={noMatchMsg}
+            query={query}
+            onQueryChange={setQuery}
+            filters={filters}
+            onFilterChange={updateFilter}
+            showFilters={showFilters}
+            onShowFiltersChange={setShowFilters}
+            isParsing={isParsing}
+            onSubmit={handleSearch}
+            popularBikes={popularBikes}
+            popularRatings={popularRatings}
+            bikes={sortedBikes}
+            ratings={resultRatings}
+            submittedQuery={submittedQuery}
+            resultsRef={resultsRef}
+            onReset={handleReset}
+            onSelectBike={handleBikeSelect}
           />
         )}
 
-        {/* ── Equipment details view ───────────────────── */}
-        {route === ROUTES.search && view === 'equipment' && equipment.item && (
-          <EquipmentDetailsView
-            company=""
-            model={equipment.item.name}
-            category={equipment.category}
-            categories={equipment.categories}
-            description={equipment.description}
-            photos={equipment.photos}
-            photosState={equipment.photosState}
-            state={equipment.state}
-            error={equipment.error}
-            review={equipment.review}
-            reviewState={equipment.reviewState}
-            onBack={handleBackFromEquipment}
-            onRetry={equipment.retry}
-            onSearchDetails={equipment.searchDetails}
-            onSearchPhotos={equipment.searchPhotos}
-          />
+        {/* ── Bike details (/bike/{id}) ─────────────────── */}
+        {route.name === 'bike' && (
+          shownBike ? (
+            <BikeDetailsView
+              key={shownBike.id ?? undefined}
+              bike={shownBike}
+              {...details.view}
+              backLabel={bikeBackTarget.startsWith('/search?') ? 'Wróć do wyników' : 'Wróć'}
+              onBack={() => goBack(isSearchUrl, bikeBackTarget)}
+              onRetry={details.retryDetails}
+              onEquipmentSelect={handleEquipmentSelect}
+              onSearchUsed={() => details.searchUsed(shownBike)}
+              onSearchAllegro={() => details.searchAllegro(shownBike)}
+              onSearchDecathlon={() => details.searchDecathlon(shownBike)}
+              onSearchPhotos={() => details.searchPhotos(shownBike)}
+              onSearchReview={() => details.searchReview(shownBike)}
+              onSearchDetails={() => details.searchDetails(shownBike)}
+            />
+          ) : bikeMissing ? (
+            <NotFoundPage
+              title="Nie znaleziono roweru"
+              text="Pod tym adresem nie ma roweru w naszej bazie. Poszukaj go w wyszukiwarce."
+              onNavigate={navigate}
+            />
+          ) : bikeLookup?.state === 'error' ? (
+            <NotFoundPage
+              title="Nie udało się wczytać roweru"
+              text={bikeLookup.error ?? 'Spróbuj ponownie za chwilę.'}
+              onRetry={() => details.openById(bikeLookup.id)}
+              onNavigate={navigate}
+            />
+          ) : <PageLoading />
+        )}
+
+        {/* ── Equipment details (/equipment/{id}) ───────── */}
+        {route.name === 'equipment' && (
+          equipmentMissing ? (
+            <NotFoundPage
+              title="Nie znaleziono wyposażenia"
+              text="Pod tym adresem nie ma wyposażenia w naszej bazie. Poszukaj roweru w wyszukiwarce."
+              onNavigate={navigate}
+            />
+          ) : equipmentOpen && equipment.lookup === 'error' ? (
+            <NotFoundPage
+              title="Nie udało się wczytać wyposażenia"
+              text="Spróbuj ponownie za chwilę."
+              onRetry={equipment.retry}
+              onNavigate={navigate}
+            />
+          ) : equipmentOpen && equipment.item ? (
+            <EquipmentDetailsView
+              key={routeId ?? undefined}
+              name={equipment.item.name}
+              category={equipment.category}
+              categories={equipment.categories}
+              description={equipment.description}
+              photos={equipment.photos}
+              photosState={equipment.photosState}
+              state={equipment.state}
+              error={equipment.error}
+              review={equipment.review}
+              onRequestReview={equipment.requestReview}
+              backLabel={equipmentBackBike != null ? 'Wróć do roweru' : 'Wróć'}
+              onBack={equipmentBack}
+              onRetry={equipment.retry}
+              detailsRun={equipment.detailsRun}
+              onSearchDetails={equipment.searchDetails}
+              onSearchPhotos={equipment.searchPhotos}
+            />
+          ) : <PageLoading />
         )}
       </main>
 
