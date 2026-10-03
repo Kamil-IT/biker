@@ -112,7 +112,7 @@ export default function SearchPage({
       {showResults && state !== 'error' && (
         <section
           ref={resultsRef}
-          className="max-w-2xl mx-auto px-4 sm:px-6 pb-20"
+          className="max-w-[68rem] mx-auto px-4 sm:px-6 pb-20"
           aria-label="Rekomendowane rowery"
           aria-live="polite"
           aria-busy={loading}
@@ -165,7 +165,7 @@ export default function SearchPage({
             )}
 
             {/* Card list */}
-            <div className="space-y-4">
+            <div className="grid gap-5 grid-cols-[repeat(auto-fill,minmax(17.5rem,1fr))]">
               {loading &&
                 Array.from({ length: LOADING_CARDS }).map((_, i) => (
                   <LoadingCard key={i} delay={i * 90} />
@@ -174,7 +174,7 @@ export default function SearchPage({
               {state === 'results' && bikes.length === 0 && (
                 <div
                   role="alert"
-                  className="px-4 py-3 bg-parchment border border-terra/30 rounded-xl font-body text-sm text-ink"
+                  className="col-span-full px-4 py-3 bg-parchment border border-terra/30 rounded-xl font-body text-sm text-ink"
                 >
                   <strong className="font-medium text-terra">Nie znaleziono: </strong>
                   Żaden rower nie pasuje do tego wyszukiwania. Spróbuj innych słów lub mniejszej liczby filtrów.

@@ -150,6 +150,15 @@ python scripts/migrate_component_linkable.py --dry-run
 python scripts/migrate_component_linkable.py
 python scripts/migrate_component_linkable.py --reclassify   # only to re-run tuned regexes over every row — overwrites the flags the searcher's model wrote
 
+# One-off per existing database (results-tile photos, AFTER migrate_photos_bike_id.py): add bike_detail_photos.bg_color (VARCHAR(7) NULL, the photo's edge colour).
+# REQUIRED before the new searcher runs (it refuses to start without the column); the new backend answers photo: null + an ERROR log naming the script until it has run; the OLD backend/searcher keep working on a migrated database (nullable).
+python scripts/migrate_photo_bg_color.py --dry-run
+python scripts/migrate_photo_bg_color.py
+# Then fill the colours of the photos stored before (downloads each bike's COVER photo, 4 workers; --all = every photo with a NULL; --limit N; --dry-run;
+# refuses a non-local database - localhost/127.0.0.1 on a port other than 6543 - unless --allow-remote; idempotent):
+python scripts/backfill_photo_bg_color.py --dry-run
+python scripts/backfill_photo_bg_color.py
+
 # Once per database (TODO-041): delete the dead generic-cache rows of POST /v1/bike/details (--dry-run counts; production only on an explicit go)
 python scripts/purge_details_cache.py --dry-run
 python scripts/purge_details_cache.py
@@ -202,7 +211,8 @@ pytest -m "not llm"
 
 `pytest.ini` scopes default collection to `scripts/test_searcher_client_photos.py`,
 `scripts/test_searcher_client_review.py`, `scripts/test_searcher_client_limit.py`, `scripts/test_reviews_repository.py`, `scripts/test_searcher_client_details.py`, `scripts/test_searcher_client_equipment.py`, `scripts/test_details_repository.py`, `scripts/test_equipment_repository.py`, `scripts/test_migrate_equipment_tables.py` and `scripts/test_migrate_drop_bike_detail.py`, `scripts/test_migrate_merge_equipment_detail.py`, `scripts/test_contact.py`, so a bare `pytest` run covers the contact form endpoint (temp SQLite, `TestClient`), the stored-review read and the cache-copy script (temp SQLite), the details repository helpers, `migrate_short_description` and `purge_details_cache` (temp SQLite),
-the equipment repository and its migration (temp SQLite), and
+the equipment repository and its migration (temp SQLite),
+`scripts/test_photo_color.py` (edge colour of tiny in-memory images, download size cap and redirect guard), `scripts/test_photo_cover.py` (junk-URL filter, one-query cover pick, backfill target selection, search/by-id covers) and `scripts/test_migrate_photo_bg_color.py` (the `bg_color` migration), and
 the searcher client's photo, review, details and equipment routes (mocked httpx: request, single-flight, busy mapping, in-flight cap 10, body validation;
 for equipment also the 404 guards and status mapping of `/v1/equipment/*/search`). (`scripts/test_browser_slots.py` was removed in TODO-042
 with `app/browser_config.py`.) The rest of `scripts/`
@@ -424,9 +434,12 @@ All fields except `search` default to `null` (no constraint). The backend assemb
 ```json
 {
   "search": "Brand: Trek, Model: FX 3, …",
-  "bikes": [ { "id": 42, "brand": "Trek", "model": "FX 3", "accessories": ["Shimano Deore RD-M6000", "Alloy"], "explanation": "Krótki opis w dwóch zdaniach. Drugie zdanie." } ]
+  "bikes": [ { "id": 42, "brand": "Trek", "model": "FX 3", "accessories": ["Shimano Deore RD-M6000", "Alloy"], "explanation": "Krótki opis w dwóch zdaniach. Drugie zdanie.",
+               "photo": "https://example.com/fx3-front.jpg", "photo_bg": "#F2F2F2" } ]
 }
 ```
+
+`photo` / `photo_bg` (results tile) = the bike's **cover photo** and its edge colour: the first stored `bike_detail_photos` row (by `display_order, id`) that `app/photo_cover.is_cover_candidate` accepts — http(s) only, not `.pdf` / `.svg` / `.ico` / `.gif`, no junk word (`marker`, `logo`, `icon`, `sprite`, `placeholder`, `avatar`, `badge`, `spinner`, `loader` as whole words; `favicon`, `judgeme`, `judge.me`, `review-images`, `powered_by` anywhere; no `/menu/` folder in the path) — and `photo_bg` is its `bg_color` `"#RRGGBB"` (upper-case; the median of the four corner patches, computed by the searcher when it stores the photos or by `scripts/backfill_photo_bg_color.py`). Both are `null` for a bike without a usable photo, and `photo_bg` alone is `null` when the colour is unknown (transparent PNG, not computed yet) — the frontend then uses a white frame (`#FFFFFF`). One query (`photo_cover.get_cover_photos`) covers every bike of the answer; a photo read failure (an unmigrated database included — ERROR log naming `migrate_photo_bg_color.py`) leaves both `null`, never an error. Thumbnails are passed over: a URL hinting a size below 400 px (`looks_like_thumbnail`) loses to a later non-thumbnail candidate; if all are thumbnails the first candidate stays.
 
 `id` is the `bike.id` — the frontend's `/bike/{id}` address; `null` only when the bike row of an AI-found bike could not be saved (a swallowed `save_search` failure). `explanation` is `""` and `accessories` `[]` for a bike without stored details (typical for an AI-found bike) — the UI hides both. No `match_score` (removed in TODO-040): a DB hit is sorted by brand/model, an AI answer keeps the model's order, and the UI re-orders the cards by expert rating.
 
@@ -510,11 +523,13 @@ GET http://localhost:8000/v1/bike/popular
 ```json
 {
   "bikes": [
-    { "id": 7, "brand": "Giant", "model": "Revolt Advanced Pro", "description": "Pierwsze zdanie opisu. Drugie zdanie opisu." },
-    { "id": 12, "brand": "Trek", "model": "Marlin 5", "description": "" }
+    { "id": 7, "brand": "Giant", "model": "Revolt Advanced Pro", "description": "Pierwsze zdanie opisu. Drugie zdanie opisu.", "photo": "https://example.com/revolt.jpg", "photo_bg": "#FFFFFF" },
+    { "id": 12, "brand": "Trek", "model": "Marlin 5", "description": "", "photo": null, "photo_bg": null }
   ]
 }
 ```
+
+- `photo` / `photo_bg`: the cover photo and its edge colour exactly as in [`POST /v1/bike/search`](#post-v1bikesearch) (`photo_cover.get_cover_photos`, one query for the whole list); `null` / `null` without a usable photo, and any photo read failure also leaves them `null`.
 
 - Rows ordered by `position`, then `id`. `id` is the `bike.id` (the card links to `/bike/{id}`); `brand` / `model` are the `bike` row's values as stored (the single source of display casing).
 - `description` = the `text` of the bike's stored `BikeDescription` JSON (`bike.description`) cut to its **first two sentences** by `popular_repository.first_sentences`: a sentence ends with `.` `!` `?` or `…` (plus an optional closing quote/bracket) followed by whitespace and an upper-case word, so `ok. 12 kg` or `np. 29-calowe` does not split; there is no abbreviation dictionary, so an upper-case brand right after an abbreviation (`m.in. Shimano`) still splits — a rare over-cut on a card blurb, accepted. `""` when the bike has no stored details or its JSON does not parse (logged at WARNING). The details TTL is ignored — an old description is still a fine blurb.
@@ -566,14 +581,14 @@ Content-Type: application/json
 }
 ```
 
-**Response:** the search-result shape — `{ "id": 39, "brand": "Cannondale", "model": "Topstone Carbon 4", "accessories": ["Shimano GRX RD-RX812", "Shimano GRX BL-RX400", "Carbon"], "explanation": "" }` (stored casing; `explanation` = the stored short description, `accessories` = the component chips, both empty without stored details). The frontend then reads details, photos, review and offers by brand + model as for a clicked card.
+**Response:** the search-result shape — `{ "id": 39, "brand": "Cannondale", "model": "Topstone Carbon 4", "accessories": ["Shimano GRX RD-RX812", "Shimano GRX BL-RX400", "Carbon"], "explanation": "", "photo": "https://example.com/topstone.jpg", "photo_bg": "#F2F2F2" }` (`photo` / `photo_bg` = the cover photo and its edge colour or `null` / `null`, as in the search result; stored casing; `explanation` = the stored short description, `accessories` = the component chips, both empty without stored details). The frontend then reads details, photos, review and offers by brand + model as for a clicked card.
 
 - Unknown id → **404** `{"detail": "Bike not found"}` (the frontend shows "Nie znaleziono roweru" and keeps the address). `bike_id` must be an integer 1 … 2147483647 (422).
 - A DB error → **503** `{"detail": "Bike lookup failed"}` + ERROR log (not a 404 — the bike may exist).
 
-**Flow:** none — no outbound HTTP calls; one DB read of `bike` (+ `bike_component` for the chips).
+**Flow:** none — no outbound HTTP calls; DB reads of `bike` (+ `bike_component` for the chips, `bike_detail_photos` for the cover).
 
-**Tests:** `scripts/test_search.py` `case_bike_by_id` — a fixture bike found by a DB search carries its `id`; by-id answers the same bike with its chips and short description, < 5 s; unknown id → 404, `bike_id: 0` → 422.
+**Tests:** `scripts/test_search.py` `case_result_cover` (a fixture bike whose first photo is a `logo.svg` and second a `.jpg` with `bg_color` `#F2F2F2` → search, by-id and popular carry the jpg + `#F2F2F2`; a bike without photos → `null` / `null`); `case_bike_by_id` — a fixture bike found by a DB search carries its `id`; by-id answers the same bike with its chips and short description, < 5 s; unknown id → 404, `bike_id: 0` → 422.
 
 ---
 

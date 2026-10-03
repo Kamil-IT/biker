@@ -17,7 +17,7 @@ interface PopularBikesSectionProps {
 export default function PopularBikesSection({ bikes, ratings, onSelect }: PopularBikesSectionProps) {
   return (
     <section
-      className="max-w-2xl mx-auto px-4 sm:px-6 pb-20"
+      className="max-w-[68rem] mx-auto px-4 sm:px-6 pb-20"
       aria-label="Najpopularniejsze rowery"
     >
       <div className="border-t border-border pt-8">
@@ -30,7 +30,7 @@ export default function PopularBikesSection({ bikes, ratings, onSelect }: Popula
         </div>
 
         {/* Card list */}
-        <div className="space-y-4">
+        <div className="grid gap-5 grid-cols-[repeat(auto-fill,minmax(17.5rem,1fr))]">
           {bikes.map((bike, i) => {
             const key    = bikeKey(bike)
             const rating = ratings[key] ?? PENDING_RATING
@@ -43,6 +43,8 @@ export default function PopularBikesSection({ bikes, ratings, onSelect }: Popula
                   model:       bike.model,
                   accessories: [],
                   explanation: bike.description,
+                  photo:       bike.photo ?? null,
+                  photo_bg:    bike.photo_bg ?? null,
                 }}
                 rank={i + 1}
                 isTop={false}

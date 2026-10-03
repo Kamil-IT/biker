@@ -171,6 +171,9 @@ class BikeDetailPhoto(Base):
     bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
     url = Column(String(2048), nullable=False)
     display_order = Column(Integer, default=0)
+    # The photo's own edge colour "#RRGGBB" (the results tile's frame background); NULL = not
+    # computed / transparent / unknown. scripts/migrate_photo_bg_color.py adds it to an existing table.
+    bg_color = Column(String(7), nullable=True)
 
     # Relationships
     bike = relationship("Bike", back_populates="photos")

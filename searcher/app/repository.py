@@ -200,8 +200,13 @@ def _photo_urls(session, bike_id: int) -> list[str]:
     ]
 
 
-def save_photos(company: str, model: str, photos: list[str]) -> tuple[Optional[int], list[str], int]:
+def save_photos(
+    company: str, model: str, photos: list[str], colors: Optional[list[Optional[str]]] = None,
+) -> tuple[Optional[int], list[str], int]:
     """Store `photos` for a bike that has none; returns (bike_id, the bike's photos now, rows written).
+
+    `colors` = the optional per-photo edge colour "#RRGGBB" (same order as `photos`, None = unknown),
+    stored in `bg_color`; a shorter list leaves the rest NULL.
 
     Photos are never deleted or replaced: when the bike already has photo rows
     (another search for it finished first — a second process or instance) they
@@ -227,7 +232,8 @@ def save_photos(company: str, model: str, photos: list[str]) -> tuple[Optional[i
             logger.info("photos already stored — kept, nothing written | bike_id=%d stored=%d", bike_id, len(existing))
             return bike_id, existing, 0
         for idx, url in enumerate(photos):
-            session.add(BikeDetailPhoto(bike_id=bike_id, url=url, display_order=idx))
+            color = colors[idx] if colors and idx < len(colors) else None
+            session.add(BikeDetailPhoto(bike_id=bike_id, url=url, display_order=idx, bg_color=color))
         session.commit()
         logger.info("photos stored | company=%r model=%r bike_id=%d saved=%d", company, model, bike_id, len(photos))
         return bike_id, list(photos), len(photos)
