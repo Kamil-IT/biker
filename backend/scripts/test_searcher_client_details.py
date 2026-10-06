@@ -30,11 +30,12 @@ DETAILS = {
         {"subcategory": "Frame", "elements": [{"name": "Alpha Silver", "description": "", "specs": [{"key": "Material", "value": "Alloy"}], "equipment_id": None, "is_linkable": True}]},
     ]}],
     "short_description": "Rower górski. Dobry na start.",
+    "category": None,
 }
 EMPTY = {
     "company": "Trek", "model": "Marlin 5",
     "description": {"text": "", "segments": [], "citations": []},
-    "components": [], "short_description": "",
+    "components": [], "short_description": "", "category": None,
 }
 
 

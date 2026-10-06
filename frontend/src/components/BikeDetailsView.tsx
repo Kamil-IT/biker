@@ -6,12 +6,15 @@ import { PhotoGallery, DescriptionCard, ReviewSection, LoadingSkeleton, Category
 import RequestDataButton from './RequestDataButton'
 import MergedOffersSection from './OffersSection'
 import { useLoadingGrace } from '../hooks/useLoadingGrace'
+import { bikeCategoryLabel } from '../specLabels'
 
 type ReviewState = 'loading' | 'loaded' | 'error'
 
 interface BikeDetailsViewProps {
   bike: Bike
   categories: BikeCategory[] | null
+  // Category from the details response; falls back to the selected bike's own.
+  detailsCategory?: string
   description: BikeDescription | null
   // Stored photos from POST /v1/bike/photos — a DB read of their own, independent of
   // the details request.
@@ -51,6 +54,7 @@ export default function BikeDetailsView({
   bike,
   categories,
   description,
+  detailsCategory,
   photos,
   photosState,
   state,
@@ -76,6 +80,7 @@ export default function BikeDetailsView({
   onSearchDetails,
 }: BikeDetailsViewProps) {
   const { brand, model, accessories } = bike
+  const categoryLabel = bikeCategoryLabel(detailsCategory || bike.category)
   // Each section: loading state for the first 5 s, then its data if any arrived,
   // otherwise a "Request data" button (also after an empty or failed response).
   const detailsGrace = useLoadingGrace(state === 'loading')
@@ -127,6 +132,11 @@ export default function BikeDetailsView({
       <div className="mb-8">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div className="min-w-0">
+            {categoryLabel && (
+              <span className="inline-block font-mono text-[11px] uppercase tracking-widest text-terra mb-2">
+                {categoryLabel}
+              </span>
+            )}
             <h1 className="font-display font-bold text-charcoal leading-none text-[44px] sm:text-[56px]">
               {brand}
             </h1>

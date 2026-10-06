@@ -131,6 +131,8 @@ class Bike(Base):
     # two-sentence Polish summary, "" = none.
     description = Column(Text, nullable=True)
     short_description = Column(Text, nullable=False, default="", server_default="")
+    # Bike category (backend/app/bike_categories.py), NULL = unknown; added by scripts/migrate_bike_category.py
+    category = Column(String(32), nullable=True)
 
     # Relationships
     # A search stores nothing but the bikes it found (store.save_search → this

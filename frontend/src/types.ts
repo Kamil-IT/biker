@@ -3,6 +3,8 @@ export interface Bike {
   model: string
   accessories: string[]
   explanation: string
+  // null / missing = unknown; else an English value (MTB, Gravel, Road, Cyclocross, Trekking, City, ...)
+  category?: string | null
 }
 
 export interface SpecItem {
@@ -54,6 +56,7 @@ export interface BikeDetailsResponse {
   description: BikeDescription
   short_description: string
   components: BikeCategory[]
+  category?: string | null
 }
 
 // Returned by POST /v1/bike/photos (DB read of the stored photos, in display order) and
@@ -136,7 +139,7 @@ export interface EquipmentSearchPayload {
   bike_company: string
   bike_model: string
   element_name: string
-  category?: string
+  category?: string | null
 }
 
 // What the equipment view was opened for: a component element of one bike's spec tree.
@@ -223,6 +226,7 @@ export interface PopularBike {
   brand:       string
   model:       string
   description: string
+  category?:    string | null
 }
 
 export interface PopularBikesResponse {

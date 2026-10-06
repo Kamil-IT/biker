@@ -83,6 +83,7 @@ export default function App() {
   const [detailsState, setDetailsState]         = useState<DetailsState>('loading')
   const [bikeCategories, setBikeCategories]     = useState<BikeCategory[] | null>(null)
   const [bikeDescription, setBikeDescription]   = useState<BikeDescription | null>(null)
+  const [detailsCategory, setDetailsCategory]   = useState<string>('')
   // Photos are their own DB read (POST /v1/bike/photos), independent of the details request.
   const [bikePhotos, setBikePhotos]             = useState<BikePhotosResponse | null>(null)
   const [photosState, setPhotosState]           = useState<OfferState>('loading')
@@ -208,6 +209,7 @@ export default function App() {
     setDetailsError(null)
     setBikeCategories(null)
     setBikeDescription(null)
+    setDetailsCategory('')
 
     try {
       const res = await fetch('/v1/bike/details', {
@@ -224,6 +226,7 @@ export default function App() {
       const data: BikeDetailsResponse = await res.json()
       setBikeCategories(data.components)
       setBikeDescription(data.description ?? null)
+      setDetailsCategory(data.category ?? '')
       setDetailsState('loaded')
     } catch (err) {
       setDetailsError(err instanceof Error ? err.message : 'Coś poszło nie tak. Spróbuj ponownie.')
@@ -351,6 +354,7 @@ export default function App() {
     if (!data) return
     setBikeCategories(data.components)
     setBikeDescription(data.description ?? null)
+    if (data.category) setDetailsCategory(data.category)
     setDetailsState('loaded')
   }
 
@@ -407,6 +411,7 @@ export default function App() {
     selectedBikeRef.current = null
     setBikeCategories(null)
     setBikeDescription(null)
+    setDetailsCategory('')
     setBikePhotos(null)
     setPhotosState('loading')
     setDetailsState('loading')
@@ -636,6 +641,7 @@ export default function App() {
             bike={selectedBike}
             categories={bikeCategories}
             description={bikeDescription}
+            detailsCategory={detailsCategory}
             photos={bikePhotos?.photos ?? []}
             photosState={photosState}
             state={detailsState}

@@ -111,6 +111,7 @@ class PopularBike(BaseModel):
     """One curated home-page bike (TODO-034): the `bike` row's casing + a short blurb."""
     brand: str
     model: str
+    category: Optional[str] = None  # bike.category, None = unknown
     description: str = ""  # first two sentences of the stored details description; "" without details
 
 
@@ -168,6 +169,7 @@ class BikeDetailsResponse(BaseModel):
     description: BikeDescription
     components: list[BikeCategory]
     short_description: str = ""
+    category: Optional[str] = None
 
 
 class BikeResult(BaseModel):
@@ -175,6 +177,7 @@ class BikeResult(BaseModel):
     model: str
     accessories: list[str]
     explanation: str
+    category: Optional[str] = None
 
 
 class BikeSearchResponse(BaseModel):

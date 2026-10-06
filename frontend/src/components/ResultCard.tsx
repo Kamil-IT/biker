@@ -1,4 +1,5 @@
 import type { Bike, ExpertRating } from '../types'
+import { bikeCategoryLabel } from '../specLabels'
 
 export type { Bike }
 
@@ -33,6 +34,7 @@ const ratingText = ({ state, rating }: ExpertRating): string => {
 
 export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect, expertRating }: ResultCardProps) {
   const { brand, model, accessories, explanation } = bike
+  const categoryLabel = bikeCategoryLabel(bike.category)
   // A pending or missing rating is 0 for the bar (empty). The numeral shows "—" while
   // pending and "?" when there is no rating.
   const score        = expertRating.rating ?? 0
@@ -105,6 +107,11 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
           {/* Brand + rank */}
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
+              {categoryLabel && (
+                <span className="inline-block font-mono text-[10px] uppercase tracking-widest text-terra mb-1">
+                  {categoryLabel}
+                </span>
+              )}
               <h2
                 className={[
                   'font-display font-bold leading-tight group-hover:text-terra transition-colors duration-200',

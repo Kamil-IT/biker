@@ -140,6 +140,7 @@ def get_bike_details(company: str, model: str) -> Optional[BikeDetailsResponse]:
             description=description,
             components=components,
             short_description=bike.short_description or "",
+            category=bike.category,
         )
 
         logger.info("bike_details hit | company=%r model=%r", company, model)
@@ -159,6 +160,7 @@ def empty_details(company: str, model: str) -> BikeDetailsResponse:
         description=BikeDescription(text="", segments=[], citations=[]),
         components=[],
         short_description="",
+        category=None,
     )
 
 
@@ -232,13 +234,16 @@ def fill_bike_results(bikes: list[BikeResult]) -> list[BikeResult]:
     session = get_session()
     try:
         ids = {}
-        for b in session.query(Bike.id, Bike.brand, Bike.model).order_by(Bike.id.desc()):
-            ids[(_lc(b.brand), _lc(b.model))] = b.id  # oldest row wins (iterated last)
+        cats = {}
+        for b in session.query(Bike.id, Bike.brand, Bike.model, Bike.category).order_by(Bike.id.desc()):
+            ids[(_lc(b.brand), _lc(b.model))] = b.id
+            cats[b.id] = b.category  # oldest row wins (iterated last)
         fill = _search_fill(session, [i for i in (ids.get((_lc(r.brand), _lc(r.model))) for r in bikes) if i])
         out = []
         for r in bikes:
             explanation, chips = fill.get(ids.get((_lc(r.brand), _lc(r.model))), ("", []))
-            out.append(BikeResult(brand=r.brand, model=r.model, accessories=chips, explanation=explanation))
+            out.append(BikeResult(brand=r.brand, model=r.model, accessories=chips, explanation=explanation,
+                                  category=cats.get(ids.get((_lc(r.brand), _lc(r.model))))))
         return out
     except Exception as exc:  # noqa: BLE001
         logger.warning("fill_bike_results failed (non-fatal) | %s", exc)
@@ -341,7 +346,7 @@ def find_bikes_by_details(req) -> list[BikeResult]:
     try:
         brand, model = _lc(fields.get("brand")), _lc(fields.get("model"))
         candidates = [
-            b for b in session.query(Bike.id, Bike.brand, Bike.model).all()
+            b for b in session.query(Bike.id, Bike.brand, Bike.model, Bike.category).all()
             if (not brand or _lc(b.brand) == brand) and (not model or _lc(b.model) == model)
         ]
         spec_fields = {f: v for f, v in fields.items() if f in _MATCHERS}
@@ -378,6 +383,7 @@ def find_bikes_by_details(req) -> list[BikeResult]:
             explanation, accessories = fill.get(b.id, ("", []))
             results.append(BikeResult(
                 brand=b.brand, model=b.model, accessories=accessories, explanation=explanation,
+                category=b.category,
             ))
         results.sort(key=lambda r: (_lc(r.brand), _lc(r.model)))
         logger.info(
