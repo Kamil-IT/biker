@@ -97,9 +97,12 @@ run prints "already migrated". Run on the local PostgreSQL `biker-pg` on 2026-09
 
 The loop used for the full import into Cloud SQL (2026-10-02). Each round claims up to `--batch` (5)
 pending bikes and processes them exactly like `process_queue.py` (shop page, no AI), then takes up to
-5 bikes (`done`/`skipped` with a bike) that still miss something and fills, per bike: one
+5 bikes (`done`/`skipped` with a bike) that still miss something and fills, per bike: `bike.category`
+from the discovery `bike_type` (Polish shop type → English category via `backend/app/bike_categories.py`,
+`bike_store.set_category_if_null`, no AI; only while NULL — an unmapped type stays NULL and does not keep
+the bike open); one
 `bike_offer` per centrumrowerowe listing (`source = 'centrumrowerowe.pl'`, `is_new` true, price as
-`1 099 zł`, no AI — note: no backend route reads this source yet, so the UI does not show it);
+`1 099 zł`, no AI — served by `POST /v1/bike/centrumrowerowe` in the "Nowe" card);
 photos via `POST {backend}/v1/bike/photos/search` **only when the bike has none**; details via
 `/v1/bike/details/search` **only when the description text or the components are missing** (the AI
 result then replaces the components); `short_description` = a two-sentence Polish summary of the description by Haiku
@@ -126,7 +129,8 @@ paid for again unless `--retry-empty`.
 
 Checks every discovery row: nothing `pending`/`in_progress`, `failed` rows listed; per bike the
 description text, `short_description`, components (WARN under 4 categories), photos, review and a
-centrumrowerowe offer per listing; the backend's own reads (`get_bike_details`, `get_bike_photos`,
+centrumrowerowe offer per listing, `bike.category` (ERROR when NULL although the `bike_type` maps to a
+category, WARN when the type is not mapped); the backend's own reads (`get_bike_details`, `get_bike_photos`,
 `get_review`) non-empty; a `done` row has a listing fetched without error. A paid step recorded as
 empty turns its ERROR into a WARN. `--recheck N` (default 20) re-fetches N random done bikes and
 compares component rows and description (when still the shop's) and the photo count with the DB.

@@ -5,6 +5,8 @@ One loop, until nothing is left or the usage guard trips:
              -> description, components, photos; no AI);
 2. enrich  - take up to --batch bikes (discovery rows with a bike) that still miss something and fill,
              per bike, in this order:
+             category  - bike.category from the discovery bike_type (Polish shop type -> English category via
+                         app.bike_categories), only while NULL and the type is mapped (no AI);
              offer     - each centrumrowerowe listing as a bike_offer row (source centrumrowerowe.pl, no AI);
              photos    - POST {BACKEND}/v1/bike/photos/search, only when the bike has no photo   (paid);
              details   - POST {BACKEND}/v1/bike/details/search, only when the description text or the
@@ -43,8 +45,10 @@ import httpx
 from sqlalchemy import text
 
 from db import BikeDiscovery, BikeDiscoveryListing, DONE, SKIPPED, SOURCE, check_target, ensure_table, models, session
+from app.bike_categories import category_from_discovery
 from app.schemas import BikeDescription
 import process_queue
+from bike_store import set_category_if_null
 
 logger = logging.getLogger("enrich")
 
@@ -161,6 +165,7 @@ def missing(bike_id: int, discovery_id: int) -> dict:
     """What the bike still lacks, read from the DB (the single source of truth for resuming)."""
     with session() as s:
         bike = s.get(models.Bike, bike_id)
+        discovery = s.get(BikeDiscovery, discovery_id)
         desc_text = ""
         if bike.description:
             try:
@@ -171,6 +176,8 @@ def missing(bike_id: int, discovery_id: int) -> dict:
                         .filter_by(discovery_id=discovery_id) if u]
         have_urls = {u for (u,) in s.query(models.BikeOffer.url).filter(models.BikeOffer.url.in_(listing_urls))}
         return {
+            # An unmapped bike_type stays NULL for good, so it does not keep the bike open.
+            "category": bike.category is None and category_from_discovery(discovery.bike_type) is not None,
             "offer": any(u not in have_urls for u in listing_urls),
             "photos": s.query(models.BikeDetailPhoto.id).filter_by(bike_id=bike_id).first() is None,
             "details": not desc_text or s.query(models.BikeComponent.id).filter_by(bike_id=bike_id).first() is None,
@@ -278,6 +285,11 @@ def enrich_bike(discovery_id: int, bike_id: int, ctx) -> dict:
         bike = s.get(models.Bike, bike_id)
         company, model = bike.brand, bike.model
     need, out = missing(bike_id, discovery_id), {}
+    if need["category"]:
+        with session() as s:
+            bike_type = s.get(BikeDiscovery, discovery_id).bike_type
+        set_category_if_null(bike_id, bike_type)
+        out["category"] = category_from_discovery(bike_type)
     if need["offer"]:
         out["offer"] = f"+{store_offers(bike_id, discovery_id)}"
     for step in ("photos", "details"):
