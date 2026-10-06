@@ -3,7 +3,8 @@
 Per bike_discovery row:
 - queue      - nothing left pending / in_progress; failed rows listed with last_error; done/skipped has a bike;
 - bike       - description JSON with text, short_description, bike_component rows (WARN under 4 categories),
-               photos, a bike_review row, a centrumrowerowe bike_offer per listing;
+               photos, a bike_review row, a centrumrowerowe bike_offer per listing, bike.category (ERROR when
+               NULL although the discovery bike_type maps to a category, WARN when the type is not mapped);
                a paid step recorded "empty" in enrich's attempts file turns its ERROR into a WARN;
 - read path  - what the app serves: repository.get_bike_details, photos_repository.get_bike_photos and
                reviews_repository.get_review for the stored brand/model are non-empty;
@@ -28,6 +29,7 @@ from typing import Optional
 from db import (BikeDiscovery, BikeDiscoveryListing, DONE, FAILED, IN_PROGRESS, PENDING, SKIPPED, SOURCE,
                 check_target, models, repository, session)
 from app import photos_repository, reviews_repository
+from app.bike_categories import category_from_discovery
 from app.component_tree import flatten_components
 from app.schemas import BikeDescription
 import process_queue
@@ -76,6 +78,11 @@ def check_bike(d: BikeDiscovery, f: Findings, attempts: dict, read_path: bool) -
             f.add("WARN" if empty("details") else "ERROR", "bike.components", name, "no rows")
         elif len(cats) < 4:
             f.add("WARN", "bike.components", name, f"only {len(cats)} categories: {sorted(cats)}")
+        if bike.category is None:
+            if category_from_discovery(d.bike_type) is not None:
+                f.add("ERROR", "bike.category", name, f"NULL, bike_type {d.bike_type!r} maps to a category")
+            else:
+                f.add("WARN", "bike.category", name, f"NULL, bike_type {d.bike_type!r} not mapped")
         if s.query(models.BikeDetailPhoto.id).filter_by(bike_id=bike.id).first() is None:
             f.add("WARN" if empty("photos") else "ERROR", "bike.photos", name, "none")
         if s.query(models.BikeReview.id).filter_by(bike_id=bike.id).first() is None:

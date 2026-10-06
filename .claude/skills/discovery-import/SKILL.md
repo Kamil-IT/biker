@@ -15,8 +15,12 @@ Talk to the user in Polish.
 - Insert **straight into GCP Cloud SQL** — no local run + `copy_to_db.py`.
 - Batches of **5** bikes.
 - AI **only when something is missing**:
+  - category → `bike.category` from the discovery `bike_type` (Polish shop type → English category via
+    `backend/app/bike_categories.py`, e.g. `trekkingowy` → `Trekking`), **no AI**, only while NULL, never
+    overwritten. `process_queue.py` sets it for newly processed bikes, `enrich.py` (step `category`) fills
+    the bikes processed before; an unmapped type stays NULL — report it, don't guess a category.
   - offer = each centrumrowerowe listing → `bike_offer` (`source='centrumrowerowe.pl'`, `is_new` true,
-    price `1 099 zł`), **no AI**. The user said **no** to showing it in the UI, so don't propose an endpoint.
+    price `1 099 zł`), **no AI**. Shown in the "Nowe" card via `POST /v1/bike/centrumrowerowe` (PR #151).
   - photos → `/v1/bike/photos/search`, only when the bike has none.
   - details → `/v1/bike/details/search`, only when the description text or the components are missing.
   - `short_description` → **Haiku** via `claude -p --model haiku` (subscription), only while empty.
@@ -33,6 +37,8 @@ Talk to the user in Polish.
      `python -c "import enrich; print(enrich.Guard(101,101)._read())"`
      (from `webscraper/centrumrowerowe`, retries a 429 by itself);
    - queue: `select status, count(*) from bike_discovery group by 1`;
+   - categories: `select b.category, count(*) from bike_discovery d join bike b on b.id = d.bike_id group by 1`
+     (NULL = still to fill or unmapped `bike_type`);
    - how many are imported vs left.
 
    Estimate the throughput: ~135 bikes use ~71 points of the 5 h window and ~5 points of the 7-day window.
@@ -57,7 +63,9 @@ Talk to the user in Polish.
 5. **Verify** (read-only), and always after a stop:
    `verify_discovery.py --allow-remote --since 2026-10-02T12:00 --recheck 20`.
    - Exit 1 on any ERROR; `queue.open` errors only mean bikes are still pending.
-   - Report per bike type: description/components/photos, offer, short description, review (found / nothing found).
+   - Report per bike type: description/components/photos, offer, category, short description, review (found / nothing found).
+   - `bike.category` ERROR = NULL although the type maps (rerun enrich); WARN = unmapped `bike_type` —
+     list those types for the user (adding them belongs in `bike_categories.py`, not in this run).
    - Also report how many of the 20 rechecked bikes matched the shop page 1:1.
 6. **If the user says stop**:
    1. Kill the bash `run_loop.sh` processes first, so no new round starts.
@@ -69,6 +77,12 @@ Talk to the user in Polish.
 7. Finish with the numbers (imported / left / gaps), the usage, and when the next window allows a resume.
 
 ## Gotchas learned
+
+- `bike.category` needs `backend/scripts/migrate_bike_category.py` on the target database first (PR #158;
+  its Cezar run reported the Cloud SQL step done 2026-10-06, column + backfill from `bike_discovery`).
+  Without the column the ORM fails on the first bike. Check before a run:
+  `backend\.venv\Scripts\python.exe backend\scripts\migrate_bike_category.py --url <Cloud SQL url> --dry-run`
+  (`already-migrated` = fine; `backfilled`/`dry-run` = it would still fill rows — harmless, `enrich.py` does the same).
 
 - `db.py` loads `backend/.env`, which carries an `ANTHROPIC_API_KEY` without credits.
   The Haiku call must drop it from the CLI env, or it fails with "Credit balance is too low".
