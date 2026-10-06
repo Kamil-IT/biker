@@ -8,7 +8,7 @@ Run against a live local server (uvicorn app.main:app --port 8000):
 Every case seeds its own namespaced fixture rows and deletes them afterwards, so
 it passes on a cold or aged database. Endpoints covered here:
 
-  no API   /v1/bike/search (DB hit) · /v1/bike/details
+  no API   /v1/bike/search (DB hit; by category = bike.category) · /v1/bike/details
            /v1/bike/details/search (404 only — no paid run)
            /v1/bike/missing · /v1/contact · /v1/bike/popular ·/v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
            /v1/bike/decathlon · /v1/bike/decathlon/search (404 + foreign-brand skip always; the
@@ -296,6 +296,49 @@ def case_search_db_hit():
         _cache_row_delete("/v1/bike/search", key)
         _delete_bike(FIX_SEARCH_BRAND, FIX_SEARCH_MODEL)
         _delete_bike(FIX_SEARCH_BRAND, FIX_STALE_MODEL)
+
+
+FIX_CAT_BRAND = "Smoke Fixture"
+FIX_CAT_BIKES = {"Category City Bike": "City", "Category Gravel Bike": "Gravel", "Category Null Bike": None}
+
+
+def case_search_category():
+    """/v1/bike/search by category (bike_type) is a DB read of bike.category — zero AI."""
+    for model, category in FIX_CAT_BIKES.items():
+        _delete_bike(FIX_CAT_BRAND, model)
+        _insert_bike(FIX_CAT_BRAND, model)
+        if category:
+            _set_category(FIX_CAT_BRAND, model, category)
+
+    def search(body: dict) -> list[dict]:
+        t0 = time.perf_counter()
+        resp = _post(SEARCH_URL, body, timeout=60)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        assert elapsed < 5.0, f"category search took {elapsed:.2f}s — expected < 5s (AI ran?)"
+        assert not _cache_row_exists("/v1/bike/search", _norm_key(body)), "search must not write a generic-cache row"
+        return resp.json()["bikes"]
+
+    def fixtures(bikes: list[dict]) -> set[str]:
+        return {b["model"] for b in bikes if b["brand"] == FIX_CAT_BRAND and b["model"] in FIX_CAT_BIKES}
+
+    try:
+        # Hybrid/Commuter matches City / Cross; brand AND category; a NULL category never matches.
+        both = search({"brand": FIX_CAT_BRAND, "bike_type": "Hybrid/Commuter"})
+        assert [(b["model"], b["category"]) for b in both] == [("Category City Bike", "City")], both
+        assert fixtures(search({"brand": FIX_CAT_BRAND, "bike_type": "Gravel"})) == {"Category Gravel Bike"}
+
+        # Category alone: every result is in the mapped categories, the fixture among them.
+        only = search({"bike_type": "Hybrid/Commuter"})
+        assert fixtures(only) == {"Category City Bike"}, only
+        bad = [b for b in only if b["category"] not in ("City", "Cross", "Hybrid/Commuter")]
+        assert not bad, f"bikes outside the category: {bad[:3]}"
+
+        # No category: bikes without one are still found.
+        assert fixtures(search({"brand": FIX_CAT_BRAND})) == set(FIX_CAT_BIKES)
+    finally:
+        for model in FIX_CAT_BIKES:
+            _delete_bike(FIX_CAT_BRAND, model)
 
 
 FIX_DETAILS_BRAND, FIX_DETAILS_MODEL = "Smoke Fixture", "Details Bike"
@@ -980,6 +1023,7 @@ def case_bike_by_id():
     chips; an unknown id -> 404, a non-positive id -> 422. Search and popular answers carry the same id."""
     _delete_bike(FIX_ID_BRAND, FIX_ID_MODEL)
     _seed_bike_details(FIX_ID_BRAND, FIX_ID_MODEL, FIX_SHORT, _full_components())
+    _set_category(FIX_ID_BRAND, FIX_ID_MODEL, "Trekking")
     try:
         found = _post(SEARCH_URL, {"brand": FIX_ID_BRAND, "model": FIX_ID_MODEL.upper()}, timeout=60)
         assert found.status_code == 200, found.text[:200]
@@ -991,7 +1035,7 @@ def case_bike_by_id():
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
         assert resp.json() == {"id": bike_id, "brand": FIX_ID_BRAND, "model": FIX_ID_MODEL,
                                "accessories": FIX_CHIPS, "explanation": FIX_SHORT,
-                               "photo": None, "photo_bg": None}, resp.json()
+                               "category": "Trekking", "photo": None, "photo_bg": None}, resp.json()
         assert time.perf_counter() - t0 < 5.0
         resp = _post(BIKE_BY_ID_URL, {"bike_id": 999999999}, timeout=10)
         assert resp.status_code == 404 and resp.json() == {"detail": "Bike not found"}, resp.text[:200]
@@ -1119,6 +1163,8 @@ def case_parse():
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
     data = resp.json()
     assert data.get("brand") == "Trek" and data.get("year") == 2022 and data.get("is_electric") is False, data
+    typed = _post(PARSE_URL, {"text": "Szukam roweru szosowego"}, timeout=60)
+    assert typed.status_code == 200 and typed.json().get("bike_type") == "Road", typed.text[:200]
 
 
 # DEPRECATED endpoint, not used by the frontend or searcher; test kept until removal.
@@ -1131,6 +1177,7 @@ def case_ceneo():
 
 CASES = [
     (case_search_db_hit, False),
+    (case_search_category, False),
     (case_details, False),
     (case_details_search, False),
     (case_missing, False),

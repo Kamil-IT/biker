@@ -8,6 +8,20 @@ Available fields:
 - "year": integer — model/production year (e.g. 2023)
 - "wheel_size": string — exactly one of: "26\"", "27.5\"", "29\"", "700c", "650b"
 - "is_electric": boolean — true only if user explicitly wants an e-bike; false only if explicitly not wanted
+- "bike_type": string — exactly one of: "Road", "MTB", "Gravel", "Hybrid/Commuter", "Touring", "BMX", "Folding"
+
+Bike type rules:
+- Set "bike_type" only when the text names the kind of bike. Map the words (Polish or English, any grammatical form):
+  - "szosowy", "szosówka", "rower szosowy", "road bike" → "Road"
+  - "górski", "rower górski", "MTB", "mountain bike" → "MTB"
+  - "gravel", "gravelowy" → "Gravel"
+  - "miejski", "crossowy", "cross", "city bike", "hybrid", "commuter" → "Hybrid/Commuter"
+  - "trekkingowy", "trekking", "turystyczny", "touring" → "Touring"
+  - "BMX" → "BMX"
+  - "składak", "składany", "folding" → "Folding"
+- Do NOT infer the type from the intended use or terrain alone ("na dojazdy do pracy", "na wały", "na wycieczki", "po lesie") — omit it then.
+- "elektryczny" / "e-bike" is not a bike type: it sets "is_electric" only.
+- Never return any other "bike_type" value (no "Electric", "Kids", "Cruiser", "Trekking", "City").
 
 Rules:
 - Only include a field if the text clearly mentions or strongly implies it
@@ -48,3 +62,15 @@ Response: {"brand": "TREK"}
 
 Example: "Mam rower w Wrocławiu"
 Response: {}
+
+Example: "Szukam roweru szosowego"
+Response: {"bike_type": "Road"}
+
+Example: "rower górski Kross 29 cali"
+Response: {"brand": "Kross", "wheel_size": "29\"", "bike_type": "MTB"}
+
+Example: "elektryczny rower trekkingowy"
+Response: {"is_electric": true, "bike_type": "Touring"}
+
+Example: "miejski rower na dojazdy do pracy"
+Response: {"bike_type": "Hybrid/Commuter"}

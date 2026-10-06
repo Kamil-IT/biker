@@ -2,8 +2,9 @@
 
 Same database as the generic response cache in `cache.py` (the shared
 SQLAlchemy engine in `models.py`). The only thing a search leaves behind is a
-`bike` row per found bike, so a later brand/model search finds it in the DB
-and the details view can open it (`bike_exists` guards every on-demand search).
+`bike` row per found bike (with the search's category where it had none), so a
+later brand/model/category search finds it in the DB and the details view can
+open it (`bike_exists` guards every on-demand search).
 
 The per-search tables (`search_cache`, `search_bike_rating_cache`) were
 dropped in TODO-043: nothing had read them since the cache-read endpoints went
@@ -12,7 +13,9 @@ since TODO-041. `scripts/migrate_drop_search_tables.py` removes them from an
 existing database.
 """
 import logging
+from typing import Optional
 
+from .bike_categories import category_for_ai_result
 from .models import Bike, get_session
 from .repository import _find_bike_id
 from .schemas import BikeResult
@@ -41,13 +44,28 @@ def _get_or_create_bike(session, brand: str, model: str) -> tuple[int, bool]:
     return bike.id, True
 
 
-def save_search(query: str, bikes: list[BikeResult]) -> None:
-    """Make sure every bike the AI returned exists in `bike`. Non-fatal."""
+def save_search(query: str, bikes: list[BikeResult], bike_type: Optional[str] = None) -> None:
+    """Make sure every bike the AI returned exists in `bike`. Non-fatal.
+
+    With a search category (`bike_type`) every found bike whose category is
+    still NULL gets `category_for_ai_result(bike_type)` — a stored category is
+    never overwritten — so the next search by that category finds it in the DB.
+    """
+    category = category_for_ai_result(bike_type)
     session = get_session()
     try:
-        created = sum(_get_or_create_bike(session, b.brand, b.model)[1] for b in bikes)
+        ids = [_get_or_create_bike(session, b.brand, b.model) for b in bikes]
+        created = sum(new for _, new in ids)
+        stamped = 0
+        if category is not None:
+            stamped = session.query(Bike).filter(
+                Bike.id.in_([bike_id for bike_id, _ in ids]), Bike.category.is_(None),
+            ).update({Bike.category: category}, synchronize_session=False)
         session.commit()
-        logger.info("search store | query=%r bikes=%d new=%d", query, len(bikes), created)
+        logger.info(
+            "search store | query=%r bikes=%d new=%d category=%r stamped=%d",
+            query, len(bikes), created, category, stamped,
+        )
     except Exception as exc:  # noqa: BLE001 — store writes must never break the request
         session.rollback()
         logger.warning("search store failed (non-fatal) | %s", exc)
