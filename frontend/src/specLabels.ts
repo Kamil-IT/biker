@@ -646,3 +646,32 @@ export function translateLabel(text: string): string {
 
   return text
 }
+
+/* Bike category (backend enum, English) → Polish label. Unknown value is shown
+ * as is, empty/missing → '' (the caller then renders nothing). */
+const BIKE_CATEGORY_LABELS: Record<string, string> = {
+  'MTB': 'MTB',
+  'Gravel': 'Gravel',
+  'Road': 'Szosowy',
+  'Cyclocross': 'Przełajowy',
+  'Trekking': 'Trekkingowy',
+  'Cross': 'Crossowy',
+  'City': 'Miejski',
+  'Kids': 'Dziecięcy',
+  'Youth': 'Młodzieżowy',
+  'Balance': 'Biegowy',
+  'Triathlon': 'Triathlonowy',
+  'Folding': 'Składany',
+  'BMX': 'BMX',
+  'Electric': 'Elektryczny',
+  'Electric cargo': 'Elektryczny cargo',
+  // legacy values
+  'Hybrid/Commuter': 'Miejski/Hybrydowy',
+  'Touring': 'Turystyczny',
+  'Cruiser': 'Cruiser',
+}
+
+export function bikeCategoryLabel(category?: string | null): string {
+  const c = (category ?? '').trim()
+  return c ? (BIKE_CATEGORY_LABELS[c] ?? c) : ''
+}

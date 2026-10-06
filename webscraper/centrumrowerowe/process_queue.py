@@ -294,7 +294,8 @@ def process_row(row_id: int, fetch: Fetch = http_fetch, parse=None, claimed_at: 
             return fail("; ".join(errors))
 
         outcome, bike_id, company, model, response = store_details(
-            parsed.brand, parsed.model, parsed.to_details_response)
+            parsed.brand, parsed.model, parsed.to_details_response,
+            bike_type=parsed.bike_type)
         # Photos are independent of details: stored whenever the bike has none, never replaced.
         photos = store_photos(bike_id, company, model, parsed.photos)
         if outcome == KEPT:  # existing details (AI- or earlier-parsed) win; nothing overwritten

@@ -153,6 +153,7 @@ class PopularBike(BaseModel):
     id: Optional[int] = None  # bike.id — the frontend's /bike/{id} address
     brand: str
     model: str
+    category: Optional[str] = None  # bike.category, None = unknown
     description: str = ""  # first two sentences of the stored details description; "" without details
     photo: Optional[str] = None  # cover photo URL (first stored photo that is not junk); None = no photo
     photo_bg: Optional[str] = None  # "#RRGGBB" edge colour of that photo; None = unknown
@@ -212,6 +213,7 @@ class BikeDetailsResponse(BaseModel):
     description: BikeDescription
     components: list[BikeCategory]
     short_description: str = ""
+    category: Optional[str] = None
 
 
 class BikeResult(BaseModel):
@@ -222,6 +224,7 @@ class BikeResult(BaseModel):
     model: str
     accessories: list[str]
     explanation: str
+    category: Optional[str] = None
     photo: Optional[str] = None  # cover photo URL (first stored photo that is not junk); None = no photo
     photo_bg: Optional[str] = None  # "#RRGGBB" edge colour of that photo; None = unknown
 

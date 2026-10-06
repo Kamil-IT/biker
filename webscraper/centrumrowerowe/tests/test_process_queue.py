@@ -150,7 +150,7 @@ def test_existing_details_and_photos_skipped_unchanged(temp_db):
     assert row.status == SKIPPED and row.bike_id == bike_rows()[0][0]
     assert (row.company, row.model) == ("Romet", "Wagant 3")
     assert len(bike_rows()) == 1
-    assert repository.get_bike_details("Romet", "Wagant 3") == before
+    assert repository.get_bike_details("Romet", "Wagant 3") == before.model_copy(update={"category": "Trekking"})  # only the NULL category is back-filled
     assert stored_photos("Romet", "Wagant 3") == ["https://x/orig.jpg"]  # never replaced
 
 
@@ -159,7 +159,7 @@ def test_existing_details_without_photos_get_the_shop_photos(temp_db):
     before = repository.get_bike_details("Romet", "Wagant 3")
     add_row()
     assert claim_and_process(stub_parse()) == [SKIPPED]
-    assert repository.get_bike_details("Romet", "Wagant 3") == before
+    assert repository.get_bike_details("Romet", "Wagant 3") == before.model_copy(update={"category": "Trekking"})  # only the NULL category is back-filled
     assert stored_photos("Romet", "Wagant 3") == ["https://example.com/a.jpg", "https://example.com/b.jpg"]
 
 

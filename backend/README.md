@@ -149,6 +149,9 @@ python scripts/migrate_merge_equipment_detail.py
 python scripts/migrate_component_linkable.py --dry-run
 python scripts/migrate_component_linkable.py
 python scripts/migrate_component_linkable.py --reclassify   # only to re-run tuned regexes over every row — overwrites the flags the searcher's model wrote
+# One-off per existing database: add bike.category (VARCHAR(32), NULL = unknown) and backfill it from bike_discovery.bike_type (idempotent; --dry-run, --db / --url as above). REQUIRED before the new backend/searcher runs on it.
+python scripts/migrate_bike_category.py --dry-run
+python scripts/migrate_bike_category.py
 
 # One-off per existing database (results-tile photos, AFTER migrate_photos_bike_id.py): add bike_detail_photos.bg_color (VARCHAR(7) NULL, the photo's edge colour).
 # REQUIRED before the new searcher runs (it refuses to start without the column); the new backend answers photo: null + an ERROR log naming the script until it has run; the OLD backend/searcher keep working on a migrated database (nullable).
@@ -261,6 +264,7 @@ Bike details used to live in a `bike_details_cache` JSON-blob table in `app/stor
 - The response echoes the **caller's** casing, not the stored row's — same as the blob path did. `get_bike_details` finds the bike on the normalised columns (TODO-041; it used to match the exact stored casing).
 - **Photos are not part of the details response any more** (TODO-035): `BikeDetailsResponse` has no `photos` field. They live in `bike_detail_photos`, keyed on `bike_id` (not on the details row), are read by `POST /v1/bike/photos` (`app/photos_repository.py`, `display_order, id`) and written only by the searcher's photo search — insert-only, for a bike that has none. `save_bike_details` neither writes nor deletes them.
 - Details live on the `bike` row: `bike.description` (`TEXT`, nullable — the JSON `BikeDescription`; NULL = no details) and `bike.short_description` (`TEXT NOT NULL DEFAULT ''`, TODO-041, the two-sentence summary); the components are `bike_component` rows keyed on `bike_id`. The former `bike_detail` table is dropped by `scripts/migrate_drop_bike_detail.py`. Rows are written by the searcher (`POST /v1/bike/details/search`, a port of this save logic in `searcher/app/repository.py`) and the discovery processor; `POST /v1/bike/details` only reads them.
+- `bike.category` (`VARCHAR(32)`, nullable, NULL = unknown; English values from `app/bike_categories.py`, e.g. `MTB`, `Gravel`, `Road`, `Trekking`) is returned as `category` (string or `null`) by `POST /v1/bike/search` (each bike), `POST /v1/bike/details` and `GET /v1/bike/popular`. Filled by `scripts/migrate_bike_category.py` from the discovery `bike_type` and by the discovery processor (only while NULL); nothing validates it on write.
 - `save_bike_details` updates the bike row's `description` / `short_description` **in place** and replaces its component rows (delete + re-insert), in one transaction. It returns **True** when committed and **False** when it failed and rolled back (errors are still swallowed and logged as a WARNING) — callers that need certainty (the discovery processor) use the return value. `bike.updated_at` is set on every save, but nothing reads it for freshness.
 
 See [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md) for the full schema and what is still pending (search).

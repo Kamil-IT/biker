@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { CSSProperties, MouseEvent } from 'react'
 import type { Bike, ExpertRating } from '../types'
 import { isPlainClick } from '../hooks/useRoute'
+import { bikeCategoryLabel } from '../specLabels'
 
 export type { Bike }
 
@@ -47,6 +48,7 @@ function BikeArt() {
 
 export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect, href, expertRating }: ResultCardProps) {
   const { brand, model, accessories, explanation } = bike
+  const categoryLabel = bikeCategoryLabel(bike.category)
   const photo = bike.photo ?? null
   // The URL that failed to load: a different photo later gets a fresh try.
   const [failedPhoto, setFailedPhoto] = useState<string | null>(null)
@@ -162,6 +164,11 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
 
       {/* Body */}
       <div className="flex flex-col gap-2 flex-1 p-4 pb-5">
+        {categoryLabel && (
+          <span className="inline-block self-start font-mono text-[10px] uppercase tracking-widest text-terra">
+            {categoryLabel}
+          </span>
+        )}
         <div className="flex items-start justify-between gap-3">
           <p className="font-display font-semibold text-base leading-none text-muted">{brand}</p>
           <span

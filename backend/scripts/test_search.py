@@ -242,12 +242,23 @@ def _seed_bike_details(brand: str, model: str, short: str, components: list, tex
     ))
 
 
+def _set_category(brand: str, model: str, category: str) -> None:
+    """Set bike.category directly (nothing in the app writes it; migrate_bike_category.py backfills)."""
+    conn = _DB()
+    try:
+        conn.execute("UPDATE bike SET category = ? WHERE brand = ? AND model = ?", (category, brand, model))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def case_search_db_hit():
     """/v1/bike/search served from the DB (zero AI), never from the generic cache."""
     # TODO-041: explanation = the stored short description, accessories = chips from
     # the stored components (rear derailleur, brake lever, frame material).
     _seed_bike_details(FIX_SEARCH_BRAND, FIX_SEARCH_MODEL, FIX_SHORT, _full_components())
     _insert_bike(FIX_SEARCH_BRAND, FIX_SEARCH_BARE_MODEL)
+    _set_category(FIX_SEARCH_BRAND, FIX_SEARCH_MODEL, "Gravel")
     body = {"brand": FIX_SEARCH_BRAND, "model": FIX_SEARCH_MODEL}
     key = _norm_key(body)
     # A stale generic-cache row for this exact body, like the 5-bike answers stored
@@ -270,6 +281,7 @@ def case_search_db_hit():
         assert "match_score" not in bikes[0], f"match_score was removed (TODO-040): {bikes[0]}"
         assert bikes[0]["explanation"] == FIX_SHORT, f"explanation must be the stored short description: {bikes[0]}"
         assert bikes[0]["accessories"] == FIX_CHIPS, f"accessories must be the component chips: {bikes[0]}"
+        assert bikes[0]["category"] == "Gravel", f"category must come from bike.category: {bikes[0]}"
         assert elapsed < 5.0, f"DB hit took {elapsed:.2f}s — expected < 5s (AI ran?)"
 
         # A bike without stored details -> "" / [] (the frontend hides both).
@@ -277,6 +289,7 @@ def case_search_db_hit():
         assert bare.status_code == 200, bare.text[:200]
         (b0,) = bare.json()["bikes"]
         assert b0["explanation"] == "" and b0["accessories"] == [], b0
+        assert b0["category"] is None, b0
 
     finally:
         _delete_bike(FIX_SEARCH_BRAND, FIX_SEARCH_BARE_MODEL)
@@ -296,6 +309,7 @@ def case_details():
     _delete_bike(FIX_DETAILS_BRAND, bare_model)
     _seed_bike_details(FIX_DETAILS_BRAND, FIX_DETAILS_MODEL, FIX_SHORT, _full_components())
     _insert_bike(FIX_DETAILS_BRAND, bare_model)
+    _set_category(FIX_DETAILS_BRAND, FIX_DETAILS_MODEL, "MTB")
     body = {"company": FIX_DETAILS_BRAND, "model": FIX_DETAILS_MODEL}
     key = _norm_key(body)
     empty = {"text": "", "segments": [], "citations": []}
@@ -311,6 +325,7 @@ def case_details():
         assert data["description"]["text"] == "Opis testowy.", data
         assert [c["category"] for c in data["components"]] == ["Frame", "Drivetrain", "Brakes"], data["components"]
         assert "photos" not in data
+        assert data["category"] == "MTB", data
         # ISSUE-016: every element carries the stored is_linkable flag (a bool, never null)
         flags = [el["is_linkable"] for c in data["components"] for s in c["subcategories"] for el in s["elements"]]
         assert flags and all(isinstance(f, bool) for f in flags), data["components"]
@@ -321,7 +336,7 @@ def case_details():
             resp = _post(DETAILS_URL, {"company": company, "model": model}, timeout=10)
             assert resp.status_code == 200, resp.text[:200]
             assert resp.json() == {
-                "company": company, "model": model, "description": empty, "components": [], "short_description": "",
+                "company": company, "model": model, "description": empty, "components": [], "short_description": "", "category": None,
             }, resp.json()
             assert time.perf_counter() - t0 < 5.0
     finally:
@@ -413,6 +428,7 @@ def case_popular():
             description=BikeDescription(text=FIX_POP_TEXT, segments=[], citations=[]),
             components=[],
         ))
+        _set_category(FIX_POP_BRAND, FIX_POP_MODEL_A, "Road")
         conn = _DB()
         try:
             for bike_id, position in ((id_b, 1), (id_a, 2)):
@@ -430,6 +446,7 @@ def case_popular():
         assert [b["model"] for b in mine] == [FIX_POP_MODEL_B, FIX_POP_MODEL_A], f"position order / stored casing: {mine}"
         assert mine[0]["description"] == "", mine[0]
         assert mine[1]["description"] == FIX_POP_BLURB, mine[1]
+        assert (mine[0]["category"], mine[1]["category"]) == (None, "Road"), mine
         assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
         assert not _cache_row_exists("/v1/bike/popular", _norm_key({})), "/v1/bike/popular must not write a generic-cache row"
     finally:

@@ -74,7 +74,7 @@ def get_popular_bikes() -> PopularBikesResponse:
     session = get_session()
     try:
         rows = (
-            session.query(Bike.id, Bike.brand, Bike.model, Bike.description)
+            session.query(Bike.id, Bike.brand, Bike.model, Bike.description, Bike.category)
             .select_from(BikePopular)
             .join(Bike, Bike.id == BikePopular.bike_id)
             .order_by(BikePopular.position, BikePopular.id)
@@ -83,10 +83,10 @@ def get_popular_bikes() -> PopularBikesResponse:
         covers = get_cover_photos([bike_id for bike_id, *_ in rows], session)
         bikes = [
             PopularBike(
-                id=bike_id, brand=brand, model=model, description=_blurb(brand, model, description),
+                id=bike_id, brand=brand, model=model, category=category, description=_blurb(brand, model, description),
                 photo=covers.get(bike_id, (None, None))[0], photo_bg=covers.get(bike_id, (None, None))[1],
             )
-            for bike_id, brand, model, description in rows
+            for bike_id, brand, model, description, category in rows
         ]
         logger.info("popular bikes served from DB | bikes=%d", len(bikes))
         return PopularBikesResponse(bikes=bikes)

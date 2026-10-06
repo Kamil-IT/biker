@@ -489,6 +489,14 @@ The results tile shows the bike's cover photo with `object-fit: contain` inside 
 
 **Run on Cloud SQL 2026-10-03** (user's go, after the on-demand backup "before migrate_photo_bg_color (PR 156)"): migration `migrated` (6738 rows), rerun `already-migrated`; backfill 876 covers checked, 418 coloured, 458 without colour (mostly transparent PNG cut-outs — white frame), 0 errors. Deployed tag d8aeeb2: searcher `biker-searcher-00011-q2t`, backend `biker-backend-00019-5l4` (the first build failed on a Chrome-for-Testing download timeout, the retry passed), frontend `biker-frontend-00014-zbs` — the same deploy shipped PR #154 (contact form) and PR #155 (URL routing).
 
+## Bike category added (`bike.category`, `scripts/migrate_bike_category.py`)
+
+`bike` gained `category` (`VARCHAR(32)`, nullable, no default; NULL = category unknown). `create_all()` never ALTERs an existing table, so every pre-existing database needs the script once, BEFORE the new backend or searcher runs on it (the new ORM selects the column; the new searcher's `init_db()` refuses to start without it and names the script). The OLD backend keeps working on a migrated database (the column is nullable).
+
+`scripts/migrate_bike_category.py` (`--dry-run`, `--db <sqlite file>`, `--url <sqlalchemy url>`, importable `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` with `status`, `bikes_before/after`, `filled`, `unmapped`, `verified`, `error`) does it in ONE transaction (SQLite and PostgreSQL; PostgreSQL under `LOCK TABLE bike IN SHARE ROW EXCLUSIVE MODE`): `ALTER TABLE bike ADD COLUMN category VARCHAR(32)`, then a **backfill**: every bike linked from a `bike_discovery` row (`bike_id = bike.id`) with a non-empty `bike_type` gets `category_from_discovery(bike_type)` (Polish shop type to English category, `strip().lower()` lookup in Python, e.g. `szosowy` -> `Road`), only where `category IS NULL`. Other bikes stay NULL; unmapped discovery types are reported in `unmapped` (type -> count) and leave the bike NULL; no `bike_discovery` table = no backfill. Verified before commit (same bike ids, every planned value read back); a mismatch rolls back with exit code 1. Idempotent: column present and nothing left to fill -> `already-migrated`; column present but NULL rows fillable -> `backfilled`; no `bike` table -> `absent`. Statuses: `migrated`, `backfilled`, `already-migrated`, `dry-run`, `absent`, `failed`. Tests: `scripts/test_migrate_bike_category.py`.
+
+**Deploy order:** (1) Cloud SQL on-demand backup, (2) the script on Cloud SQL through the proxy - only on the user's explicit go, (3) backend and searcher together, (4) frontend.
+
 ## Benefits
 
 ✅ **Data Integrity** — Foreign keys, unique constraints, cascading deletes

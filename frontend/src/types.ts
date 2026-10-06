@@ -5,6 +5,8 @@ export interface Bike {
   model: string
   accessories: string[]
   explanation: string
+  // null / missing = unknown; else an English value (MTB, Gravel, Road, Cyclocross, Trekking, City, ...)
+  category?: string | null
   // Cover photo URL and its edge colour ("#RRGGBB"); absent/null from older backends or bikes without a photo.
   photo?: string | null
   photo_bg?: string | null
@@ -59,6 +61,7 @@ export interface BikeDetailsResponse {
   description: BikeDescription
   short_description: string
   components: BikeCategory[]
+  category?: string | null
 }
 
 // Returned by POST /v1/bike/photos (DB read of the stored photos, in display order) and
@@ -245,6 +248,7 @@ export interface PopularBike {
   brand:       string
   model:       string
   description: string
+  category?:    string | null
   photo?:      string | null
   photo_bg?:   string | null
 }

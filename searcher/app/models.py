@@ -178,6 +178,12 @@ def init_db():
             "bike_detail_photos has no bg_color column — run backend/scripts/migrate_photo_bg_color.py "
             "on this database first"
         )
+    # bike.category: the ORM selects and inserts it, so an unmigrated database would fail on the first bike read.
+    if inspector.has_table("bike") and "category" not in {c["name"] for c in inspector.get_columns("bike")}:
+        raise RuntimeError(
+            "bike has no category column — run backend/scripts/migrate_bike_category.py "
+            "on this database first"
+        )
 
 
 def norm(value: Optional[str]) -> str:
@@ -200,6 +206,8 @@ class Bike(Base):
     # short_description = two-sentence Polish summary ('' = none).
     description = Column(Text, nullable=True)
     short_description = Column(Text, nullable=False, default="", server_default="")
+    # Bike category (backend/app/bike_categories.py), NULL = unknown; added by scripts/migrate_bike_category.py
+    category = Column(String(32), nullable=True)
 
     # Relationships
     components = relationship(

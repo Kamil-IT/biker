@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app import models, repository  # noqa: E402
 from migrate_component_linkable import migrate  # noqa: E402
+from migrate_bike_category import migrate as migrate_category  # noqa: E402
 
 ROWS = [
     # (bike_id, category, subcategory, component_order, element_name, element_order, spec_key, spec_value, spec_order)
@@ -119,6 +120,7 @@ def test_absent_table_is_left_to_init_db(tmp_path):
 def test_migrated_database_works_with_the_orm(tmp_path, monkeypatch):
     db = _old_db(tmp_path / "old.db")
     migrate(db, verbose=False)
+    migrate_category(db, verbose=False)  # the ORM selects bike.category too
     monkeypatch.setattr(models, "_db_url", None)
     models.configure_db(db)
     try:

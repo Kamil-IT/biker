@@ -43,6 +43,7 @@ export default function PopularBikesSection({ bikes, ratings, onSelect }: Popula
                   model:       bike.model,
                   accessories: [],
                   explanation: bike.description,
+                  category:    bike.category,
                   photo:       bike.photo ?? null,
                   photo_bg:    bike.photo_bg ?? null,
                 }}

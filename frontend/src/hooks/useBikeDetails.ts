@@ -41,6 +41,7 @@ export function useBikeDetails() {
   const [detailsState, setDetailsState]         = useState<LoadState>('loading')
   const [categories, setCategories]             = useState<BikeCategory[] | null>(null)
   const [description, setDescription]          = useState<BikeDescription | null>(null)
+  const [detailsCategory, setDetailsCategory]  = useState<string>('')
   const [detailsError, setDetailsError]         = useState<string | null>(null)
   // Photos are their own DB read (POST /v1/bike/photos), independent of the details request.
   const [photos, setPhotos]                     = useState<BikePhotosResponse | null>(null)
@@ -64,11 +65,14 @@ export function useBikeDetails() {
     setDetailsError(null)
     setCategories(null)
     setDescription(null)
+    setDetailsCategory('')
+    setDetailsCategory('')
     try {
       const data = await postJson<BikeDetailsResponse>('/v1/bike/details', body(b))
       if (bikeRef.current !== b) return
       setCategories(data.components)
       setDescription(data.description ?? null)
+      setDetailsCategory(data.category ?? '')
       setDetailsState('loaded')
     } catch (err) {
       if (bikeRef.current !== b) return
@@ -189,6 +193,7 @@ export function useBikeDetails() {
     if (!data) return
     setCategories(data.components)
     setDescription(data.description ?? null)
+    if (data.category) setDetailsCategory(data.category)
     setDetailsState('loaded')
   }
 
@@ -208,7 +213,7 @@ export function useBikeDetails() {
     bike, bikeRef, lookup, open, openById, reset, linkElement,
     // The BikeDetailsView props of the open bike's sections.
     view: {
-      categories, description, state: detailsState, error: detailsError, photos: photos?.photos ?? [], photosState,
+      categories, description, detailsCategory, state: detailsState, error: detailsError, photos: photos?.photos ?? [], photosState,
       review, reviewState, offers, offerState, usedBikes, usedBikeState, decathlonOffers, decathlonState,
       centrumOffers, centrumState,
     },
