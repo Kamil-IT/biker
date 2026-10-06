@@ -526,6 +526,8 @@ class ParseResponse(BaseModel):
     year:            Optional[int]  = None
     wheel_size:      Optional[str]  = None
     is_electric:     Optional[bool] = None
+    # One of bike_categories.SEARCH_BIKE_TYPES (the form's "Typ roweru" values) or None.
+    bike_type:       Optional[str]  = None
 
     def is_empty(self) -> bool:
         """True when the extractor found nothing at all.

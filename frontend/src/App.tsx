@@ -169,7 +169,7 @@ export default function App() {
           const parsed: ParseResponse = await res.json()
           const anyExtracted = !!(
             parsed.brand || parsed.model || (parsed.year != null) ||
-            parsed.wheel_size || (parsed.is_electric != null)
+            parsed.wheel_size || (parsed.is_electric != null) || parsed.bike_type
           )
           if (anyExtracted) {
             setFilters(prev => ({
@@ -179,6 +179,7 @@ export default function App() {
               ...(parsed.year != null   ? { year: String(parsed.year) }          : {}),
               ...(parsed.wheel_size     ? { wheel_size: parsed.wheel_size }       : {}),
               ...(parsed.is_electric != null    ? { is_electric: parsed.is_electric }       : {}),
+              ...(parsed.bike_type      ? { bike_type: parsed.bike_type }         : {}),
             }))
             setShowFilters(true)
             setIsParsing(false)

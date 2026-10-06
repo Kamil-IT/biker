@@ -5,6 +5,7 @@ from pathlib import Path
 
 from anthropic import AsyncAnthropic
 
+from .bike_categories import search_type_from_parse
 from .schemas import ParseResponse
 
 logger = logging.getLogger("biker.parser")
@@ -44,6 +45,8 @@ async def parse_free_text(text: str) -> ParseResponse:
             year=data.get("year"),
             wheel_size=data.get("wheel_size") or None,
             is_electric=data.get("is_electric"),
+            # Only a value the search form offers; anything else is dropped.
+            bike_type=search_type_from_parse(data.get("bike_type")),
         )
     except Exception:
         logger.warning("parse_free_text failed | text=%r", text[:100])

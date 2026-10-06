@@ -264,7 +264,7 @@ Bike details used to live in a `bike_details_cache` JSON-blob table in `app/stor
 - The response echoes the **caller's** casing, not the stored row's — same as the blob path did. `get_bike_details` finds the bike on the normalised columns (TODO-041; it used to match the exact stored casing).
 - **Photos are not part of the details response any more** (TODO-035): `BikeDetailsResponse` has no `photos` field. They live in `bike_detail_photos`, keyed on `bike_id` (not on the details row), are read by `POST /v1/bike/photos` (`app/photos_repository.py`, `display_order, id`) and written only by the searcher's photo search — insert-only, for a bike that has none. `save_bike_details` neither writes nor deletes them.
 - Details live on the `bike` row: `bike.description` (`TEXT`, nullable — the JSON `BikeDescription`; NULL = no details) and `bike.short_description` (`TEXT NOT NULL DEFAULT ''`, TODO-041, the two-sentence summary); the components are `bike_component` rows keyed on `bike_id`. The former `bike_detail` table is dropped by `scripts/migrate_drop_bike_detail.py`. Rows are written by the searcher (`POST /v1/bike/details/search`, a port of this save logic in `searcher/app/repository.py`) and the discovery processor; `POST /v1/bike/details` only reads them.
-- `bike.category` (`VARCHAR(32)`, nullable, NULL = unknown; English values from `app/bike_categories.py`, e.g. `MTB`, `Gravel`, `Road`, `Trekking`) is returned as `category` (string or `null`) by `POST /v1/bike/search` (each bike), `POST /v1/bike/details` and `GET /v1/bike/popular`. Filled by `scripts/migrate_bike_category.py` from the discovery `bike_type` and by the discovery processor (only while NULL); nothing validates it on write.
+- `bike.category` (`VARCHAR(32)`, nullable, NULL = unknown; English values from `app/bike_categories.py`, e.g. `MTB`, `Gravel`, `Road`, `Trekking`) is returned as `category` (string or `null`) by `POST /v1/bike/search` (each bike), `POST /v1/bike/by-id`, `POST /v1/bike/details` and `GET /v1/bike/popular`, and is what the search's `bike_type` filter matches (see [Search Cache](#search-cache)). Filled by `scripts/migrate_bike_category.py` from the discovery `bike_type`, by the discovery processor and by an AI search fallback with `bike_type` (`store.save_search`) — each only while NULL; nothing validates it on write.
 - `save_bike_details` updates the bike row's `description` / `short_description` **in place** and replaces its component rows (delete + re-insert), in one transaction. It returns **True** when committed and **False** when it failed and rolled back (errors are still swallowed and logged as a WARNING) — callers that need certainty (the discovery processor) use the return value. `bike.updated_at` is set on every save, but nothing reads it for freshness.
 
 See [`app/DB_MIGRATION.md`](app/DB_MIGRATION.md) for the full schema and what is still pending (search).
@@ -396,17 +396,18 @@ A bike matches when **every** checkable field given matches. A bike missing the 
 | `wheel_size` | any `spec_key='Wheel Size'`, or `Wheels/*` `Size` | number token (`29` in `29 x 2.4`); `700c` ↔ `28`, `650b` ↔ `27.5` |
 | `frame_size` | `Frame / Frame`, `spec_key='Sizes'` / `'Size'` | size token in the list (`SM`/`MD`/`LG` aliased) |
 | `is_electric` | `Electric / Powertrain` category present / absent | |
-| `bike_type`, `year`, `search` | — | **not checkable**, ignored by the DB step |
+| `bike_type` | `bike.category` | through `app/bike_categories.py` `categories_for_search`, case-insensitive: `Hybrid/Commuter` → `City`, `Cross` or `Hybrid/Commuter`; `Touring` → `Trekking` or `Touring`; any other value (`Road`, `MTB`, `Gravel`, `BMX`, `Folding`, an old address's `Cruiser`) → exactly itself. A bike whose category is NULL never matches a category; without `bike_type` NULL-category bikes are searched as before |
+| `year`, `search` | — | **not checkable**, ignored by the DB step |
 
-A request with **only** non-checkable fields skips the DB and goes straight to the AI call. **Every** matching DB bike is returned (no cap, TODO-025), sorted by brand then model (case-insensitive) — never topped up with AI results. There is no match score any more (TODO-040): the frontend orders the cards by the stored expert rating it reads with one [`POST /v1/bike/review`](#post-v1bikereview) per result bike (a DB read).
+A request with **only** non-checkable fields skips the DB and goes straight to the AI call. A category search with no DB match (e.g. no BMX stored yet) falls back to the AI call too; every bike it returns gets `bike.category` = `category_for_ai_result(bike_type)` (`Hybrid/Commuter` → `City`, `Touring` → `Trekking`, else the value itself; only values in `BIKE_CATEGORIES`) **only where its category is NULL** (`store.save_search`), so the next search by that category is answered from the DB. **Every** matching DB bike is returned (no cap, TODO-025), sorted by brand then model (case-insensitive) — never topped up with AI results. There is no match score any more (TODO-040): the frontend orders the cards by the stored expert rating it reads with one [`POST /v1/bike/review`](#post-v1bikereview) per result bike (a DB read).
 
 `explanation` / `accessories` (TODO-041) are **never produced by the AI and no longer depend on the query**: `explanation` is the bike's stored `bike.short_description` (`""` when it has none) and `accessories` are chips computed at read time from its stored components — Drivetrain → the Rear Derailleur (else Crank) element name, Brakes → the Brake Lever Front (else Brake Lever, else Brake Rotor) element name, Frame → the Frame element's `Material` spec value; only parts that are present. One builder serves the DB hit, and the AI fallback result. The earlier `"Pasuje: marka Trek, …"` text and the lookup in `search_bike_rating_cache` are gone.
 
 ### No generic cache for search
 
-`/v1/bike/search` neither reads nor writes `endpoint_req_to_body_cache` (`get_cached` / `set_cached`). That table has **no TTL** and the first write wins, so any answer stored there is served for that exact request body forever. That is how the answers stored before TODO-025 (capped at 5 bikes) kept coming back after the cap was removed. The DB step always reflects the current `bike` table, and an AI answer is stored only as data: `store.save_search` writes the bikes into `bike` and their explanations/accessories into `search_cache` + `search_bike_rating_cache`. A later search by brand/model then finds those bikes in the DB. A spec filter (`wheel_size`, `frame_size`, `is_electric`) also needs their `bike_detail` rows, and free-text-only or `bike_type`/`year`-only searches are never checkable. Those repeats call Claude again every time, because nothing replays an earlier answer. The old `/v1/bike/search` rows in `endpoint_req_to_body_cache` are dead: nothing reads them.
+`/v1/bike/search` neither reads nor writes `endpoint_req_to_body_cache` (`get_cached` / `set_cached`). That table has **no TTL** and the first write wins, so any answer stored there is served for that exact request body forever. That is how the answers stored before TODO-025 (capped at 5 bikes) kept coming back after the cap was removed. The DB step always reflects the current `bike` table, and an AI answer is stored only as data: `store.save_search` writes the bikes into `bike` and their explanations/accessories into `search_cache` + `search_bike_rating_cache`. A later search by brand/model then finds those bikes in the DB. A spec filter (`wheel_size`, `frame_size`, `is_electric`) also needs their `bike_detail` rows, a `bike_type` filter needs `bike.category` (stamped on AI-found bikes whose category was NULL), and free-text-only or `year`-only searches are never checkable. Those repeats call Claude again every time, because nothing replays an earlier answer. The old `/v1/bike/search` rows in `endpoint_req_to_body_cache` are dead: nothing reads them.
 
-**Test:** `scripts/test_search.py` `case_search_db_hit_and_search_cache` seeds a stale generic-cache row for the exact request body and asserts the DB answer is returned instead; the `--ai` free-text case asserts no generic-cache row is written.
+**Test:** `scripts/test_search.py` `case_search_db_hit_and_search_cache` seeds a stale generic-cache row for the exact request body and asserts the DB answer is returned instead; the `--ai` free-text case asserts no generic-cache row is written. `case_search_category` seeds three fixture bikes (`City`, `Gravel`, NULL) and asserts the category searches (with and without a brand) are DB answers under 5 s with only the mapped categories; `scripts/test_search_category.py` (pytest, temp SQLite) covers the mapping, the filter, the stamp and the route's AI fallback with the finder mocked.
 
 ## Endpoints
 
@@ -448,10 +449,10 @@ All fields except `search` default to `null` (no constraint). The backend assemb
 `id` is the `bike.id` — the frontend's `/bike/{id}` address; `null` only when the bike row of an AI-found bike could not be saved (a swallowed `save_search` failure). `explanation` is `""` and `accessories` `[]` for a bike without stored details (typical for an AI-found bike) — the UI hides both. No `match_score` (removed in TODO-040): a DB hit is sorted by brand/model, an AI answer keeps the model's order, and the UI re-orders the cards by expert rating.
 
 **Flow:**
-0. DB reads only — the DB details search over `bike` + `bike_component` (skipped when no checkable field is set). **A hit returns immediately, making zero outbound HTTP calls.** No generic-cache lookup. See [Search Cache](#search-cache)
+0. DB reads only — the DB details search over `bike` (brand, model, `category` for `bike_type`) + `bike_component` (skipped when no checkable field is set). **A hit returns immediately, making zero outbound HTTP calls** — a category-only search (`{"bike_type": "MTB"}`) included. No generic-cache lookup. See [Search Cache](#search-cache)
 1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku (no tools) with `app/prompts/bike_search.md` and the enriched query; returns every matching bike as a JSON array (`brand` + `model` only since TODO-041 — min 1: when nothing meets every filter, the closest bike, no longer with an explanation of the missed filter; `max_tokens=8000`, a warning is logged on `stop_reason == "max_tokens"`), parsed with `app/json_extract.extract_json()`; the result is then filled from stored details (`repository.fill_bike_results`, DB only). Runs only on a DB miss
 
-A response with no parseable JSON returns `bikes: []` (never a 502) and nothing is stored; an upstream API error is a 502, except an Anthropic 400, which is a 400 with Anthropic's message. When the AI returns bikes, `store.save_search` makes sure each one exists in `bike` (nothing per-search is stored since TODO-043) — never the generic cache. A DB-served result is not written anywhere — see [Search Cache](#search-cache).
+A response with no parseable JSON returns `bikes: []` (never a 502) and nothing is stored; an upstream API error is a 502, except an Anthropic 400, which is a 400 with Anthropic's message. When the AI returns bikes, `store.save_search` makes sure each one exists in `bike` and, for a request with `bike_type`, sets the mapped category on those whose `category` is NULL (nothing per-search is stored since TODO-043) — never the generic cache. A DB-served result is not written anywhere — see [Search Cache](#search-cache).
 
 ---
 
@@ -585,7 +586,7 @@ Content-Type: application/json
 }
 ```
 
-**Response:** the search-result shape — `{ "id": 39, "brand": "Cannondale", "model": "Topstone Carbon 4", "accessories": ["Shimano GRX RD-RX812", "Shimano GRX BL-RX400", "Carbon"], "explanation": "", "photo": "https://example.com/topstone.jpg", "photo_bg": "#F2F2F2" }` (`photo` / `photo_bg` = the cover photo and its edge colour or `null` / `null`, as in the search result; stored casing; `explanation` = the stored short description, `accessories` = the component chips, both empty without stored details). The frontend then reads details, photos, review and offers by brand + model as for a clicked card.
+**Response:** the search-result shape — `{ "id": 39, "brand": "Cannondale", "model": "Topstone Carbon 4", "accessories": ["Shimano GRX RD-RX812", "Shimano GRX BL-RX400", "Carbon"], "explanation": "", "category": "Gravel", "photo": "https://example.com/topstone.jpg", "photo_bg": "#F2F2F2" }` (`photo` / `photo_bg` = the cover photo and its edge colour or `null` / `null`, as in the search result; `category` = `bike.category` or `null`; stored casing; `explanation` = the stored short description, `accessories` = the component chips, both empty without stored details). The frontend then reads details, photos, review and offers by brand + model as for a clicked card.
 
 - Unknown id → **404** `{"detail": "Bike not found"}` (the frontend shows "Nie znaleziono roweru" and keeps the address). `bike_id` must be an integer 1 … 2147483647 (422).
 - A DB error → **503** `{"detail": "Bike lookup failed"}` + ERROR log (not a 404 — the bike may exist).
@@ -1237,7 +1238,7 @@ Content-Type: application/json
 
 ### `POST /v1/bike/parse`
 
-Extract structured bike attributes (brand, model, year, wheel size, electric flag) from a free-text query. Used by the frontend to auto-populate the structured search fields before the user submits their search.
+Extract structured bike attributes (brand, model, year, wheel size, electric flag, bike type) from a free-text query. Used by the frontend to auto-populate the structured search fields before the user submits their search.
 
 ```http
 POST http://localhost:8000/v1/bike/parse
@@ -1255,11 +1256,16 @@ Content-Type: application/json
   "model": "Marlin 7",
   "year": 2023,
   "wheel_size": "29\"",
-  "is_electric": null
+  "is_electric": null,
+  "bike_type": null
 }
 ```
 
-Fields not found in the text are returned as `null`. All fields are optional in the response. Only these five fields are extracted — rider height/weight, suspension and kids flags were removed (TODO-023), so text mentioning only those yields the 400 below.
+Fields not found in the text are returned as `null`. All fields are optional in the response. Only these six fields are extracted — rider height/weight, suspension and kids flags were removed (TODO-023), so text mentioning only those yields the 400 below.
+
+`bike_type` is one of the search form's "Typ roweru" values — `Road`, `MTB`, `Gravel`, `Hybrid/Commuter`, `Touring`, `BMX`, `Folding` (`app/bike_categories.py` `SEARCH_BIKE_TYPES`) — or `null`; any other value the model returns is dropped (`search_type_from_parse`). It is set only when the text names the kind of bike ("rower szosowy" → `Road`, "górski" / "MTB" → `MTB`, "miejski" / "crossowy" → `Hybrid/Commuter`, "trekkingowy" → `Touring`, "składak" → `Folding`), never inferred from the intended use or terrain ("na dojazdy", "po lesie"). A type-only parse is not empty, so "Szukam roweru szosowego" → 200 `{"bike_type": "Road", …}`.
+
+Cached in `endpoint_req_to_body_cache` under `/v1/bike/parse` with the request key `{"text": …, "v": "2"}` — the `v` marks answers that carry `bike_type`; rows an older build stored under `{"text": …}` are no longer read.
 
 **`400 Bad Request` when nothing could be extracted.** If *every* field would be `null`, the
 endpoint returns `{"detail": "Bike not available in our database"}` instead of an all-`null`

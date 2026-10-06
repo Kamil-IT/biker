@@ -6,6 +6,7 @@ from typing import Optional
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
+from .bike_categories import categories_for_search
 from .component_tree import flatten_components, rebuild_components  # noqa: F401 — re-exported
 from .photo_cover import get_cover_photos
 from .models import (
@@ -287,19 +288,21 @@ def get_bike_by_id(bike_id: int) -> Optional[BikeResult]:
         photo, photo_bg = get_cover_photos([bike_id], session).get(bike_id, (None, None))
         return BikeResult(
             id=bike.id, brand=bike.brand, model=bike.model, accessories=chips, explanation=explanation,
-            photo=photo, photo_bg=photo_bg,
+            category=bike.category, photo=photo, photo_bg=photo_bg,
         )
     finally:
         session.close()
 
 
 # ── DB-first bike search (TODO-024) ─────────────────────────────────────────
-# A bike matches when EVERY checkable field given matches; bike_type / year /
-# free text are ignored. A missing spec row does not match. Normalise in Python:
-# SQLite's lower() is ASCII-only, so 'RIESE & MÜLLER' would miss 'riese & müller'.
+# A bike matches when EVERY checkable field given matches; year / free text are
+# ignored. A missing spec row does not match. bike_type matches bike.category
+# through bike_categories.categories_for_search (a NULL category never matches).
+# Normalise in Python: SQLite's lower() is ASCII-only, so 'RIESE & MÜLLER'
+# would miss 'riese & müller'.
 
 _SPEC_FIELDS = ("wheel_size", "frame_size", "is_electric")
-CHECKABLE_FIELDS = ("brand", "model") + _SPEC_FIELDS
+CHECKABLE_FIELDS = ("brand", "model", "bike_type") + _SPEC_FIELDS
 
 _ELECTRIC = "Electric / Powertrain"
 
@@ -372,9 +375,11 @@ def find_bikes_by_details(req) -> list[BikeResult]:
     session = get_session()
     try:
         brand, model = _lc(fields.get("brand")), _lc(fields.get("model"))
+        categories = categories_for_search(fields.get("bike_type"))
         candidates = [
             b for b in session.query(Bike.id, Bike.brand, Bike.model, Bike.category).all()
             if (not brand or _lc(b.brand) == brand) and (not model or _lc(b.model) == model)
+            and (not categories or (b.category is not None and _lc(b.category) in categories))
         ]
         spec_fields = {f: v for f, v in fields.items() if f in _MATCHERS}
         if spec_fields and candidates:

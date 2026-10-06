@@ -25,6 +25,9 @@ const FRAME_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 // only `label` is translated.
 interface Option { value: string; label: string }
 
+// The backend matches a type against bike.category (backend/app/bike_categories.py
+// SEARCH_BIKE_TYPES / SEARCH_TYPE_CATEGORIES): Hybrid/Commuter = City, Cross;
+// Touring = Trekking; the rest 1:1. Keep the two lists in step.
 const BIKE_TYPES: Option[] = [
   { value: 'Road',            label: 'Szosowy' },
   { value: 'MTB',             label: 'Górski (MTB)' },
@@ -32,7 +35,6 @@ const BIKE_TYPES: Option[] = [
   { value: 'Hybrid/Commuter', label: 'Miejski / crossowy' },
   { value: 'Touring',         label: 'Trekkingowy' },
   { value: 'BMX',             label: 'BMX' },
-  { value: 'Cruiser',         label: 'Cruiser' },
   { value: 'Folding',         label: 'Składany' },
 ]
 

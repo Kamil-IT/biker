@@ -238,6 +238,8 @@ export interface ParseResponse {
   year?:           number
   wheel_size?:     string
   is_electric?:    boolean
+  // One of the "Typ roweru" option values (Road, MTB, Gravel, Hybrid/Commuter, Touring, BMX, Folding)
+  bike_type?:      string
 }
 
 // Returned by GET /v1/bike/popular (TODO-034): the curated home-page list, already in

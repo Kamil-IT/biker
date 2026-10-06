@@ -105,9 +105,9 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
     # older builds (the 5-bike cap removed in TODO-025) for the same request body.
     enriched = req.enriched_query()
 
-    # TODO-024: DB first. find_bikes_by_details returns [] straight away when no
-    # DB-checkable field is set (only bike_type / year / free text), so those
-    # requests go straight to the AI call.
+    # TODO-024: DB first — brand, model, bike_type (bike.category), wheel / frame
+    # size, e-bike. [] straight away when none of those is set (only year / free
+    # text) or when nothing matches; both go to the AI call.
     db_bikes = find_bikes_by_details(req)
     if db_bikes:
         logger.info("search served from DB | enriched_query=%r bikes=%d", enriched, len(db_bikes))
@@ -127,10 +127,10 @@ async def bike_search(req: SearchRequest) -> BikeSearchResponse:
         len(bikes), time.perf_counter() - t_total,
     )
     # save_search is not a response cache: it only makes sure the found bikes
-    # exist in `bike` (a later brand/model search finds them in the DB and the
-    # details view can open them). Nothing per-search is stored (TODO-043).
+    # exist in `bike`, a NULL category set from bike_type (a later search finds
+    # them in the DB). Nothing per-search is stored (TODO-043).
     if bikes:
-        save_search(enriched, bikes)
+        save_search(enriched, bikes, bike_type=req.bike_type)
         # explanation / accessories come from the bikes' stored details (TODO-041),
         # never from the AI: a bike found only by the AI has none → "" / [].
         bikes = fill_bike_results(bikes)
@@ -580,7 +580,7 @@ def _reject_empty_parse(result: ParseResponse, text: str) -> None:
 @app.post("/v1/bike/parse", response_model=ParseResponse)
 async def bike_parse(req: ParseRequest) -> ParseResponse:
     logger.info("parse request | text=%r", req.text[:80])
-    _fields = {"text": req.text}
+    _fields = {"text": req.text, "v": "2"}  # v2 = with bike_type: older rows never had it
     cached = get_cached("/v1/bike/parse", _fields, ParseResponse)
     if cached is not None:
         # Older builds cached all-None results; reject those on the hit path too
