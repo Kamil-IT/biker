@@ -13,9 +13,11 @@ A successful save also links the element on the bike it was opened from:
 link_bike_components sets bike_component.equipment_id on THAT bike's
 rows with that element name — never on other bikes — in the same transaction.
 A bike missing from `bike` is not created: the equipment is stored anyway and
-the link is skipped (WARNING). An unusable result writes nothing — no
-equipment row, no link. Lives apart from repository.py (500-line rule) and
-reuses its helpers.
+the link is skipped (WARNING). An unusable details result stores only the
+"Opis niedostępny dla tego produktu." placeholder on an item without a
+description (the frontend then stops searching it automatically); an empty
+photo result writes nothing. Lives apart from repository.py (500-line rule)
+and reuses its helpers.
 """
 import logging
 from datetime import datetime, timezone
@@ -35,6 +37,9 @@ from .repository import _find_bike_id, _rebuild_components, flatten_components
 from .schemas import BikeDescription, EquipmentDetails
 
 logger = logging.getLogger("searcher.equipment.repository")
+
+# Stored as the description of an item a details search found nothing for (see _store_not_found).
+NOT_FOUND_TEXT = "Opis niedostępny dla tego produktu."
 
 
 def _find_equipment_id(session, category: str, name: str) -> Optional[int]:
@@ -135,6 +140,27 @@ def _link(session, bike_company: str, bike_model: str, element_name: str, equipm
     return linked
 
 
+def _store_not_found(session, bike_company: str, bike_model: str, element_name: str, category: str) -> int:
+    """A run that found nothing usable: the item gets NOT_FOUND_TEXT as its description when it has none
+    (`description` NULL), so the frontend, which searches automatically only while an item has no description,
+    never runs it again. A stored description is never touched; no components, no researched identity. The
+    element is linked like a usable result. Commits; returns the equipment id."""
+    equipment_id = _get_or_create_equipment(session, category, element_name)
+    item = session.get(Equipment, equipment_id)
+    placed = item.description is None
+    if placed:
+        item.description = BikeDescription(text=NOT_FOUND_TEXT).model_dump_json()
+        item.short_description = ""
+        item.updated_at = datetime.now(timezone.utc)
+    linked = _link(session, bike_company, bike_model, element_name, equipment_id)
+    session.commit()
+    logger.warning(
+        "no usable equipment details | element=%r category=%r equipment_id=%d placeholder=%s linked=%d",
+        element_name, category, equipment_id, placed, linked,
+    )
+    return equipment_id
+
+
 def save_equipment_details(
     bike_company: str, bike_model: str, element_name: str, category: str, details: EquipmentDetails,
 ) -> tuple[Optional[int], bool]:
@@ -149,16 +175,16 @@ def save_equipment_details(
     missing (fill_missing_identity: a stored value is never overwritten, a ""
     from the run never counts) and the element linked on the bike, all under
     the equipment row lock (_get_or_create_equipment), so two bikes saving the
-    same item at once run one after the other. An unusable result writes,
-    deletes and links nothing and answers (None, False) — no id the caller
-    could store, even when the item exists (the UI falls back to the by-name
-    read). Raises on a DB error after rolling back.
+    same item at once run one after the other. An unusable result (found:
+    false or nothing in it) stores only the NOT_FOUND_TEXT placeholder on an
+    item without a description (_store_not_found) and answers (equipment_id,
+    False) — a failed run raises before this and writes nothing, so the next
+    visit retries. Raises on a DB error after rolling back.
     """
     session = get_session()
     try:
         if not is_usable_details(details):
-            logger.warning("no usable equipment details - nothing written | element=%r category=%r", element_name, category)
-            return None, False
+            return _store_not_found(session, bike_company, bike_model, element_name, category), False
         equipment_id = _get_or_create_equipment(session, category, element_name)
         item = session.get(Equipment, equipment_id)
         has_desc = bool(details.description.text.strip())

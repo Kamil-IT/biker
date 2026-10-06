@@ -5,3 +5,4 @@ sqlalchemy
 psycopg[binary]
 patchright
 httpx
+Pillow

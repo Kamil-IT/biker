@@ -10,7 +10,7 @@ it passes on a cold or aged database. Endpoints covered here:
 
   no API   /v1/bike/search (DB hit) · /v1/bike/details
            /v1/bike/details/search (404 only — no paid run)
-           /v1/bike/missing · /v1/bike/popular · /v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
+           /v1/bike/missing · /v1/contact · /v1/bike/popular ·/v1/bike/used/olx · /v1/bike/used/search (404 only — no paid run)
            /v1/bike/decathlon · /v1/bike/decathlon/search (404 + foreign-brand skip always; the
            live house-brand search — the ONE paid searcher run in the suite — only when the searcher is up)
            /v1/bike/allegro · /v1/bike/allegro/search (404 only — no paid run)
@@ -18,6 +18,7 @@ it passes on a cold or aged database. Endpoints covered here:
            /v1/bike/review · /v1/bike/review/search (404 only — no paid run)
            /v1/equipment/details · /v1/equipment/photos (by id and by name)
            /v1/equipment/details/search · /v1/equipment/photos/search (404 only — no paid run)
+           /v1/bike/by-id · /v1/equipment/resolve · /v1/equipment/by-id (URL routing, no AI)
   --ai     /v1/bike/search (free text) · /v1/bike/parse · /v1/bike/ceneo
 
 /v1/equipment/review (Anthropic API, generic cache) has its own focused script,
@@ -56,6 +57,7 @@ SEARCH_URL = f"{BASE}/v1/bike/search"
 DETAILS_URL = f"{BASE}/v1/bike/details"
 DETAILS_SEARCH_URL = f"{BASE}/v1/bike/details/search"
 MISSING_URL = f"{BASE}/v1/bike/missing"
+CONTACT_URL = f"{BASE}/v1/contact"
 POPULAR_URL = f"{BASE}/v1/bike/popular"
 USED_URL = f"{BASE}/v1/bike/used/olx"
 USED_SEARCH_URL = f"{BASE}/v1/bike/used/search"
@@ -74,6 +76,9 @@ EQUIP_DETAILS_URL = f"{BASE}/v1/equipment/details"
 EQUIP_PHOTOS_URL = f"{BASE}/v1/equipment/photos"
 EQUIP_DETAILS_SEARCH_URL = f"{BASE}/v1/equipment/details/search"
 EQUIP_PHOTOS_SEARCH_URL = f"{BASE}/v1/equipment/photos/search"
+BIKE_BY_ID_URL = f"{BASE}/v1/bike/by-id"
+EQUIP_BY_ID_URL = f"{BASE}/v1/equipment/by-id"
+EQUIP_RESOLVE_URL = f"{BASE}/v1/equipment/resolve"
 SEARCHER_URL = os.getenv("SEARCHER_URL", "").strip().rstrip("/")
 
 
@@ -362,6 +367,46 @@ def case_missing():
         assert resp.json() == {"bike_id": bike_id, "missing_type": "photos", "counter": 1}, resp.json()
     finally:
         _delete_bike(FIX_MISSING_BRAND, FIX_MISSING_MODEL)
+
+
+FIX_CONTACT_EMAIL = "smoke-fixture@example.invalid"
+
+
+def _delete_contact_fixture() -> None:
+    conn = _DB()
+    try:
+        conn.execute("DELETE FROM contact_message WHERE email = ?", (FIX_CONTACT_EMAIL,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _contact_fixture_rows() -> list[tuple]:
+    conn = _DB()
+    try:
+        return conn.execute(
+            "SELECT name, topic, message FROM contact_message WHERE email = ? ORDER BY id", (FIX_CONTACT_EMAIL,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def case_contact():
+    """/v1/contact stores a contact-form message; a bad e-mail is a 422 and a filled honeypot stores nothing."""
+    _delete_contact_fixture()
+    try:
+        body = {"name": " Smoke ", "email": FIX_CONTACT_EMAIL, "topic": "other", "message": "Wiadomość testowa."}
+        resp = _post(CONTACT_URL, body, timeout=10)
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        assert resp.json() == {"ok": True}, resp.json()
+        assert _contact_fixture_rows() == [("Smoke", "other", "Wiadomość testowa.")], _contact_fixture_rows()
+        resp = _post(CONTACT_URL, {**body, "email": "not-an-address"}, timeout=10)
+        assert resp.status_code == 422, f"bad e-mail: expected 422, got {resp.status_code}"
+        resp = _post(CONTACT_URL, {**body, "website": "http://spam.example"}, timeout=10)
+        assert resp.status_code == 200 and resp.json() == {"ok": True}, f"honeypot: {resp.status_code} {resp.text[:200]}"
+        assert len(_contact_fixture_rows()) == 1, "a filled honeypot must not store a row"
+    finally:
+        _delete_contact_fixture()
 
 
 FIX_POP_BRAND, FIX_POP_MODEL_A, FIX_POP_MODEL_B = "Smoke Fixture", "Popular Bike A", "Popular Bike B"
@@ -898,14 +943,18 @@ def case_equipment_photos():
 
 
 def _equipment_search_404s(url: str) -> None:
-    """Unknown bike -> 404 "Bike not found"; known bike + an element it does not have -> 404 "Component not found".
+    """Unknown bike -> 404 "Bike not found"; known bike + an element it does not have -> 404 "Component not found";
+    by id: unknown item -> 404 "Equipment not found", an item no bike links -> 404 "Component not found".
 
     No live run: every searcher run is a paid subscription search (the suite's one
     live run is case_decathlon_search, same searcher_client code path)."""
     body = {"bike_company": "FakeBrand", "bike_model": "NoSuchModel XYZ999", "element_name": FIX_EQUIP_MODEL}
     resp = _post(url, body, timeout=30)
     assert resp.status_code == 404 and resp.json() == {"detail": "Bike not found"}, f"{resp.status_code}: {resp.text[:200]}"
+    resp = _post(url, {"equipment_id": 999999999}, timeout=30)
+    assert resp.status_code == 404 and resp.json() == {"detail": "Equipment not found"}, f"{resp.status_code}: {resp.text[:200]}"
     _delete_bike(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL)
+    _delete_equipment(FIX_EQUIP_MODEL)
     _seed_bike_details(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL, "", _full_components())
     try:
         body = {"bike_company": FIX_EQUIP_BIKE_BRAND, "bike_model": FIX_EQUIP_BIKE_MODEL,
@@ -913,8 +962,128 @@ def _equipment_search_404s(url: str) -> None:
         resp = _post(url, body, timeout=30)
         assert resp.status_code == 404 and resp.json() == {"detail": "Component not found"}, \
             f"{resp.status_code}: {resp.text[:200]}"
+        orphan, _ = equipment_repository.save_equipment_photos(
+            "", FIX_EQUIP_MODEL, FIX_EQUIP_CATEGORY, ["https://example.com/smoke-orphan.jpg"])
+        resp = _post(url, {"equipment_id": orphan}, timeout=30)
+        assert resp.status_code == 404 and resp.json() == {"detail": "Component not found"}, \
+            f"{resp.status_code}: {resp.text[:200]}"
     finally:
         _delete_bike(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL)
+        _delete_equipment(FIX_EQUIP_MODEL)
+
+
+FIX_ID_BRAND, FIX_ID_MODEL = "Smoke Fixture", "By Id Bike"
+
+
+def case_bike_by_id():
+    """/v1/bike/by-id answers one bike by its id (the /bike/{id} deep link): stored casing, short description,
+    chips; an unknown id -> 404, a non-positive id -> 422. Search and popular answers carry the same id."""
+    _delete_bike(FIX_ID_BRAND, FIX_ID_MODEL)
+    _seed_bike_details(FIX_ID_BRAND, FIX_ID_MODEL, FIX_SHORT, _full_components())
+    try:
+        found = _post(SEARCH_URL, {"brand": FIX_ID_BRAND, "model": FIX_ID_MODEL.upper()}, timeout=60)
+        assert found.status_code == 200, found.text[:200]
+        (hit,) = found.json()["bikes"]
+        bike_id = hit["id"]
+        assert isinstance(bike_id, int), f"search results carry the bike id: {hit}"
+        t0 = time.perf_counter()
+        resp = _post(BIKE_BY_ID_URL, {"bike_id": bike_id}, timeout=10)
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        assert resp.json() == {"id": bike_id, "brand": FIX_ID_BRAND, "model": FIX_ID_MODEL,
+                               "accessories": FIX_CHIPS, "explanation": FIX_SHORT,
+                               "photo": None, "photo_bg": None}, resp.json()
+        assert time.perf_counter() - t0 < 5.0
+        resp = _post(BIKE_BY_ID_URL, {"bike_id": 999999999}, timeout=10)
+        assert resp.status_code == 404 and resp.json() == {"detail": "Bike not found"}, resp.text[:200]
+        assert _post(BIKE_BY_ID_URL, {"bike_id": 0}, timeout=10).status_code == 422
+    finally:
+        _delete_bike(FIX_ID_BRAND, FIX_ID_MODEL)
+
+
+FIX_COVER_BRAND = "Smoke Cover"
+FIX_COVER_JUNK = "https://example.com/smoke-cover/assets/logo.svg"
+FIX_COVER_GOOD = "https://example.com/smoke-cover/front-view.jpg"
+
+
+def case_result_cover():
+    """Search results, /v1/bike/by-id and /v1/bike/popular carry the bike's cover photo + its edge colour: the first
+    stored photo that is not junk (a leading logo.svg is skipped) and its bg_color; a bike without photos -> null/null."""
+    with_photos, without = "With Photos", "No Photos"
+    for m in (with_photos, without):
+        _delete_bike(FIX_COVER_BRAND, m)
+        _seed_bike_details(FIX_COVER_BRAND, m, FIX_SHORT, _full_components())
+    conn = _DB()
+    try:
+        id_with = conn.execute("SELECT id FROM bike WHERE brand = ? AND model = ?", (FIX_COVER_BRAND, with_photos)).fetchone()[0]
+        id_without = conn.execute("SELECT id FROM bike WHERE brand = ? AND model = ?", (FIX_COVER_BRAND, without)).fetchone()[0]
+        for order, (url, color) in enumerate(((FIX_COVER_JUNK, None), (FIX_COVER_GOOD, "#F2F2F2"))):
+            conn.execute(
+                "INSERT INTO bike_detail_photos (bike_id, url, display_order, bg_color) VALUES (?, ?, ?, ?)",
+                (id_with, url, order, color),
+            )
+        for position, bike_id in ((1, id_with), (2, id_without)):
+            conn.execute("INSERT INTO bike_popular (bike_id, position, created_at) VALUES (?, ?, ?)", (bike_id, position, _now()))
+        conn.commit()
+    finally:
+        conn.close()
+    try:
+        found = _post(SEARCH_URL, {"brand": FIX_COVER_BRAND}, timeout=60)
+        assert found.status_code == 200, found.text[:200]
+        mine = {b["model"]: b for b in found.json()["bikes"] if b["brand"] == FIX_COVER_BRAND}
+        assert (mine[with_photos]["photo"], mine[with_photos]["photo_bg"]) == (FIX_COVER_GOOD, "#F2F2F2"), mine[with_photos]
+        assert (mine[without]["photo"], mine[without]["photo_bg"]) == (None, None), mine[without]
+        t0 = time.perf_counter()
+        for bike_id, expected in ((id_with, (FIX_COVER_GOOD, "#F2F2F2")), (id_without, (None, None))):
+            resp = _post(BIKE_BY_ID_URL, {"bike_id": bike_id}, timeout=10)
+            assert resp.status_code == 200, resp.text[:200]
+            assert (resp.json()["photo"], resp.json()["photo_bg"]) == expected, resp.json()
+        popular = {b["model"]: b for b in httpx.get(POPULAR_URL, timeout=10).json()["bikes"] if b["brand"] == FIX_COVER_BRAND}
+        assert (popular[with_photos]["photo"], popular[with_photos]["photo_bg"]) == (FIX_COVER_GOOD, "#F2F2F2"), popular
+        assert (popular[without]["photo"], popular[without]["photo_bg"]) == (None, None), popular
+        assert time.perf_counter() - t0 < 5.0, "DB reads took too long (AI ran?)"
+    finally:
+        for m in (with_photos, without):
+            _delete_bike(FIX_COVER_BRAND, m)
+
+
+def case_equipment_resolve_and_by_id():
+    """/v1/equipment/resolve finds or creates the (empty) equipment row of a bike's element and links that bike;
+    /v1/equipment/by-id answers its identity + the first bike linking it. No AI, no searcher call."""
+    element = "Smoke Frame"  # a namespaced element of _full_components(), category "parts" (frame)
+    _delete_bike(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL)
+    _delete_equipment(element)
+    _seed_bike_details(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL, "", _full_components())
+    try:
+        found = _post(SEARCH_URL, {"brand": FIX_EQUIP_BIKE_BRAND, "model": FIX_EQUIP_BIKE_MODEL}, timeout=60)
+        bike_id = found.json()["bikes"][0]["id"]
+        t0 = time.perf_counter()
+        resp = _post(EQUIP_RESOLVE_URL, {"bike_id": bike_id, "element_name": element.lower()}, timeout=10)
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        eid = resp.json()["equipment_id"]
+        assert resp.json() == {"equipment_id": eid, "name": element, "category": "parts"}, resp.json()
+        assert time.perf_counter() - t0 < 5.0
+        again = _post(EQUIP_RESOLVE_URL, {"bike_id": bike_id, "element_name": element}, timeout=10)
+        assert again.json()["equipment_id"] == eid, "the second click reuses the row"
+        details = _post(DETAILS_URL, {"company": FIX_EQUIP_BIKE_BRAND, "model": FIX_EQUIP_BIKE_MODEL}, timeout=10).json()
+        linked = [el["equipment_id"] for c in details["components"] for s in c["subcategories"] for el in s["elements"]
+                  if el["name"] == element]
+        assert linked == [eid], f"the bike's element is linked: {linked}"
+        item = _post(EQUIP_BY_ID_URL, {"equipment_id": eid}, timeout=10)
+        assert item.status_code == 200, item.text[:200]
+        assert item.json() == {"equipment_id": eid, "name": element, "category": "parts", "company": "", "model": element,
+                               "bike": {"id": bike_id, "brand": FIX_EQUIP_BIKE_BRAND, "model": FIX_EQUIP_BIKE_MODEL}}
+        empty = _post(EQUIP_DETAILS_URL, {"equipment_id": eid}, timeout=10).json()  # by id alone, nothing stored yet
+        assert (empty["equipment_id"], empty["description"], empty["components"]) == (eid, EMPTY_DESC, []), empty
+        for url, body, detail in (
+            (EQUIP_BY_ID_URL, {"equipment_id": 999999999}, "Equipment not found"),
+            (EQUIP_RESOLVE_URL, {"bike_id": 999999999, "element_name": element}, "Bike not found"),
+            (EQUIP_RESOLVE_URL, {"bike_id": bike_id, "element_name": "No Such Element XYZ999"}, "Component not found"),
+        ):
+            resp = _post(url, body, timeout=10)
+            assert resp.status_code == 404 and resp.json() == {"detail": detail}, f"{resp.status_code}: {resp.text[:200]}"
+    finally:
+        _delete_bike(FIX_EQUIP_BIKE_BRAND, FIX_EQUIP_BIKE_MODEL)
+        _delete_equipment(element)
 
 
 def case_equipment_details_search():
@@ -965,6 +1134,7 @@ CASES = [
     (case_details, False),
     (case_details_search, False),
     (case_missing, False),
+    (case_contact, False),
     (case_popular, False),
     (case_used, False),
     (case_used_search, False),
@@ -981,6 +1151,9 @@ CASES = [
     (case_equipment_photos, False),
     (case_equipment_details_search, False),
     (case_equipment_photos_search, False),
+    (case_bike_by_id, False),
+    (case_result_cover, False),
+    (case_equipment_resolve_and_by_id, False),
     (case_search_free_text, True),
     (case_parse, True),
     (case_ceneo, True),

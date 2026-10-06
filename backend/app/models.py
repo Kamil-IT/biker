@@ -173,6 +173,9 @@ class BikeDetailPhoto(Base):
     bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
     url = Column(String(2048), nullable=False)
     display_order = Column(Integer, default=0)
+    # The photo's own edge colour "#RRGGBB" (the results tile's frame background); NULL = not
+    # computed / transparent / unknown. scripts/migrate_photo_bg_color.py adds it to an existing table.
+    bg_color = Column(String(7), nullable=True)
 
     # Relationships
     bike = relationship("Bike", back_populates="photos")
@@ -368,6 +371,26 @@ class BikePopular(Base):
 
     # Relationships
     bike = relationship("Bike")
+
+
+# --- Contact messages ------------------------------------------------------
+# What a visitor sent through the "Kontakt" tab's "Napisz do nas" form
+# (POST /v1/contact). Written only by that endpoint, read by hand (SQL) — the
+# app has no route that lists them. Created by init_db() like every other
+# table — no migration step.
+
+
+class ContactMessage(Base):
+    """One message from the contact form; `topic` is a slug of schemas.CONTACT_TOPICS."""
+
+    __tablename__ = "contact_message"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), nullable=False, default="")  # optional on the form, "" = not given
+    email = Column(String(254), nullable=False)
+    topic = Column(String(32), nullable=False)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
 
 
 # --- Generic endpoint response cache ---------------------------------------

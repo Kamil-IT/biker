@@ -9,7 +9,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app import equipment_repository as er, models, repository  # noqa: E402
+from app import equipment_lookup as el, equipment_repository as er, models, repository  # noqa: E402
 from app.equipment_models import Equipment, EquipmentComponent, EquipmentDetailPhoto  # noqa: E402
 from app.schemas import (  # noqa: E402
     BikeCategory, BikeDescription, BikeDetailsResponse, BikeSubcategory, ComponentElement,
@@ -268,3 +268,56 @@ def test_request_validation():
         EquipmentDetailsRequest(model="X", equipment_id=0)
     req = EquipmentSearchRequest(bike_company=" Canyon ", bike_model="Grizl", element_name=" Hyban ", category=" ")
     assert (req.bike_company, req.element_name, req.category) == ("Canyon", "Hyban", None)
+    # by id (the /equipment/{id} deep link): no bike / element / model needed
+    assert EquipmentSearchRequest(equipment_id=5).equipment_id == 5
+    assert EquipmentDetailsRequest(equipment_id=5).model == ""
+    with pytest.raises(ValueError):
+        EquipmentSearchRequest(bike_id=5)
+    with pytest.raises(ValueError):
+        EquipmentDetailsRequest(model="  ")
+
+
+# ── equipment_lookup: /equipment/{id} pages ──────────────────────────────────
+
+
+def test_resolve_creates_an_empty_row_and_links_only_that_bike(db):
+    canyon, kross = _bike(), _bike("Kross", "Esker")
+    got = el.resolve_equipment(canyon, " abus HYBAN 2.0 ")
+    assert (got.name, got.category) == (HELMET, "locks"), "stored name, the searcher's inferred category (abus)"
+    with models.get_session() as s:
+        item = s.get(Equipment, got.equipment_id)
+        assert (item.company, item.model, item.description) == ("", HELMET, None), "empty: no details yet"
+    assert (HELMET, got.equipment_id) in _links(canyon)
+    assert all(e is None for _, e in _links(kross)), "never another bike's rows"
+    again = el.resolve_equipment(canyon, HELMET)
+    assert again.equipment_id == got.equipment_id and _count(Equipment) == 1
+    assert el.resolve_equipment(kross, HELMET).equipment_id == got.equipment_id, "same name -> same item"
+    for bike_id, name, detail in ((999999, HELMET, "Bike not found"), (canyon, "No such part", "Component not found")):
+        with pytest.raises(el.NotFound, match=detail):
+            el.resolve_equipment(bike_id, name)
+
+
+def test_resolve_keeps_an_existing_link_and_reuses_a_searched_item(db):
+    canyon = _bike()
+    eid = er.save_equipment_details("", HELMET, "helmets", _equip(), bike_id=canyon, element_name=HELMET)
+    assert el.resolve_equipment(canyon, HELMET).equipment_id == eid
+    kross = _bike("Kross", "Esker")
+    assert el.resolve_equipment(kross, HELMET).equipment_id == eid and _count(Equipment) == 1
+
+
+def test_item_by_id_and_search_context(db):
+    canyon, kross = _bike(), _bike("Kross", "Esker")
+    eid = el.resolve_equipment(canyon, HELMET).equipment_id
+    el.resolve_equipment(kross, HELMET)
+    item = el.get_equipment_item(eid)
+    assert (item.name, item.category, item.bike.id, item.bike.brand) == (HELMET, "locks", canyon, "Canyon")
+    assert el.get_equipment_item(999999) is None
+    assert el.search_context(eid) == ("Canyon", "Grizl", HELMET, "Helmet", "locks"), "first bike linking it"
+    assert el.search_context(eid, kross)[:2] == ("Kross", "Esker"), "the bike it was opened from"
+    assert el.search_context(eid, 999999)[:2] == ("Canyon", "Grizl"), "an unrelated bike falls back to the first"
+    with pytest.raises(el.NotFound, match="Equipment not found"):
+        el.search_context(999999)
+    orphan, _ = er.save_equipment_photos("", "Lonely part", "parts", ["https://a/1.jpg"], element_name="Lonely part")
+    assert el.get_equipment_item(orphan).bike is None
+    with pytest.raises(el.NotFound, match="Component not found"):
+        el.search_context(orphan)

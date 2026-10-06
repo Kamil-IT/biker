@@ -33,6 +33,8 @@ interface BikeDetailsViewProps {
   // Stored centrumrowerowe.pl offers — a DB read only, no search behind them.
   centrumOffers: BikeOfferResponse | null
   centrumState: 'loading' | 'loaded' | 'error'
+  // "Wróć do wyników" when there is a result list to go back to, else "Wróć".
+  backLabel: string
   onBack: () => void
   onRetry: () => void
   onEquipmentSelect: (element: ComponentElement) => void
@@ -69,6 +71,7 @@ export default function BikeDetailsView({
   decathlonState,
   centrumOffers,
   centrumState,
+  backLabel,
   onBack,
   onRetry,
   onEquipmentSelect,
@@ -122,10 +125,9 @@ export default function BikeDetailsView({
           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/40 focus-visible:rounded
           transition-colors duration-150
         "
-        aria-label="Wróć do wyników wyszukiwania"
       >
         <ArrowLeft size={12} weight="bold" aria-hidden="true" />
-        Wróć do wyników
+        {backLabel}
       </button>
 
       {/* Bike header */}

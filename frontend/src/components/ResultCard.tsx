@@ -1,4 +1,7 @@
+import { useState } from 'react'
+import type { CSSProperties, MouseEvent } from 'react'
 import type { Bike, ExpertRating } from '../types'
+import { isPlainClick } from '../hooks/useRoute'
 import { bikeCategoryLabel } from '../specLabels'
 
 export type { Bike }
@@ -9,179 +12,136 @@ interface ResultCardProps {
   isTop: boolean
   animationDelay: number
   onSelect: (bike: Bike) => void
-  // Expert rating (from the stored review) shown in the numeral, bar and aria text:
+  // The bike's address (/bike/{id}); the card is then a link. Without it, a button.
+  href?: string
+  // Expert rating (from the stored review) shown in the plate, bar and aria text:
   // a number, "—" while pending, "?" when there is none.
   expertRating: ExpertRating
 }
+
+const DEFAULT_STAGE_BG = '#FFFFFF'
 
 const formatScore = (score: number): string => {
   if (score === 10) return '10'
   return score.toFixed(1)
 }
 
-const ratingLabel = ({ state }: ExpertRating): string => {
-  if (state === 'pending') return 'Ocena eksperta…'
-  if (state === 'loaded')  return 'Ocena eksperta'
-  return 'Brak oceny'
-}
-
-// Spoken form of the expert rating for the popular look's aria labels.
+// Spoken form of the expert rating for the aria labels.
 const ratingText = ({ state, rating }: ExpertRating): string => {
   if (state === 'pending')                  return 'ocena eksperta w trakcie wczytywania'
   if (state === 'loaded' && rating != null) return `ocena eksperta ${formatScore(rating)} na 10`
   return 'brak oceny'
 }
 
-export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect, expertRating }: ResultCardProps) {
+function BikeArt() {
+  return (
+    <svg
+      viewBox="0 0 120 64" fill="none" stroke="#C3B6A2" strokeWidth="2.4"
+      strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+      className="w-[46%] max-w-36"
+    >
+      <circle cx="26" cy="44" r="17" /><circle cx="94" cy="44" r="17" />
+      <path d="M26 44 58 44 50 21Z M50 21 82 19 58 44 M82 19 94 44 M50 21 47 13 M41 13H54 M82 19 80 12 88 11" />
+    </svg>
+  )
+}
+
+export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect, href, expertRating }: ResultCardProps) {
   const { brand, model, accessories, explanation } = bike
   const categoryLabel = bikeCategoryLabel(bike.category)
+  const photo = bike.photo ?? null
+  // The URL that failed to load: a different photo later gets a fresh try.
+  const [failedPhoto, setFailedPhoto] = useState<string | null>(null)
+  // One automatic retry per URL: the first error remounts the <img> (same URL), the second gives up.
+  const [retry, setRetry] = useState<{ url: string | null; count: number }>({ url: null, count: 0 })
+  const retries = retry.url === photo ? retry.count : 0
+  const handlePhotoError = () => {
+    if (photo == null) return
+    if (retries < 1) setRetry({ url: photo, count: retries + 1 })
+    else setFailedPhoto(photo)
+  }
+  const showPhoto = photo != null && photo !== failedPhoto
+
   // A pending or missing rating is 0 for the bar (empty). The numeral shows "—" while
   // pending and "?" when there is no rating.
   const score        = expertRating.rating ?? 0
+  const noRating     = expertRating.state !== 'pending' && expertRating.rating == null
   const scoreDisplay = expertRating.state === 'pending' ? '—'
     : expertRating.rating == null ? '?'
     : formatScore(expertRating.rating)
   const barWidth     = `${score * 10}%`
-  const label        = ratingLabel(expertRating)
   const ariaScore    = ratingText(expertRating)
+  const chips        = (accessories ?? []).filter(Boolean)
+  const text         = (explanation ?? '').trim()
 
-  return (
-    <button
-      type="button"
-      onClick={() => onSelect(bike)}
-      className={[
-        'relative bg-card rounded-2xl border overflow-hidden w-full text-left group',
-        'p-6 md:p-8',
-        'transition-all duration-300',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/50 focus-visible:ring-offset-2 focus-visible:ring-offset-sand',
-        isTop
-          ? 'border-border shadow-md hover:shadow-xl'
-          : 'border-border hover:shadow-md',
-      ].join(' ')}
-      style={{
-        opacity: 0,
-        animation: `slideUp 420ms cubic-bezier(0.22,1,0.36,1) ${animationDelay}ms forwards`,
-      }}
-      aria-label={`Zobacz specyfikację ${brand} ${model}, ${ariaScore}`}
-    >
-      {/* Left accent bar (top result only) */}
-      {isTop && (
-        <div className="absolute left-0 top-0 bottom-0 w-1 bg-terra" aria-hidden="true" />
-      )}
+  const frame = {
+    className: [
+      'result-tile flex flex-col h-full w-full text-left group bg-card rounded-2xl border border-border overflow-hidden',
+      'transition-[border-color,box-shadow] duration-150',
+      'hover:border-terra hover:shadow-[0_10px_28px_-18px_rgb(43_38_32/0.55)]',
+      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-terra/50 focus-visible:ring-offset-2 focus-visible:ring-offset-sand',
+    ].join(' '),
+    style: {
+      opacity: 0,
+      animation: `slideUp 420ms cubic-bezier(0.22,1,0.36,1) ${animationDelay}ms forwards`,
+    },
+    'aria-label': `Zobacz specyfikację ${brand} ${model}, ${ariaScore}`,
+  }
 
-      {/* Best match badge */}
-      {isTop && (
-        <div className="flex items-center gap-2 mb-5 ml-2">
-          <span
-            className="w-2 h-2 rounded-full bg-terra shrink-0"
-            style={{ animation: 'pulseDot 2.2s ease-in-out infinite' }}
-            aria-hidden="true"
+  // A real link to /bike/{id}: a modified or middle click opens it in a new tab.
+  const handleLinkClick = (e: MouseEvent<HTMLAnchorElement>) => {
+    if (!isPlainClick(e)) return
+    e.preventDefault()
+    onSelect(bike)
+  }
+
+  const content = (
+    <>
+      {/* Photo stage: the photo is contained, never cropped, on its own edge colour */}
+      <div
+        className={`relative aspect-[4/3] overflow-hidden ${showPhoto ? '' : 'grid place-items-center'}`}
+        style={{ background: showPhoto ? (bike.photo_bg ?? DEFAULT_STAGE_BG) : '#E6DED1' }}
+      >
+        {showPhoto ? (
+          <img
+            key={retries}
+            src={photo}
+            alt={`${brand} ${model}`}
+            loading="lazy"
+            decoding="async"
+            className="w-full h-full object-contain block"
+            onError={handlePhotoError}
           />
-          <span className="font-mono text-xs uppercase tracking-widest text-terra select-none">
-            Najlepsze dopasowanie
-          </span>
-        </div>
-      )}
+        ) : (
+          <div className="grid justify-items-center gap-2.5 p-4 text-center">
+            <BikeArt />
+            <p className="font-body text-[13px] leading-snug text-ink max-w-60">
+              Brak zdjęcia. Poproś o nie w szczegółach roweru.
+            </p>
+          </div>
+        )}
 
-      {/* Score + content row */}
-      <div className={`flex gap-5 md:gap-8 items-start ${isTop ? 'ml-2' : ''}`}>
-
-        {/* Score numeral */}
-        <div className="shrink-0 text-right w-20 md:w-24" aria-hidden="true">
-          <div
+        {/* Rating plate */}
+        <div
+          className="absolute top-3 left-3 flex items-baseline gap-1.5 px-2.5 pt-1.5 pb-1 bg-parchment border border-charcoal/10 rounded-[0.55rem] shadow-[0_2px_10px_-4px_rgb(43_38_32/0.35)]"
+          aria-hidden="true"
+        >
+          <b
             className={[
-              'font-display font-bold leading-none tabular-nums',
-              isTop
-                ? 'text-terra text-[64px] md:text-[80px]'
-                : 'text-charcoal text-[50px] md:text-[64px]',
+              'font-display font-extrabold text-[1.9rem] leading-[0.9] tabular-nums',
+              isTop ? 'text-terra' : noRating ? 'text-muted' : 'text-charcoal',
             ].join(' ')}
           >
             {scoreDisplay}
-          </div>
-          <div className="font-mono text-[11px] text-muted mt-0.5">/ 10</div>
-        </div>
-
-        {/* Brand, model, accessories, explanation */}
-        <div className="flex-1 min-w-0 pt-1">
-
-          {/* Brand + rank */}
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              {categoryLabel && (
-                <span className="inline-block font-mono text-[10px] uppercase tracking-widest text-terra mb-1">
-                  {categoryLabel}
-                </span>
-              )}
-              <h2
-                className={[
-                  'font-display font-bold leading-tight group-hover:text-terra transition-colors duration-200',
-                  isTop
-                    ? 'text-charcoal text-[24px] md:text-[28px]'
-                    : 'text-charcoal text-[19px] md:text-[22px]',
-                ].join(' ')}
-              >
-                {brand}
-              </h2>
-              <p
-                className={[
-                  'font-display font-semibold leading-tight text-muted',
-                  isTop ? 'text-[16px] md:text-[18px]' : 'text-[14px] md:text-[16px]',
-                ].join(' ')}
-              >
-                {model}
-              </p>
-            </div>
-            {!isTop && (
-              <span
-                className="font-mono text-xs text-muted shrink-0 mt-1 select-none"
-                aria-label={`Pozycja ${rank}`}
-              >
-                #{rank}
-              </span>
-            )}
-          </div>
-
-          {/* Accessories chips */}
-          {accessories.filter(Boolean).length > 0 && (
-            <ul
-              className="flex flex-wrap gap-1.5 mt-3 mb-3"
-              aria-label="Najważniejsze cechy"
-            >
-              {accessories.filter(Boolean).map((acc, i) => (
-                <li key={`${acc}-${i}`}>
-                  <span className="font-mono text-[10px] text-ink px-2 py-0.5 bg-sand rounded-full border border-border inline-block leading-5">
-                    {acc}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-
-          {/* Explanation — the bike's stored short description; absent until details exist */}
-          {explanation.trim() && (
-            <p
-              className={[
-                'font-body text-ink leading-relaxed',
-                accessories.filter(Boolean).length === 0 ? 'mt-2' : '',
-                isTop ? 'text-[15px] md:text-base' : 'text-sm md:text-[15px]',
-              ].join(' ')}
-            >
-              {explanation}
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Score bar */}
-      <div className={`mt-5 md:mt-6 ${isTop ? 'ml-2' : ''}`}>
-        <div className="flex items-center justify-between mb-2">
-          <span className="font-mono text-[11px] text-muted uppercase tracking-wider">
-            {label}
+          </b>
+          <span className="font-display font-semibold text-[0.95rem] text-muted">
+            {noRating ? 'bez oceny' : '/ 10'}
           </span>
         </div>
 
+        {/* Bottom edge = expert rating bar */}
         <div
-          className="h-1.5 rounded-full bg-border overflow-hidden"
+          className="absolute inset-x-0 bottom-0 h-[5px] bg-charcoal/20"
           role="progressbar"
           aria-valuenow={score}
           aria-valuemin={0}
@@ -192,25 +152,58 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
               rating arrives, instead of relying on the keyframe re-reading --bar-target. */}
           <div
             key={expertRating.state}
-            className={`h-full rounded-full ${isTop ? 'bg-terra' : 'bg-ink'}`}
+            className="result-bar h-full bg-terra"
             style={{
               '--bar-target': barWidth,
               width: 0,
               animation: `fillBar 700ms cubic-bezier(0.22,1,0.36,1) ${animationDelay + 250}ms forwards`,
-            } as React.CSSProperties}
+            } as CSSProperties}
           />
         </div>
       </div>
 
-      {/* View specs cue */}
-      <div
-        className={`mt-3 flex justify-end ${isTop ? 'ml-2' : ''}`}
-        aria-hidden="true"
-      >
-        <span className="font-mono text-[10px] uppercase tracking-wider text-muted group-hover:text-terra transition-colors duration-200">
-          Zobacz specyfikację →
-        </span>
+      {/* Body */}
+      <div className="flex flex-col gap-2 flex-1 p-4 pb-5">
+        {categoryLabel && (
+          <span className="inline-block self-start font-mono text-[10px] uppercase tracking-widest text-terra">
+            {categoryLabel}
+          </span>
+        )}
+        <div className="flex items-start justify-between gap-3">
+          <p className="font-display font-semibold text-base leading-none text-muted">{brand}</p>
+          <span
+            className="font-mono text-xs text-muted shrink-0 select-none leading-none"
+            aria-label={`Pozycja ${rank}`}
+          >
+            #{rank}
+          </span>
+        </div>
+        <h2 className="font-display font-bold text-[1.6rem] leading-[1.02] text-charcoal group-hover:text-terra transition-colors duration-150">
+          {model}
+        </h2>
+
+        {chips.length > 0 && (
+          <ul className="flex flex-wrap gap-1.5 mt-0.5" aria-label="Najważniejsze cechy">
+            {chips.map((acc, i) => (
+              <li key={`${acc}-${i}`}>
+                <span className="font-mono text-[10.5px] text-ink px-2 py-0.5 bg-sand rounded-full border border-border inline-block leading-[1.6]">
+                  {acc}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {text ? (
+          <p className="font-body text-sm text-ink leading-relaxed line-clamp-3">{text}</p>
+        ) : chips.length === 0 ? (
+          <p className="font-body italic text-sm text-muted">Nie mamy jeszcze opisu tego roweru.</p>
+        ) : null}
       </div>
-    </button>
+    </>
   )
+
+  return href
+    ? <a href={href} onClick={handleLinkClick} {...frame}>{content}</a>
+    : <button type="button" onClick={() => onSelect(bike)} {...frame}>{content}</button>
 }

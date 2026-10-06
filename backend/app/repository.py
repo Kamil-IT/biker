@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from .component_tree import flatten_components, rebuild_components  # noqa: F401 — re-exported
+from .photo_cover import get_cover_photos
 from .models import (
     Bike,
     BikeComponent,
@@ -236,14 +237,20 @@ def fill_bike_results(bikes: list[BikeResult]) -> list[BikeResult]:
         ids = {}
         cats = {}
         for b in session.query(Bike.id, Bike.brand, Bike.model, Bike.category).order_by(Bike.id.desc()):
-            ids[(_lc(b.brand), _lc(b.model))] = b.id
-            cats[b.id] = b.category  # oldest row wins (iterated last)
-        fill = _search_fill(session, [i for i in (ids.get((_lc(r.brand), _lc(r.model))) for r in bikes) if i])
+            ids[(_lc(b.brand), _lc(b.model))] = b.id  # oldest row wins (iterated last)
+            cats[b.id] = b.category
+        found_ids = [i for i in (ids.get((_lc(r.brand), _lc(r.model))) for r in bikes) if i]
+        fill = _search_fill(session, found_ids)
+        covers = get_cover_photos(found_ids, session)
         out = []
         for r in bikes:
-            explanation, chips = fill.get(ids.get((_lc(r.brand), _lc(r.model))), ("", []))
-            out.append(BikeResult(brand=r.brand, model=r.model, accessories=chips, explanation=explanation,
-                                  category=cats.get(ids.get((_lc(r.brand), _lc(r.model))))))
+            bike_id = ids.get((_lc(r.brand), _lc(r.model)))
+            explanation, chips = fill.get(bike_id, ("", []))
+            photo, photo_bg = covers.get(bike_id, (None, None))
+            out.append(BikeResult(
+                id=bike_id, brand=r.brand, model=r.model, accessories=chips, explanation=explanation,
+                category=cats.get(bike_id), photo=photo, photo_bg=photo_bg,
+            ))
         return out
     except Exception as exc:  # noqa: BLE001
         logger.warning("fill_bike_results failed (non-fatal) | %s", exc)
@@ -262,6 +269,26 @@ def accessory_chips(bike_id: int) -> list[str]:
     session = get_session()
     try:
         return _search_fill(session, [bike_id]).get(bike_id, ("", []))[1]
+    finally:
+        session.close()
+
+
+def get_bike_by_id(bike_id: int) -> Optional[BikeResult]:
+    """One bike as a search result (stored casing, short description, chips) — None when the id is unknown.
+
+    The /bike/{id} deep link of the frontend. A DB error raises (the route answers 503).
+    """
+    session = get_session()
+    try:
+        bike = session.get(Bike, bike_id)
+        if bike is None:
+            return None
+        explanation, chips = _search_fill(session, [bike_id]).get(bike_id, ("", []))
+        photo, photo_bg = get_cover_photos([bike_id], session).get(bike_id, (None, None))
+        return BikeResult(
+            id=bike.id, brand=bike.brand, model=bike.model, accessories=chips, explanation=explanation,
+            photo=photo, photo_bg=photo_bg,
+        )
     finally:
         session.close()
 
@@ -378,12 +405,14 @@ def find_bikes_by_details(req) -> list[BikeResult]:
             ]
 
         fill = _search_fill(session, [b.id for b in candidates])
+        covers = get_cover_photos([b.id for b in candidates], session)
         results = []
         for b in candidates:
             explanation, accessories = fill.get(b.id, ("", []))
+            photo, photo_bg = covers.get(b.id, (None, None))
             results.append(BikeResult(
-                brand=b.brand, model=b.model, accessories=accessories, explanation=explanation,
-                category=b.category,
+                id=b.id, brand=b.brand, model=b.model, accessories=accessories, explanation=explanation,
+                category=b.category, photo=photo, photo_bg=photo_bg,
             ))
         results.sort(key=lambda r: (_lc(r.brand), _lc(r.model)))
         logger.info(

@@ -1,5 +1,6 @@
 import ResultCard from './ResultCard'
 import { PENDING_RATING, bikeKey } from '../ratings'
+import { bikePath } from '../hooks/useRoute'
 import type { Bike, ExpertRating, PopularBike } from '../types'
 
 interface PopularBikesSectionProps {
@@ -11,12 +12,12 @@ interface PopularBikesSectionProps {
 // Home-page "Najpopularniejsze rowery" (TODO-034): the same container and status row
 // as the results section, one ResultCard per bike in its popular look — the expert
 // rating in the numeral slot, the description in the explanation slot, no "Najlepsze
-// dopasowanie" badge. A click hands `handleBikeSelect` a regular Bike, so the details
-// view opens exactly as it does for a search result.
+// dopasowanie" badge. Each card links to /bike/{id}; a click hands `onSelect` a regular Bike,
+// so the details view opens exactly as it does for a search result.
 export default function PopularBikesSection({ bikes, ratings, onSelect }: PopularBikesSectionProps) {
   return (
     <section
-      className="max-w-2xl mx-auto px-4 sm:px-6 pb-20"
+      className="max-w-[68rem] mx-auto px-4 sm:px-6 pb-20"
       aria-label="Najpopularniejsze rowery"
     >
       <div className="border-t border-border pt-8">
@@ -29,7 +30,7 @@ export default function PopularBikesSection({ bikes, ratings, onSelect }: Popula
         </div>
 
         {/* Card list */}
-        <div className="space-y-4">
+        <div className="grid gap-5 grid-cols-[repeat(auto-fill,minmax(17.5rem,1fr))]">
           {bikes.map((bike, i) => {
             const key    = bikeKey(bike)
             const rating = ratings[key] ?? PENDING_RATING
@@ -37,17 +38,21 @@ export default function PopularBikesSection({ bikes, ratings, onSelect }: Popula
               <ResultCard
                 key={key}
                 bike={{
+                  id:          bike.id,
                   brand:       bike.brand,
                   model:       bike.model,
                   accessories: [],
                   explanation: bike.description,
                   category:    bike.category,
+                  photo:       bike.photo ?? null,
+                  photo_bg:    bike.photo_bg ?? null,
                 }}
                 rank={i + 1}
                 isTop={false}
                 animationDelay={Math.min(i, 8) * 65}
                 expertRating={rating}
                 onSelect={onSelect}
+                href={bike.id != null ? bikePath(bike.id) : undefined}
               />
             )
           })}

@@ -63,6 +63,7 @@ launches no browser.
 | File | Responsibility |
 |------|----------------|
 | `app/main.py` | FastAPI app: `GET /health` (open) · `POST /v1/search/olx` · `POST /v1/search/decathlon` · `POST /v1/search/allegro` · `POST /v1/search/photos` · `POST /v1/search/review` · `POST /v1/search/details` · `POST /v1/search/equipment/details` · `POST /v1/search/equipment/photos` (all eight `X-Searcher-Key`); one `asyncio.Semaphore(SEARCHER_MAX_CONCURRENT)` (default 10) shared by the eight routes around the whole search (`_run_search` is the offers' common body; `locked()` is true only when every slot is taken, so the busy check holds for any slot count); no route reads the DB before its search (neither does the backend's search proxy: the caller decides whether a paid run is needed); the photo route single-flights identical searches (`_photo_searches`); the default thread pool is sized `SEARCHER_MAX_CONCURRENT + 8` so every slot gets a worker thread |
+| `app/photo_bg.py` · `app/photo_color.py` | Photo edge colours for `bike_detail_photos.bg_color`: `photo_color.py` is a **verbatim copy** of `backend/app/photo_color.py` (`edge_color(bytes)`, `fetch_image_bytes(url, url_guard=…)`; Pillow — change the backend's first); `photo_bg.compute_photo_colors(urls)` downloads behind `is_public_http_url` (every redirect hop checked), ≤ 4 at once, 20 s total, never raises; tests `scripts/test_photo_bg.py` |
 | `app/photos_finder.py` | The moved `find_bike_photos` (the backend's former `bike_photos_finder`): CLI (`WebSearch` only) → `{url}` of the official manufacturer product page → URL validated (http/https, public addresses only) → patchright opens it once (`domcontentloaded`, 60 s, + 4 s) with every browser request passing a route guard (`_RouteGuard`: http/https to public hosts only) → ≤ 8 `<img src/data-src>` URLs (`_IMG_SRC` / `_SKIP` regexes unchanged; local / non-global-IP image hosts dropped) |
 | `app/review_finder.py` | The moved `find_bike_review` (TODO-037, the backend's former `bike_review_finder`): prompt → CLI (`WebSearch,WebFetch`, JSON schema `{score, explanation, per_source[], ref[]}`) → `build_review()`: URLs failing `is_safe_review_url()` (http/https + host, ≤ 2048 chars, not on `BANNED_REVIEW_DOMAINS`) dropped before aggregation, `explanation` capped at 4000 chars, then the old post-processing unchanged: weights `pro_numeric` 3 / `pro_qualitative` 2 / `community` 1, non-zero `rating` only with ≥ 1 pro source, `DISAGREEMENT_THRESHOLD` 3.0 anchoring to the pro/numeric (else pro/qualitative) mean + the Polish disagreement sentence, `ref` sorted Tier 1 → 2 → 3, `<cite>` stripped, score clamped 0–10. The SDK finder's balanced-brace scan and no-tool repair pass are gone — `--json-schema` returns a validated object or the run fails (502). No Playwright |
 | `app/details_finder.py` | TODO-041 `find_bike_details`: prompt `bike_details.md` → CLI (`WebSearch,WebFetch`, `DETAILS_SCHEMA` = `description`, `short_description`, `sources[{url,title}]`, `components[8 categories → subcategories → elements → specs]`, all required) → pure `build_details()` (`BikeDescription` built from `sources`, the 8 category shells kept, strings capped to the column widths, `MAX_SOURCES` 8); `is_usable_details` / `has_components` / `empty_details`; `ClaudeCliError` → `SearcherError` (a limit error keeps the 400 path). No Playwright |
@@ -119,7 +120,7 @@ Health check: `curl http://127.0.0.1:8100/health` → `{"status":"ok",...}`. The
 | `SEARCHER_CLI_TIMEOUT` | no | Seconds before a CLI run is killed (default 300) |
 | `SEARCHER_MAX_CONCURRENT` | no | Searches (CLI runs; the OLX and photo ones also open a browser) allowed at once, counted across **all six** search routes; further requests get 503 "searcher busy" (default **10**; locally that is up to ten CLI runs in one process, on Cloud Run each instance still serves one request and every further search gets its own instance). |
 | `BROWSER_MAX_CONCURRENCY` | no | Chromium launches allowed at once in this process (default **2**; each costs 0.5–0.9 GiB). With more search slots than browsers, an OLX or photo search that reaches its scrape waits for a free browser — it is not refused |
-| `SEARCHER_CREATE_TABLES` | no | `true` = `create_all()` on startup for a database the backend never touches (scratch tests). Default: refuse to start until `bike` / `bike_offer` / `bike_offer_photos` / `bike_detail_photos` exist — the backend creates them, and two `create_all()`s on one fresh database race. A `bike_detail_photos` without `bike_id` (a database not yet migrated by `backend/scripts/migrate_photos_bike_id.py`) also aborts startup |
+| `SEARCHER_CREATE_TABLES` | no | `true` = `create_all()` on startup for a database the backend never touches (scratch tests). Default: refuse to start until `bike` / `bike_offer` / `bike_offer_photos` / `bike_detail_photos` exist — the backend creates them, and two `create_all()`s on one fresh database race. A `bike_detail_photos` without `bike_id` (a database not yet migrated by `backend/scripts/migrate_photos_bike_id.py`) or without `bg_color` (`backend/scripts/migrate_photo_bg_color.py`) also aborts startup |
 | `PLAYWRIGHT_HEADLESS` | no | `true` on servers / in Docker; unset = visible browser for debugging |
 
 Neither the API key, the OAuth token nor the DB password is ever logged.
@@ -319,6 +320,14 @@ scrape 17 s → 6 photos, **36 s** end to end.
   those are returned with `saved: 0` and nothing is written. A search that finds nothing is a 200 with `photos: []`, `saved: 0`
   and writes **nothing** — not even a bike row, so `bike_id` is `null` for a bike the DB does not know. Photos are never
   deleted or replaced
+- **`bg_color` (results tile):** between the scrape and the save the route computes each photo's edge colour
+  (`app/photo_bg.py` `compute_photo_colors`: `photo_color.fetch_image_bytes` + `photo_color.edge_color`, Pillow; the median of
+  four corner patches as `#RRGGBB`, `None` for transparent corners) and stores it in `bike_detail_photos.bg_color`. Best effort
+  and bounded: each image is downloaded only when its URL **and every redirect hop** pass the public-address guard
+  (`photos_finder.is_public_http_url`; redirects are followed by hand, ≤ 3, 8 s per image, ≤ 8 MB, 4 at once), the whole
+  step has a 20 s budget, and any failure (blocked host, download error, transparent PNG, too slow) just leaves that
+  photo's `bg_color` NULL — the photo is stored anyway and the response is unchanged. Accepted limitation: DNS rebinding,
+  as for the scrape. The searcher refuses to start without the column (`backend/scripts/migrate_photo_bg_color.py`)
 - `400` (subscription limit) / `401` / `422` exactly as for `/v1/search/olx`
 - `502` `{"detail": "claude CLI failed: exit 1" | …}` when the product-page CLI run fails (the backend's old finder
   swallowed this into `photos: []`; here it is an error so the UI's button becomes clickable again). No product page
@@ -528,8 +537,12 @@ X-Searcher-Key: dev-local-searcher-key
   sent by the backend from the stored row) → else `422`
 - `200` → `details` has the backend's `EquipmentDetailsResponse` shape (no `photos`; `category` = the slug). **The search
   always runs** (no DB read first). A usable result (components **or** description) is stored → `saved: 1`, `details` =
-  what is stored after the write. Anything less writes, deletes and links **nothing** → `saved: 0`, `details` = the empty
-  details and `equipment_id` `null` (also when the item exists — the UI then falls back to the by-name read)
+  what is stored after the write. Anything less (`found: false` or an empty answer) stores only the placeholder
+  description `"Opis niedostępny dla tego produktu."` (`NOT_FOUND_TEXT`, no components, no researched identity) on an
+  item whose `description` is NULL — creating the row if missing and linking the element like a usable result; an existing
+  description is never touched → `saved: 0`, `details` = what is stored (the placeholder or the earlier description),
+  `equipment_id` set. The frontend searches an item automatically only while it has no description, so the placeholder
+  ends that; a failed run (`400` / `502` / `503` / `500` below) writes nothing and the next visit retries
 - `400` (subscription limit) / `401` / `502` / `503` `{"detail": "searcher busy"}` (the same slots as the other seven
   routes) / `500` `{"detail": "database write failed"}` exactly as for `/v1/search/details`
 
@@ -545,7 +558,7 @@ answer `found: true` when the bike maker documents it (fix 2026-10-02; before it
 every client value is sanitised first — double quotes,
 backticks, control characters and line separators become spaces, whitespace collapsed — and the prompt says quoted names
 are data, not instructions) — **no Playwright** → (3) `build_equipment_details()`:
-`found: false` → empty, never stored; else the description built from `sources` minus shops (`app/shop_filter.py`:
+`found: false` → empty (only the placeholder above is stored); else the description built from `sources` minus shops (`app/shop_filter.py`:
 a marketplace host label — allegro, olx, ceneo, decathlon, amazon, ebay …; a shop token in the host — shop, store,
 sklep, parts, powered, bike24, wiggle …; or a listing path — /product/, /shop/, /p/<digits>, /dp/, /cart … — unless the
 host carries the item's brand, so a maker's product page stays; all dropped → the description is kept without sources), every subcategory under one category named after the slug, strings

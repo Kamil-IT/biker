@@ -119,6 +119,20 @@ UNIQUE(bike_id, missing_type)
 New table only — `init_db()`'s `create_all()` creates it on an existing database at startup, so it needs no
 migration step.
 
+**`contact_message`** — messages from the Kontakt tab's "Napisz do nas" form (`POST /v1/contact`)
+```
+id (PK)
+name: str (≤ 100, "" = not given)
+email: str (≤ 254)
+topic: str (≤ 32, a slug: missing_bike / wrong_data / feature_idea / cooperation / other)
+message: text (1–5000 chars, enforced by the request schema)
+created_at: datetime (indexed)
+```
+New table only, no foreign keys — `init_db()` creates it at startup, so it needs no migration step. Nothing in the app
+reads it; query it by hand. Already created 2026-10-03 (only this table, `checkfirst`, `bike` row count unchanged) on all
+three databases: local `biker-pg` (it was there from the QA backend's start), the main checkout's `backend/cache.db`,
+and Cloud SQL through the proxy (1011 bikes, 0 messages).
+
 **`bike_review`** — the stored expert review of a bike (TODO-037)
 ```
 id (PK)
@@ -461,6 +475,19 @@ Every component element name used to render as a link to the equipment view, inc
 **Deploy order:** (1) Cloud SQL on-demand backup, (2) run the script on Cloud SQL through the proxy — **only on the user's explicit go** — (3) deploy the backend and the searcher together, (4) deploy the frontend. The NEW backend's ORM selects the column, so it fails every details read on an unmigrated database; the NEW searcher refuses to start on one (its `init_db()` names this script). The OLD backend keeps working on a migrated database (server default `TRUE`, i.e. the old behaviour). The frontend must go last: it links a name only when `is_linkable` is `true`, so against an old backend (no field) it would show no links at all.
 
 Local `biker-pg` (2026-10-02): 32972 rows → 27468 linkable / 5504 not after `--reclassify` with the tuned vocabulary (first run 27829 / 5143; most frequent `false`: "Frame | Frame" 320, empty names, "Front Derailleur | None" 89, "Pedals | None included" 76, "Reflector Set", "Gearing", "Included Items | Rear Rack"), verified; rerun `already-migrated`. The column survived the table rename (it was added before `migrate_rename_bike_component.py` ran locally). Cloud SQL `biker-pg` migrated 2026-10-02 by the user through the proxy (after an on-demand backup): 33216 rows → 27676 linkable / 5540 not, verified, `RESULT: migrated`. **Not yet deployed** — Cloud Run still runs the pre-ISSUE-016 backend and searcher (safe: server default TRUE = the old behaviour), so production links are unchanged until `deploy.ps1` runs; a details search run on production in the meantime stores `TRUE` for every element (old prompt) — consider `--reclassify` for such a bike after the deploy.
+
+## Photo edge colour (`bike_detail_photos.bg_color`)
+
+The results tile shows the bike's cover photo with `object-fit: contain` inside a 4:3 frame whose background is the photo's own edge colour, so white / grey / black studio shots fill the frame without visible bands. The colour is computed once and stored:
+
+- `bike_detail_photos.bg_color` — `VARCHAR(7)` NULL, `"#RRGGBB"` upper-case: the per-channel median of four corner patches (3 % of the shorter side, at least 2 px) of the image; NULL = not computed yet, a transparent corner (PNG cut-out) or a failed download — the frontend then uses a light default. Computed by the searcher when it stores a photo (`searcher/app/photo_bg.py`, best effort, SSRF-guarded) and, for rows stored earlier, by `scripts/backfill_photo_bg_color.py`; both use `app/photo_color.py` (the searcher carries a verbatim copy).
+- API: `BikeResult` and `PopularBike` gained `photo` / `photo_bg` (cover = the first stored photo `app/photo_cover.is_cover_candidate` accepts, see `backend/README.md` § `POST /v1/bike/search`); `get_cover_photos` reads them for a whole list in one query and degrades to `null` / `null` with an ERROR log naming the migration script on an unmigrated database.
+
+`scripts/migrate_photo_bg_color.py` (`--dry-run`, `--db <sqlite file>`, `--url <sqlalchemy url>`, importable `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` with `status`, `rows_before`, `rows_after`, `verified`, `error`) runs `ALTER TABLE bike_detail_photos ADD COLUMN bg_color VARCHAR(7)` in ONE transaction (PostgreSQL under `LOCK TABLE … SHARE ROW EXCLUSIVE MODE`), verifying the row count is unchanged and every new value is NULL; any mismatch rolls back (exit code 1). Idempotent (`already-migrated`), `absent` when the table does not exist, refuses a table still keyed on `bike_detail_id` (run `migrate_photos_bike_id.py` first). Then `scripts/backfill_photo_bg_color.py` (covers only by default, `--all`, `--limit N`, `--dry-run`, `--db`, `--url`, 4 download workers, refuses a non-local database without `--allow-remote`, summary `checked / updated / no_colour / errors`, idempotent — it only touches rows still NULL).
+
+**Deploy order:** (1) Cloud SQL on-demand backup, (2) run the migration on Cloud SQL through the proxy — **only on the user's explicit go** — and then the backfill (`--allow-remote`, port 6543), (3) deploy the backend and the searcher together, (4) deploy the frontend. The NEW searcher refuses to start on an unmigrated database (its `init_db()` names the script) and the NEW backend answers `photo: null` + an ERROR log until the column exists; the OLD backend and searcher keep working on a migrated database (the column is nullable — an old searcher simply stores new photos without a colour, re-run the backfill for them). The frontend goes last: against an old backend (no `photo` field) the tiles would show no photo.
+
+**Run on Cloud SQL 2026-10-03** (user's go, after the on-demand backup "before migrate_photo_bg_color (PR 156)"): migration `migrated` (6738 rows), rerun `already-migrated`; backfill 876 covers checked, 418 coloured, 458 without colour (mostly transparent PNG cut-outs — white frame), 0 errors. Deployed tag d8aeeb2: searcher `biker-searcher-00011-q2t`, backend `biker-backend-00019-5l4` (the first build failed on a Chrome-for-Testing download timeout, the retry passed), frontend `biker-frontend-00014-zbs` — the same deploy shipped PR #154 (contact form) and PR #155 (URL routing).
 
 ## Bike category added (`bike.category`, `scripts/migrate_bike_category.py`)
 

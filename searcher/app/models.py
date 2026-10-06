@@ -172,6 +172,12 @@ def init_db():
             "bike_component has no is_linkable column — run backend/scripts/migrate_component_linkable.py "
             "on this database first"
         )
+    # Bike photos carry bg_color (the tile's edge colour); the photo save inserts it.
+    if "bg_color" not in photo_columns:
+        raise RuntimeError(
+            "bike_detail_photos has no bg_color column — run backend/scripts/migrate_photo_bg_color.py "
+            "on this database first"
+        )
     # bike.category: the ORM selects and inserts it, so an unmigrated database would fail on the first bike read.
     if inspector.has_table("bike") and "category" not in {c["name"] for c in inspector.get_columns("bike")}:
         raise RuntimeError(
@@ -275,6 +281,9 @@ class BikeDetailPhoto(Base):
     bike_id = Column(Integer, ForeignKey("bike.id", ondelete="CASCADE"), nullable=False, index=True)
     url = Column(String(2048), nullable=False)
     display_order = Column(Integer, default=0)
+    # The photo's own edge colour "#RRGGBB" (the results tile's frame background); NULL = not
+    # computed / transparent / unknown. scripts/migrate_photo_bg_color.py adds it to an existing table.
+    bg_color = Column(String(7), nullable=True)
 
     # Relationships
     bike = relationship("Bike", back_populates="photos")
