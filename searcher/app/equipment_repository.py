@@ -13,7 +13,9 @@ A successful save also links the element on the bike it was opened from:
 link_bike_components sets bike_component.equipment_id on THAT bike's
 rows with that element name — never on other bikes — in the same transaction.
 A bike missing from `bike` is not created: the equipment is stored anyway and
-the link is skipped (WARNING). An unusable details result stores only the
+the link is skipped (WARNING). A search without a bike (a catalogue part from
+the parts search, TODO-046) stores into the row of that (category, name) and
+links nothing. An unusable details result stores only the
 "Opis niedostępny dla tego produktu." placeholder on an item without a
 description (the frontend then stops searching it automatically); an empty
 photo result writes nothing. Lives apart from repository.py (500-line rule)
@@ -124,6 +126,10 @@ def link_bike_components(session, bike_id: int, element_name: str, equipment_id:
 
 
 def _link(session, bike_company: str, bike_model: str, element_name: str, equipment_id: int) -> int:
+    """Link the element on the bike it was opened from; 0 rows (nothing to do) without a bike — a catalogue
+    part from the parts search (TODO-046) is linked to no bike."""
+    if not (bike_company and bike_model):
+        return 0
     bike_id = _find_bike_id(session, bike_company, bike_model)
     if bike_id is None:
         logger.warning(
@@ -289,7 +295,8 @@ def save_equipment_photos(
             "equipment photos stored | element=%r category=%r equipment_id=%d saved=%d linked=%d",
             element_name, category, equipment_id, saved, linked,
         )
-        return (equipment_id if saved or linked else None), stored, saved
+        # Without a bike the item was found by its own name: it is reachable by id either way.
+        return (equipment_id if saved or linked or not (bike_company and bike_model) else None), stored, saved
     except Exception as exc:
         session.rollback()
         logger.error("equipment photos store failed | element=%r category=%r | %s", element_name, category, exc)

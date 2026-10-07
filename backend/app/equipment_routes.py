@@ -6,7 +6,8 @@ linked bike) and POST /v1/equipment/resolve (the row of a clicked element,
 created empty when missing) serve the frontend's /equipment/{id} pages, no AI.
 POST /v1/equipment/details/search and POST /v1/equipment/photos/search proxy
 to the searcher service through app/searcher_client.py, after the 404 guards
-(unknown item / bike / element of its stored spec tree). A SearcherLimitReached
+(unknown item / bike / element of its stored spec tree; a catalogue part no bike
+links is searched without a bike, TODO-046). A SearcherLimitReached
 becomes a 400 through the app-wide handler in app/main.py. POST
 /v1/equipment/review stays in main.py.
 """
@@ -111,9 +112,10 @@ async def equipment_resolve(req: EquipmentResolveRequest) -> EquipmentResolveRes
 def _check_equipment_search(req: EquipmentSearchRequest, label: str) -> SearchContext:
     """The 404 guards of the equipment searches, before any searcher call; returns what the searcher gets.
 
-    By `equipment_id`: 404 "Equipment not found" / "Component not found" (no bike
-    links it); the context bike is `bike_id` when it links the item, else the first
-    bike linking it, and the item's stored name and category are sent, so the
+    By `equipment_id`: 404 "Equipment not found"; the context bike is `bike_id` when
+    it links the item, else the first bike linking it — none for a catalogue part no
+    bike links (TODO-046), which is searched without a bike, its part type as the
+    element type — and the item's stored name and category are sent, so the
     searcher stores into this very row. By bike + element name: only an element of
     a known bike's stored spec tree can be searched, so anonymous traffic cannot
     spend subscription runs on arbitrary strings; the searcher gets the element name
@@ -163,7 +165,8 @@ _PROXIED_ERRORS = (SearcherNotConfigured, SearcherUnavailable, SearcherBusy, Sea
 async def equipment_details_search(req: EquipmentSearchRequest) -> EquipmentDetailsResponse:
     """Run the equipment details search on demand through the searcher service (TODO-042).
 
-    404 "Bike not found" / "Component not found" before any searcher call;
+    404 "Equipment not found" (by id) / "Bike not found" / "Component not found" (by
+    bike + element name) before any searcher call;
     then proxies to {SEARCHER_URL}/v1/search/equipment/details and waits
     (SEARCHER_TIMEOUT, default 600 s) — always, whatever is stored: the UI
     offers the search only while nothing is stored. The searcher runs `claude -p`

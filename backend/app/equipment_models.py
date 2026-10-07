@@ -3,9 +3,10 @@
 Registered on the shared `Base` of models.py, which imports this module at its
 bottom, so `init_db()`'s create_all() builds these tables on a fresh database.
 An existing database needs scripts/migrate_equipment_tables.py once (the
-tables + `bike_component.equipment_id`) and scripts/migrate_merge_equipment_detail.py
+tables + `bike_component.equipment_id`), scripts/migrate_merge_equipment_detail.py
 (TODO-044: `equipment_detail` merged into `equipment`, the component table
-renamed `equipment_component`). The searcher carries a verbatim
+renamed `equipment_component`) and scripts/migrate_equipment_part_search.py
+(TODO-046: `part_type`, `groupset`, `key_specs`). The searcher carries a verbatim
 copy of this DDL in searcher/app/models.py — change it here first, then there.
 
 Import the classes from here (`from app.equipment_models import Equipment`).
@@ -42,6 +43,12 @@ class Equipment(Base):
     model_norm = Column(String(512), nullable=False)
     description = Column(Text, nullable=True)  # JSON serialized BikeDescription; NULL = no details
     short_description = Column(Text, nullable=False, default="", server_default="")
+    # Parts catalogue (TODO-046, scripts/migrate_equipment_part_search.py): a slug of
+    # app/part_types.py (NULL = unknown), the groupset and ≤ 6 short chips as a JSON list.
+    # Written by POST /v1/parts/search/ai (fill-only-missing), never into equipment_component.
+    part_type = Column(String(32), nullable=True)
+    groupset = Column(String(128), nullable=True)
+    key_specs = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Wyszukiwanie części — Biker (makieta TODO-046)</title>
+  <!-- Tokeny, nagłówek z zakładkami, pola i przyciski: te same co w makietach zakładek (Café Rider).
+       Kafelki: wariant „Kadr” z wyników rowerów, bez tabliczki i paska oceny eksperta. -->
+  <link rel="stylesheet" href="../zakladki/styles.css">
+  <style>
+    .wrap-wide { max-width: 68rem; margin: 0 auto; padding: 0 var(--gutter); }
+
+    /* Cztery zakładki: poniżej 640 px krótkie etykiety, żeby rząd się zmieścił. */
+    @media (max-width: 639px) {
+      .tabs { gap: 1.1rem; }
+      .tabs .long { display: none; }
+      .tabs .short { display: inline; }
+    }
+
+    .hero { padding-block: 3rem 2.25rem; }
+    .search-box { position: relative; }
+    .search-box svg { position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: var(--muted); }
+    .search-box .field { padding: 1rem 1rem 1rem 3rem; font-size: 1.0625rem; border-radius: 1rem; }
+    .search-actions { display: flex; align-items: center; justify-content: space-between; margin-top: 0.75rem; gap: 1rem; }
+    .filters-toggle {
+      background: none; border: 0; padding: 0.4rem 0; cursor: pointer;
+      font-family: var(--font-body); font-size: 0.9375rem; color: var(--ink);
+      display: inline-flex; align-items: center; gap: 0.4rem;
+    }
+    .filters-toggle:hover { color: var(--terra); }
+    .filters-toggle svg { transition: transform 200ms; }
+    .filters-toggle[aria-expanded="true"] svg { transform: rotate(180deg); }
+    .filters { display: grid; grid-template-columns: 1fr; gap: 0.75rem; margin-top: 1rem; }
+    .filters[hidden] { display: none; }
+    @media (min-width: 640px) { .filters { grid-template-columns: 1fr 1fr; } }
+
+    .alert {
+      margin-bottom: 1rem; padding: 0.75rem 1rem; font-size: 0.9375rem; color: var(--ink);
+      background: color-mix(in srgb, var(--terra) 7%, var(--parchment));
+      border: 1px solid color-mix(in srgb, var(--terra) 35%, transparent); border-radius: 0.75rem;
+    }
+    .alert strong { color: var(--terra); font-weight: 500; }
+
+    /* ── Wyniki ───────────────────────────────────────── */
+    .results { border-top: 1px solid var(--border); padding-top: 2rem; padding-bottom: 5rem; }
+    .results[hidden] { display: none; }
+    .status { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
+    .status h2 { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 1.6rem; line-height: 1.1; }
+    .status p { margin: 0.2rem 0 0; color: var(--ink); font-size: 0.9375rem; max-width: 38rem; }
+    .reset {
+      background: none; border: 0; padding: 0.5rem 0; cursor: pointer; white-space: nowrap;
+      font-family: var(--font-display); font-weight: 600; font-size: 1.05rem; color: var(--terra);
+    }
+    .reset:hover { color: var(--terra-dark); }
+    .toolbar { display: flex; justify-content: flex-end; align-items: center; gap: 0.5rem; margin-bottom: 1rem; }
+    .toolbar label { font-size: 0.875rem; color: var(--ink); }
+    .toolbar .field { width: auto; padding: 0.45rem 0.7rem; font-size: 0.875rem; }
+    .toolbar[hidden] { display: none; }
+
+    .grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(17.5rem, 1fr)); margin: 0; padding: 0; list-style: none; }
+    .tile {
+      display: flex; flex-direction: column; height: 100%;
+      background: var(--parchment); border: 1px solid var(--border); border-radius: 1rem;
+      overflow: hidden; text-decoration: none; color: inherit;
+      transition: border-color 150ms, box-shadow 150ms;
+      opacity: 0; animation: slideUp 420ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+    .tile:hover { border-color: var(--terra); box-shadow: 0 10px 28px -18px rgb(43 38 32 / 0.55); }
+    .tile:hover .model { color: var(--terra); }
+    .stage { position: relative; aspect-ratio: 4 / 3; overflow: hidden; background: #FFFFFF; }
+    .stage svg.photo { width: 100%; height: 100%; display: block; }
+    .stage.empty { display: grid; place-items: center; background: #E6DED1; }
+    .empty-art { display: grid; justify-items: center; gap: 0.6rem; padding: 1rem; text-align: center; }
+    .empty-art svg { width: 34%; max-width: 6.5rem; color: #C3B6A2; }
+    .empty-art p { margin: 0; font-size: 0.8125rem; line-height: 1.45; color: var(--ink); max-width: 15rem; }
+    .stage.loading .shimmer-fill { position: absolute; inset: 0; }
+    .shimmer-fill {
+      background: linear-gradient(90deg, var(--border) 25%, var(--sand) 50%, var(--border) 75%);
+      background-size: 200% 100%; animation: shimmer 1.6s ease-in-out infinite;
+    }
+    .line { height: 0.8rem; border-radius: 99px; }
+    /* Znacznik części dopisanej do katalogu w tym wyszukiwaniu (zamiast tabliczki oceny). */
+    .badge {
+      position: absolute; top: 0.75rem; left: 0.75rem; padding: 0.22rem 0.55rem 0.18rem;
+      background: var(--terra); color: var(--parchment); border-radius: 0.45rem;
+      font-family: var(--font-display); font-weight: 700; font-size: 0.85rem; letter-spacing: 0.04em;
+    }
+    .body { display: flex; flex-direction: column; gap: 0.55rem; padding: 1rem 1.15rem 1.25rem; flex: 1; }
+    .brand { margin: 0; font-family: var(--font-display); font-weight: 600; font-size: 1rem; line-height: 1; color: var(--muted); }
+    .model { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 1.6rem; line-height: 1.02; color: var(--charcoal); transition: color 150ms; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin: 0.15rem 0 0; padding: 0; list-style: none; }
+    .chips span {
+      display: inline-block; padding: 0.1rem 0.5rem; font-family: var(--font-mono); font-size: 10.5px; line-height: 1.6;
+      color: var(--ink); background: var(--sand); border: 1px solid var(--border); border-radius: 99px;
+    }
+    .desc { margin: 0.1rem 0 0; font-size: 0.875rem; line-height: 1.6; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+    .no-details { margin: 0.1rem 0 0; font-size: 0.875rem; color: var(--muted); font-style: italic; }
+
+    /* „Szukaj więcej z AI” — pod każdą listą wyników. */
+    .more {
+      margin-top: 1.5rem; padding: 1.25rem 1.4rem; border-style: dashed;
+      display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem 1.5rem;
+    }
+    .more[hidden] { display: none; }
+    .more h3 { margin: 0; font-family: var(--font-display); font-weight: 700; font-size: 1.25rem; }
+    .more p { margin: 0.2rem 0 0; font-size: 0.9rem; color: var(--ink); max-width: 34rem; }
+    .btn[disabled] { opacity: 0.65; cursor: progress; }
+    .spin { width: 0.95em; height: 0.95em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+
+    @keyframes slideUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: none; } }
+    @keyframes shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) { .tile { opacity: 1; animation: none; } }
+    @media (max-width: 479px) { .model { font-size: 1.45rem; } .status { flex-direction: column; align-items: flex-start; } }
+
+    /* ── Przełącznik stanów makiety (nie jest częścią projektu) ── */
+    .mock-bar {
+      position: fixed; right: 1rem; bottom: 1rem; z-index: 30; max-width: min(46rem, calc(100vw - 2rem));
+      display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.45rem 0.55rem;
+      background: #fff; border: 1px dashed var(--muted); border-radius: 0.6rem;
+      font: 12px/1.2 system-ui, sans-serif; color: #555;
+    }
+    .mock-bar button { font: inherit; padding: 0.3rem 0.55rem; border: 1px solid #ccc; border-radius: 0.4rem; background: #f6f6f6; cursor: pointer; }
+    .mock-bar button[aria-pressed="true"] { background: #333; border-color: #333; color: #fff; }
+    .mock-bar code { flex-basis: 100%; font: 11px/1.4 var(--font-mono); color: #333; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <div class="brand-row">
+        <a class="wordmark" href="#" aria-label="Biker — strona główna">BIKER</a>
+        <span class="tagline">Wyszukiwarka rowerów AI</span>
+      </div>
+      <nav aria-label="Główna nawigacja">
+        <ul class="tabs">
+          <li><a href="../zakladki/szukanie-rowerow.html">Szukanie rowerów</a></li>
+          <li><a href="../zakladki/rower-na-twoja-miare.html"><span class="long">Rower na Twoją miarę</span><span class="short">Na miarę</span></a></li>
+          <li><a href="#" aria-current="page"><span class="long">Wyszukiwanie części</span><span class="short">Części</span></a></li>
+          <li><a href="../zakladki/kontakt.html">Kontakt</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="wrap hero" aria-labelledby="hero-heading">
+      <h1 id="hero-heading">Znajdź<br><span style="color:var(--terra)">właściwą część.</span></h1>
+      <p style="margin-bottom:2.25rem">Opisz część albo wybierz jej typ i markę. Jeśli nie mamy jej w katalogu, możemy poszukać w sieci.</p>
+
+      <div class="alert" id="alert" role="alert" hidden><strong>Nie znaleziono: </strong>Nie mamy tej części w naszej bazie</div>
+
+      <form onsubmit="event.preventDefault()">
+        <div class="search-box">
+          <label for="q" class="sr-only">Jakiej części szukasz?</label>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="q" class="field" type="search" placeholder="np. kaseta 12 rzędów Shimano 10-51, tarcza 180 mm Center Lock">
+        </div>
+        <div class="search-actions">
+          <button type="button" class="filters-toggle" aria-expanded="false" aria-controls="filters" id="ft">
+            Filtry
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <button class="btn" type="submit">Szukaj części</button>
+        </div>
+        <div class="filters" id="filters" hidden>
+          <div><label class="field-label" for="f-type">Typ części</label><select class="field" id="f-type"></select></div>
+          <div><label class="field-label" for="f-brand">Marka</label><input class="field" id="f-brand" placeholder="np. Shimano, SRAM"></div>
+          <div><label class="field-label" for="f-model">Model</label><input class="field" id="f-model" placeholder="np. CS-M6100-12"></div>
+          <div><label class="field-label" for="f-group">Grupa osprzętu</label><input class="field" id="f-group" placeholder="np. Deore, GRX, GX Eagle"></div>
+        </div>
+      </form>
+    </section>
+
+    <section class="wrap-wide" aria-labelledby="results-heading" aria-live="polite">
+      <div class="results" id="results" hidden>
+        <div class="status">
+          <div><h2 id="results-heading"></h2><p id="status-line"></p></div>
+          <button class="reset" type="button">Nowe wyszukiwanie</button>
+        </div>
+        <div class="toolbar" id="toolbar">
+          <label for="sort">Sortuj</label>
+          <select class="field" id="sort"><option value="asc">Nazwa: A–Z</option><option value="desc">Nazwa: Z–A</option></select>
+        </div>
+        <ul class="grid" id="grid"></ul>
+        <div class="card more" id="more">
+          <div>
+            <h3>Nie ma tu tego, czego szukasz?</h3>
+            <p>Przeszukamy sieć i dopiszemy nowe części do katalogu. To potrwa do ok. 40 s.</p>
+          </div>
+          <button class="btn btn-ghost" type="button" id="more-btn">Szukaj więcej z AI</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer"><div class="wrap"><span>Biker © 2026</span><span>Napędzane przez Claude</span></div></footer>
+
+  <div class="mock-bar" role="group" aria-label="Stan makiety">
+    <span>Makieta:</span>
+    <button type="button" data-state="start">Start</button>
+    <button type="button" data-state="parsed">Po parsowaniu</button>
+    <button type="button" data-state="db">Wyniki z bazy</button>
+    <button type="button" data-state="empty">0 w bazie → karta</button>
+    <button type="button" data-state="ai-loading">Klik → AI szuka</button>
+    <button type="button" data-state="ai">Wyniki z AI</button>
+    <button type="button" data-state="ai-none">AI też nic</button>
+    <button type="button" data-state="nomatch">Nie rozpoznano</button>
+    <code id="mock-url"></code>
+  </div>
+
+  <script>
+    // Typy części (TODO-046). Parametry zależne od typu (standardy) — na razie poza zakresem.
+    const TYPES = [
+      ['cassette', 'Kaseta'], ['chain', 'Łańcuch'], ['rear_derailleur', 'Przerzutka tylna'], ['shifter', 'Manetka'],
+      ['crankset', 'Korba'], ['bottom_bracket', 'Suport'], ['brake', 'Hamulec'], ['rotor', 'Tarcza hamulcowa'],
+      ['tyre', 'Opona'], ['wheel', 'Koło'], ['cockpit', 'Kierownica / mostek'], ['seat', 'Siodło / sztyca'],
+    ]
+
+    const DB_QUERY = 'kaseta 12 rzędów shimano 10-51'
+    const AI_QUERY = 'kaseta 12 rzędów sram xd 10-52'
+    const DB_FILTERS = { type: 'cassette', brand: 'Shimano' }
+    const AI_FILTERS = { type: 'cassette', brand: 'SRAM' }
+    const NONE_QUERY = 'tarcza hamulcowa xyz 9000'
+    const NONE_FILTERS = { type: 'rotor', model: 'XYZ 9000' }
+    // photo: [ciemny, jasny] = zastępczy rysunek prawdziwego zdjęcia produktu.
+    const DB_PARTS = [
+      { brand: 'Shimano', model: 'Deore CS-M6100-12', chips: ['12 rz.', '10-51T', 'Micro Spline', 'Deore'], photo: ['#3A3631', '#6E665C'],
+        desc: '12-rzędowa kaseta MTB z grupy Deore. Zakres 10-51T pozwala jeździć z jednym blatem z przodu; wymaga bębenka Micro Spline.' },
+      { brand: 'Shimano', model: 'SLX CS-M7100-12', chips: ['12 rz.', '10-51T', 'Micro Spline', 'SLX'], desc: '' },
+      { brand: 'Shimano', model: 'Deore XT CS-M8100-12', chips: ['12 rz.', '10-51T', 'Micro Spline', 'Deore XT'], photo: ['#55595D', '#A9ADB1'],
+        desc: 'Lżejsza od Deore, z aluminiowym pająkiem pod największymi zębatkami. Ten sam zakres i standard bębenka.' },
+      { brand: 'Shimano', model: 'XTR CS-M9100-12', chips: ['12 rz.', '10-51T', 'Micro Spline', 'XTR'], desc: '' },
+    ]
+    // Części od AI mają w katalogu tylko tożsamość i parametry — opis i zdjęcia dochodzą w widoku części.
+    const AI_PARTS = [
+      { brand: 'SRAM', model: 'GX Eagle XG-1275', chips: ['12 rz.', '10-52T', 'XD', 'GX Eagle'], desc: '', isNew: true },
+      { brand: 'SRAM', model: 'X01 Eagle XG-1295', chips: ['12 rz.', '10-52T', 'XD', 'X01 Eagle'], desc: '', isNew: true },
+      { brand: 'SRAM', model: 'XX1 Eagle XG-1299', chips: ['12 rz.', '10-52T', 'XD', 'XX1 Eagle'], desc: '', isNew: true },
+      { brand: 'SRAM', model: 'GX Eagle Transmission XS-1275', chips: ['12 rz.', '10-52T', 'XD', 'GX Eagle'], desc: '', isNew: true },
+    ]
+
+    const CASSETTE_ART = '<svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">'
+      + '<circle cx="32" cy="32" r="27" stroke-dasharray="3 2.6"/><circle cx="32" cy="32" r="21"/><circle cx="32" cy="32" r="15"/><circle cx="32" cy="32" r="6"/></svg>'
+    const cassettePhoto = ([dark, light], label) => `<svg class="photo" viewBox="0 0 200 150" role="img" aria-label="${label}">
+        <rect width="200" height="150" fill="#fff"/><g transform="translate(100 75)">
+        <circle r="62" fill="none" stroke="${dark}" stroke-width="5" stroke-dasharray="2.6 2.4"/>
+        ${[59, 52, 45, 39, 33, 27, 22, 17].map((r, i) => `<circle r="${r}" fill="${i % 2 ? light : dark}"/>`).join('')}
+        <circle r="10" fill="#fff"/><circle r="10" fill="none" stroke="${dark}" stroke-width="2" stroke-dasharray="2 2"/></g></svg>`
+
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+    const plural = n => n === 1 ? 'część' : 'części'
+    const collator = new Intl.Collator('pl', { sensitivity: 'base', numeric: true })
+    const $ = id => document.getElementById(id)
+
+    // ── Filtry ──
+    $('f-type').innerHTML = '<option value="">Dowolny</option>' + TYPES.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')
+    function setFilters(f = {}, open = false) {
+      $('f-type').value = f.type ?? ''
+      $('f-brand').value = f.brand ?? ''
+      $('f-model').value = f.model ?? ''
+      $('f-group').value = f.group ?? ''
+      $('ft').setAttribute('aria-expanded', String(open))
+      $('filters').hidden = !open
+    }
+    $('ft').addEventListener('click', () => {
+      const open = $('ft').getAttribute('aria-expanded') === 'true'
+      $('ft').setAttribute('aria-expanded', String(!open))
+      $('filters').hidden = open
+    })
+
+    // ── Kafelki ──
+    function stage(p) {
+      const badge = p.isNew ? '<span class="badge">Nowe z AI</span>' : ''
+      if (p.photo) return `<div class="stage">${cassettePhoto(p.photo, esc(p.brand + ' ' + p.model))}${badge}</div>`
+      return `<div class="stage empty"><div class="empty-art">${CASSETTE_ART}
+          <p>Brak zdjęcia. Poproś o nie w szczegółach części.</p></div>${badge}</div>`
+    }
+    const tile = (p, i) => `<li><a class="tile" href="#" style="animation-delay:${Math.min(i, 8) * 65}ms"
+          aria-label="Zobacz szczegóły: ${esc(p.brand)} ${esc(p.model)}, kaseta">
+        ${stage(p)}
+        <div class="body">
+          <p class="brand">${esc(p.brand)} · Kaseta</p>
+          <h3 class="model">${esc(p.model)}</h3>
+          <ul class="chips" aria-label="Parametry">${p.chips.map(c => `<li><span>${esc(c)}</span></li>`).join('')}</ul>
+          ${p.desc ? `<p class="desc">${esc(p.desc)}</p>` : '<p class="no-details">Nie mamy jeszcze opisu tej części.</p>'}
+        </div></a></li>`
+    const skeleton = () => `<li><div class="tile" aria-hidden="true" style="opacity:1;animation:none">
+        <div class="stage loading"><div class="shimmer-fill"></div></div>
+        <div class="body"><div class="line shimmer-fill" style="width:40%"></div><div class="line shimmer-fill" style="width:75%;height:1.3rem"></div>
+          <div class="line shimmer-fill" style="width:60%"></div></div></div></li>`
+
+    let current = { parts: [], extra: 0 }
+    function renderGrid() {
+      const dir = $('sort').value === 'desc' ? -1 : 1
+      const sorted = [...current.parts].sort((a, b) => dir * collator.compare(a.brand + ' ' + a.model, b.brand + ' ' + b.model))
+      $('grid').innerHTML = sorted.map(tile).join('') + Array.from({ length: current.extra }, skeleton).join('')
+    }
+    $('sort').addEventListener('change', renderGrid)
+
+    function setMore(running) {
+      $('more-btn').disabled = running
+      $('more-btn').innerHTML = running ? '<span class="spin" aria-hidden="true"></span>Szukam w sieci…' : 'Szukaj więcej z AI'
+    }
+
+    const url = (q, f) => '/parts?' + [['q', q], ...Object.entries(f)].map(([k, v]) => `${k}=${v}`).join('&')
+    const STATES = {
+      start:  () => ({ q: '', filters: {}, url: '/parts' }),
+      parsed: () => ({ q: DB_QUERY, filters: DB_FILTERS, open: true,
+                       url: '/parts  (adres zmienia się dopiero, gdy ruszy wyszukiwanie — drugie „Szukaj części”)' }),
+      db:     () => ({ q: DB_QUERY, filters: DB_FILTERS, url: url(DB_QUERY, DB_FILTERS), parts: DB_PARTS,
+                       title: `Znaleźliśmy ${DB_PARTS.length} ${plural(DB_PARTS.length)}`, line: `W katalogu, dla „${DB_QUERY}”.` }),
+      // AI nie rusza samo: karta „Szukaj więcej z AI” pojawia się tylko przy 0 częściach, a AI startuje po kliknięciu.
+      empty:  () => ({ q: AI_QUERY, filters: AI_FILTERS, url: url(AI_QUERY, AI_FILTERS), parts: [],
+                       title: 'Nie znaleźliśmy żadnej części', line: `W katalogu nie ma nic dla „${AI_QUERY}”.`, more: 'idle' }),
+      'ai-loading': () => ({ q: AI_QUERY, filters: AI_FILTERS, url: url(AI_QUERY, AI_FILTERS), parts: [], extra: 4,
+                       title: 'Szukamy w sieci', line: 'Znalezione części dopiszemy do katalogu — to potrwa do ok. 40 s.', more: 'running' }),
+      ai:     () => ({ q: AI_QUERY, filters: AI_FILTERS, url: url(AI_QUERY, AI_FILTERS), parts: AI_PARTS,
+                       title: `Znaleźliśmy ${AI_PARTS.length} ${plural(AI_PARTS.length)}`, line: `W sieci, dla „${AI_QUERY}”. Dodaliśmy je do katalogu.` }),
+      'ai-none': () => ({ q: NONE_QUERY, filters: NONE_FILTERS, url: url(NONE_QUERY, NONE_FILTERS), parts: [],
+                       title: 'Nie znaleźliśmy żadnej części', line: `Ani w katalogu, ani w sieci, dla „${NONE_QUERY}”.`, more: 'idle' }),
+      nomatch: () => ({ q: 'coś do roweru na zimę', filters: {}, alert: true, url: '/parts  (parse → 400, wyszukiwanie nie rusza)' }),
+    }
+
+    function render(name) {
+      const s = STATES[name]()
+      $('q').value = s.q
+      setFilters(s.filters, !!s.open)
+      $('alert').hidden = !s.alert
+      $('mock-url').textContent = 'Adres: ' + s.url
+      const showResults = !!s.title
+      $('results').hidden = !showResults
+      if (showResults) {
+        $('results-heading').textContent = s.title
+        $('status-line').textContent = s.line
+        $('toolbar').hidden = s.parts.length < 2
+        current = { parts: s.parts, extra: s.extra ?? 0 }
+        renderGrid()
+        $('more').hidden = !s.more
+        setMore(s.more === 'running')
+      }
+      document.querySelectorAll('.mock-bar button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.state === name)))
+    }
+    document.querySelectorAll('.mock-bar button').forEach(btn => btn.addEventListener('click', () => render(btn.dataset.state)))
+    render('db')
+  </script>
+</body>
+</html>

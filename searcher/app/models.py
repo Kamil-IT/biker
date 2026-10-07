@@ -129,6 +129,15 @@ def init_db():
             "name column / equipment_component is missing) — run backend/scripts/migrate_merge_equipment_detail.py "
             "on this database first"
         )
+    # TODO-046: equipment gained part_type / groupset / key_specs (the parts catalogue); the ORM
+    # selects them on every equipment read, so an unmigrated database would fail on the first save.
+    if inspector.has_table("equipment") and not {"part_type", "groupset", "key_specs"} <= {
+        c["name"] for c in inspector.get_columns("equipment")
+    }:
+        raise RuntimeError(
+            "equipment has no part_type / groupset / key_specs columns — run "
+            "backend/scripts/migrate_equipment_part_search.py on this database first"
+        )
     missing = [t for t in REQUIRED_TABLES if not inspector.has_table(t)]
     if missing:
         raise RuntimeError(
@@ -382,6 +391,12 @@ class Equipment(Base):
     model_norm = Column(String(512), nullable=False)
     description = Column(Text, nullable=True)  # JSON serialized BikeDescription; NULL = no details
     short_description = Column(Text, nullable=False, default="", server_default="")
+    # Parts catalogue (TODO-046, scripts/migrate_equipment_part_search.py): a slug of
+    # app/part_types.py (NULL = unknown), the groupset and ≤ 6 short chips as a JSON list.
+    # Written by POST /v1/parts/search/ai (fill-only-missing), never into equipment_component.
+    part_type = Column(String(32), nullable=True)
+    groupset = Column(String(128), nullable=True)
+    key_specs = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

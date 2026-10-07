@@ -319,5 +319,9 @@ def test_item_by_id_and_search_context(db):
         el.search_context(999999)
     orphan, _ = er.save_equipment_photos("", "Lonely part", "parts", ["https://a/1.jpg"], element_name="Lonely part")
     assert el.get_equipment_item(orphan).bike is None
-    with pytest.raises(el.NotFound, match="Component not found"):
-        el.search_context(orphan)
+    # TODO-046: an item no bike links (a catalogue part) is searched without a bike, never refused.
+    assert el.search_context(orphan) == ("", "", "Lonely part", "", "parts"), "unknown part type: no element type"
+    with models.get_session() as s:
+        s.get(Equipment, orphan).part_type = "cassette"
+        s.commit()
+    assert el.search_context(orphan, kross) == ("", "", "Lonely part", "Cassette", "parts"), "the part type's name"

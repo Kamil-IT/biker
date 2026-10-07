@@ -7,6 +7,7 @@ category, no details) and linked on THAT bike's rows — free, no AI; the click 
 the bike view calls it, then navigates to /equipment/{id}. search_context: what
 a search by equipment_id sends to the searcher (the context bike, the stored name
 and category, so the searcher finds this very row by its (category, name_norm)).
+A catalogue part no bike links (TODO-046) is searched without a bike.
 Lives apart from equipment_repository.py (500-line rule).
 """
 import logging
@@ -15,6 +16,7 @@ from typing import NamedTuple, Optional
 
 from .equipment_categories import infer_category
 from .equipment_models import Equipment
+from .part_types import part_type_name
 from .models import Bike, BikeComponent, dialect_insert, get_session, norm
 from .schemas import BikeRef, EquipmentItemResponse, EquipmentResolveResponse
 
@@ -26,7 +28,7 @@ class NotFound(Exception):
 
 
 class SearchContext(NamedTuple):
-    bike_company: str
+    bike_company: str  # "" = no context bike (a catalogue part no bike links, TODO-046)
     bike_model: str
     element_name: str
     element_type: str
@@ -125,7 +127,10 @@ def resolve_equipment(bike_id: int, element_name: str) -> EquipmentResolveRespon
 def search_context(equipment_id: int, bike_id: Optional[int] = None) -> SearchContext:
     """What a search by equipment_id sends to the searcher: the context bike (`bike_id` when it links the item,
     else the first bike linking it), the item's stored name and category, the element's subcategory.
-    Raises NotFound("Equipment not found" / "Component not found" — no bike links the item)."""
+
+    An item no bike links — a catalogue part from the parts search (TODO-046) — is searched without a bike:
+    bike company / model "" and, as the element type, the English name of its part type ("Cassette", "" when
+    unknown). Raises NotFound("Equipment not found") for an unknown id only."""
     session = get_session()
     try:
         item = session.get(Equipment, equipment_id)
@@ -134,7 +139,7 @@ def search_context(equipment_id: int, bike_id: Optional[int] = None) -> SearchCo
         row = _linked_row(session, equipment_id, bike_id)
         bike = session.get(Bike, row.bike_id) if row is not None else None
         if bike is None:
-            raise NotFound("Component not found")
+            return SearchContext("", "", item.name, part_type_name(item.part_type), item.category)
         return SearchContext(bike.brand, bike.model, item.name, row.subcategory or "", item.category)
     finally:
         session.close()

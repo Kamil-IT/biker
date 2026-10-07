@@ -107,6 +107,14 @@ def test_element_type_sent_stripped_and_omitted_when_empty(searcher, call):
     assert bodies == [{**BODY, "element_type": "Frame"}, BODY, BODY, {**BODY, "element_type": "t" * 255}]
 
 
+@pytest.mark.parametrize("call", [sc.search_equipment_details, sc.search_equipment_photos])
+def test_catalogue_part_is_sent_without_a_bike(searcher, call):
+    # TODO-046: a catalogue part no bike links — no bike_company / bike_model, the part type as element type.
+    asyncio.run(call("", "", "Shimano Deore CS-M6100-12", "parts", element_type="Cassette"))
+    assert json.loads(searcher.calls[0].content) == {
+        "element_name": "Shimano Deore CS-M6100-12", "category": "parts", "element_type": "Cassette"}
+
+
 def test_photos_posts_to_equipment_path_and_keeps_equipment_id(searcher):
     searcher.reply = lambda req: httpx.Response(
         200, json={"photos": ["https://abus.example/a.jpg", "https://abus.example/b.jpg"], "equipment_id": 7, "saved": 2},
