@@ -2,7 +2,7 @@
 
 **Branch:** `feature/frame-size-calculator`
 **Worktree:** `C:\Users\kamil_wolny\Projects\biker-wt\feature-frame-size-calculator`
-**Status:** TODO — zaimplementowane i przetestowane ręcznie (3 rundy, 68/68 PASS, `docs/testing/TODO_045/TEST_PLAN.md`), niezacommitowane; do `backlog/done/` po merge'u PR
+**Status:** DONE — merged in PR #161 (2026-10-07, 991a5d4); manual QA 68/68 after 3 rounds (`docs/testing/TODO_045/TEST_PLAN.md`); not deployed
 **Makieta:** `docs/mockups/zakladki/rower-na-twoja-miare-kalkulator.html` (w głównym checkoutcie, poza gitem; tu liczy JS — w aplikacji liczy backend)
 
 ## Cel (ustalone w /interview-me, 2026-10-06)
