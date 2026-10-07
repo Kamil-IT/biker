@@ -45,6 +45,9 @@ export function usePartsSearch(navigate: (to: string) => void) {
   const parsedQueryRef = useRef('')
   // The canonical query of the results in memory (or in flight).
   const searchKeyRef = useRef<string | null>(null)
+  // Bumped by every search run and reset: an answer — DB or AI — of an older run is dropped, also
+  // when the query is the same (an AI search still in flight when the same query is searched again).
+  const runRef = useRef(0)
   const resultsRef = useRef<HTMLElement>(null)
 
   const sortedParts = useMemo(() => sortParts(parts, sortOrder), [parts, sortOrder])
@@ -67,6 +70,7 @@ export function usePartsSearch(navigate: (to: string) => void) {
     const payload = queryToPayload(payloadToQuery(input))
     const key = payloadToQuery(payload)
     if (!key) return
+    const run = ++runRef.current
     searchKeyRef.current = key
     setLastUrl(partsPath(key))
     if (fromForm) navigate(partsPath(key))
@@ -80,14 +84,14 @@ export function usePartsSearch(navigate: (to: string) => void) {
     setAiError(null)
     try {
       const data = await postJson<PartsSearchResponse>('/v1/parts/search', payload)
-      if (searchKeyRef.current !== key) return
+      if (runRef.current !== run) return
       setParts(data.parts)
       setState('results')
       if (fromForm) {
         setTimeout(() => resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
       }
     } catch (err) {
-      if (searchKeyRef.current !== key) return
+      if (runRef.current !== run) return
       setErrorMsg(errorMessage(err))
       setState('error')
     }
@@ -157,18 +161,19 @@ export function usePartsSearch(navigate: (to: string) => void) {
   // what it finds is added to the catalogue and replaces the empty list.
   const searchAi = async () => {
     const key = searchKeyRef.current
+    const run = runRef.current
     if (!key || aiState === 'running') return
     setAiState('running')
     setAiError(null)
     try {
       const data = await postJson<PartsSearchResponse>('/v1/parts/search/ai', queryToPayload(key))
-      if (searchKeyRef.current !== key) return
+      if (runRef.current !== run) return
       setParts(data.parts)
       setSource('ai')
       setAiTried(true)
       setAiState('idle')
     } catch (err) {
-      if (searchKeyRef.current !== key) return
+      if (runRef.current !== run) return
       setAiError(errorMessage(err))
       setAiState('error')
     }
@@ -182,6 +187,7 @@ export function usePartsSearch(navigate: (to: string) => void) {
     setAiState('idle')
     setAiError(null)
     fillForm({})
+    runRef.current += 1
     searchKeyRef.current = null
     setLastUrl(null)
     setIsParsing(false)
