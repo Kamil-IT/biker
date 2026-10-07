@@ -1,7 +1,7 @@
 # TODO-046 — Zakładka „Wyszukiwanie części” (katalog części)
 
 **Branch:** `feature/todo-046-parts-search`
-**Status:** zaimplementowane, PR #163 otwarty (2026-10-07) — czeka na review, merge i deploy (nie mergować, nie deployować i nie migrować Cloud SQL bez wyraźnej zgody użytkownika). Ręczne QA 33/33 (`docs/testing/TODO_046/TEST_PLAN.md`); migracja uruchomiona lokalnie (`biker-pg`, `cache.db`), Cloud SQL — nie
+**Status:** DONE — PR #163 zmergowany 2026-10-08 (51dca72); ręczne QA 33/33 (`docs/testing/TODO_046/TEST_PLAN.md`). Migracja: lokalny `biker-pg` i `cache.db` (2026-10-07), Cloud SQL 2026-10-08 po backupie 1791413807685 (8 wierszy, `migrated`). Wdrożone 2026-10-08, tag 51dca72: searcher `biker-searcher-00014-ld5`, backend `biker-backend-00025-swz`, frontend `biker-frontend-00019-v92`; kontrola produkcji 13/13 (Playwright, bez płatnych przebiegów). Klucz Anthropic bez kredytów — parse i wyszukiwanie AI odpowiadają 400 do czasu doładowania
 **Makieta:** `docs/mockups/wyszukiwanie-czesci/wyszukiwanie-czesci.html` (linkuje `../zakladki/styles.css`; przełącznik stanów w prawym dolnym rogu: start, po parsowaniu, wyniki z bazy, 0 w bazie → karta, klik → AI szuka, wyniki z AI, AI też nic, nie rozpoznano)
 
 ## Cel (wywiad z użytkownikiem odbył się przed zadaniem — decyzje potwierdzone)
