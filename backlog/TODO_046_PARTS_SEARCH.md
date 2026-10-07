@@ -1,7 +1,7 @@
 # TODO-046 — Zakładka „Wyszukiwanie części” (katalog części)
 
 **Branch:** `feature/todo-046-parts-search`
-**Status:** zaimplementowane, PR otwarty — czeka na review, merge i deploy (nie mergować, nie deployować i nie migrować Cloud SQL bez wyraźnej zgody użytkownika)
+**Status:** zaimplementowane, PR #163 otwarty (2026-10-07) — czeka na review, merge i deploy (nie mergować, nie deployować i nie migrować Cloud SQL bez wyraźnej zgody użytkownika). Ręczne QA 33/33 (`docs/testing/TODO_046/TEST_PLAN.md`); migracja uruchomiona lokalnie (`biker-pg`, `cache.db`), Cloud SQL — nie
 **Makieta:** `docs/mockups/wyszukiwanie-czesci/wyszukiwanie-czesci.html` (linkuje `../zakladki/styles.css`; przełącznik stanów w prawym dolnym rogu: start, po parsowaniu, wyniki z bazy, 0 w bazie → karta, klik → AI szuka, wyniki z AI, AI też nic, nie rozpoznano)
 
 ## Cel (wywiad z użytkownikiem odbył się przed zadaniem — decyzje potwierdzone)
