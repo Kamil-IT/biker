@@ -34,6 +34,7 @@ logger = logging.getLogger("biker.parts")
 PARTS_CATEGORY = "parts"
 COMPANY_MAX = 255   # equipment.company
 MODEL_MAX = 512     # equipment.model / name
+NAME_MAX = 255      # "Brand Model" must fit the equipment searches' element_name (backend + searcher: 255)
 GROUPSET_MAX = 128  # equipment.groupset
 KEY_SPECS_MAX = 6
 KEY_SPEC_MAX_LEN = 40
@@ -166,9 +167,13 @@ def _existing(session, part: FoundPart, name: str) -> Optional[Equipment]:
     ).order_by(Equipment.id).first()
 
 
+def _name(part: FoundPart) -> str:
+    return f"{part.brand} {part.model}".strip()[:NAME_MAX].strip()
+
+
 def _store(session, part: FoundPart) -> tuple[int, bool]:
     """(equipment id, created by this call) for one found part; runs in the caller's transaction."""
-    name = f"{part.brand} {part.model}".strip()[:MODEL_MAX].strip()
+    name = _name(part)
     item = _existing(session, part, name)
     if item is None:
         now = datetime.now(timezone.utc)
@@ -191,25 +196,34 @@ def _store(session, part: FoundPart) -> tuple[int, bool]:
     return item.id, False
 
 
-def save_found_parts(found: list[FoundPart]) -> list[PartResult]:
+def save_found_parts(found: list[FoundPart], requested_type: Optional[str] = None) -> list[PartResult]:
     """Store the AI search's parts (one transaction) and answer them as catalogue tiles, in the AI's order.
 
-    Two found parts that land on one row are answered once. is_new = the row was
-    created by this call. Raises on a DB error after rolling back.
+    Rows are written in name order, so two concurrent saves take the unique-key locks
+    in the same order (no deadlock on PostgreSQL). Two found parts that land on one
+    row are answered once; an existing row of another part type than `requested_type`
+    is kept as it is but not answered (it would not match that search). is_new = the
+    row was created by this call. Raises on a DB error after rolling back.
     """
     session = get_session()
     try:
+        stored: dict[int, tuple[int, bool]] = {}
+        for i in sorted(range(len(found)), key=lambda i: norm(_name(found[i]))):
+            stored[i] = _store(session, found[i])
+        session.commit()
         ids: list[int] = []
         new_ids: set[int] = set()
-        for part in found:
-            eid, created = _store(session, part)
+        for i in range(len(found)):
+            eid, created = stored[i]
             if eid not in ids:
                 ids.append(eid)
             if created:
                 new_ids.add(eid)
-        session.commit()
         by_id = {r.id: r for r in session.query(*_COLUMNS).filter(Equipment.id.in_(ids))} if ids else {}
-        results = _results(session, [by_id[i] for i in ids if i in by_id], new_ids)
+        rows = [by_id[i] for i in ids if i in by_id]
+        if requested_type:
+            rows = [r for r in rows if r.part_type in (None, requested_type)]
+        results = _results(session, rows, new_ids)
         logger.info("parts stored | found=%d answered=%d created=%d", len(found), len(results), len(new_ids))
         return results
     except Exception as exc:

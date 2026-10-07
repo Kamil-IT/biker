@@ -1020,8 +1020,9 @@ def case_equipment_photos():
 
 def _equipment_search_404s(url: str) -> None:
     """Unknown bike -> 404 "Bike not found"; known bike + an element it does not have -> 404 "Component not found";
-    by id: unknown item -> 404 "Equipment not found". (An item no bike links is searched WITHOUT a bike since
-    TODO-046 — a paid run, so not here; scripts/test_equipment_repository.py covers its search context.)
+    by id: unknown item -> 404 "Equipment not found", a non-parts item no bike links -> 404 "Component not found".
+    (A 'parts' item no bike links — a catalogue part — is searched WITHOUT a bike since TODO-046: a paid run,
+    so not here; scripts/test_equipment_repository.py covers its search context.)
 
     No live run: every searcher run is a paid subscription search (the suite's one
     live run is case_decathlon_search, same searcher_client code path)."""
@@ -1037,6 +1038,11 @@ def _equipment_search_404s(url: str) -> None:
         body = {"bike_company": FIX_EQUIP_BIKE_BRAND, "bike_model": FIX_EQUIP_BIKE_MODEL,
                 "element_name": "No Such Element XYZ999"}
         resp = _post(url, body, timeout=30)
+        assert resp.status_code == 404 and resp.json() == {"detail": "Component not found"}, \
+            f"{resp.status_code}: {resp.text[:200]}"
+        orphan, _ = equipment_repository.save_equipment_photos(
+            "", FIX_EQUIP_MODEL, FIX_EQUIP_CATEGORY, ["https://example.com/smoke-orphan.jpg"])
+        resp = _post(url, {"equipment_id": orphan}, timeout=30)
         assert resp.status_code == 404 and resp.json() == {"detail": "Component not found"}, \
             f"{resp.status_code}: {resp.text[:200]}"
     finally:

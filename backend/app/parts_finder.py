@@ -21,7 +21,7 @@ from anthropic import AsyncAnthropic
 
 from .json_extract import extract_json
 from .part_types import part_type_name, valid_part_type
-from .parts_repository import COMPANY_MAX, GROUPSET_MAX, MODEL_MAX, FoundPart, clean_key_specs
+from .parts_repository import COMPANY_MAX, GROUPSET_MAX, NAME_MAX, FoundPart, clean_key_specs
 from .schemas import PartsSearchRequest
 
 logger = logging.getLogger("biker.parts.finder")
@@ -46,10 +46,12 @@ def clean_found_part(item, requested_type: Optional[str]) -> Optional[FoundPart]
     if not isinstance(item, dict):
         return None
     brand = _text(item.get("brand"), COMPANY_MAX)
-    model = _text(item.get("model"), MODEL_MAX)
-    # The model is stored WITHOUT the brand ("Shimano" + "Deore CS-M6100-12"); name = "Brand Model".
+    model = _text(item.get("model"), NAME_MAX)
+    # The model is stored WITHOUT the brand ("Shimano" + "Deore CS-M6100-12"); name = "Brand Model", cut so it
+    # fits the equipment searches' element_name (255) — the catalogue part's details are searched by that name.
     if brand and model.lower().startswith(brand.lower() + " "):
         model = model[len(brand):].strip()
+    model = model[:max(0, NAME_MAX - len(brand) - 1)].strip()
     if not brand or not model:
         return None
     part_type = valid_part_type(item.get("part_type"))
@@ -72,6 +74,22 @@ def user_message(req: PartsSearchRequest) -> str:
     }
     body = json.dumps({k: v for k, v in query.items() if v}, ensure_ascii=False)
     return f"Find real bicycle parts matching this catalogue query.\n<query>\n{body}\n</query>"
+
+
+def _is_answer(data) -> bool:
+    """{"parts": [...]} or a list of objects — not a stray "[1]" from a citation in the prose."""
+    if isinstance(data, dict):
+        return isinstance(data.get("parts"), list)
+    return isinstance(data, list) and any(isinstance(x, dict) for x in data)
+
+
+def answer_text(texts: list[str]) -> str:
+    """The text block holding the JSON answer: the LAST block whose JSON looks like one (the model
+    narrates between its searches), else all blocks joined (a cited answer can be split over several). Pure."""
+    for text in reversed(texts):
+        if _is_answer(extract_json(text)):
+            return text
+    return "".join(texts)
 
 
 def parse_found(raw: str, requested_type: Optional[str]) -> list[FoundPart]:
@@ -110,10 +128,7 @@ async def find_parts_ai(req: PartsSearchRequest) -> list[FoundPart]:
     if response.stop_reason == "max_tokens":
         logger.warning("parts search hit max_tokens=%d — JSON may be truncated", MAX_TOKENS)
     texts = [b.text for b in response.content if getattr(b, "type", "") == "text"]
-    # The JSON comes last, after any narration between the searches: the last text block when it
-    # holds the JSON, else all of them joined (a cited answer is split over several blocks).
-    last = texts[-1] if texts else ""
-    parts = parse_found(last if extract_json(last) is not None else "".join(texts), req.part_type)
+    parts = parse_found(answer_text(texts), req.part_type)
     logger.info(
         "parts found by AI | count=%d in_tokens=%d out_tokens=%d elapsed=%.2fs",
         len(parts), response.usage.input_tokens, response.usage.output_tokens, time.perf_counter() - t_start,

@@ -128,9 +128,10 @@ def search_context(equipment_id: int, bike_id: Optional[int] = None) -> SearchCo
     """What a search by equipment_id sends to the searcher: the context bike (`bike_id` when it links the item,
     else the first bike linking it), the item's stored name and category, the element's subcategory.
 
-    An item no bike links — a catalogue part from the parts search (TODO-046) — is searched without a bike:
-    bike company / model "" and, as the element type, the English name of its part type ("Cassette", "" when
-    unknown). Raises NotFound("Equipment not found") for an unknown id only."""
+    A 'parts' item no bike links — a catalogue part from the parts search (TODO-046) — is searched without a
+    bike: bike company / model "" and, as the element type, the English name of its part type ("Cassette", ""
+    when unknown). Raises NotFound("Equipment not found") for an unknown id, NotFound("Component not found")
+    for an item of another category that no bike links (no paid run for a helmet whose bike is gone)."""
     session = get_session()
     try:
         item = session.get(Equipment, equipment_id)
@@ -139,6 +140,8 @@ def search_context(equipment_id: int, bike_id: Optional[int] = None) -> SearchCo
         row = _linked_row(session, equipment_id, bike_id)
         bike = session.get(Bike, row.bike_id) if row is not None else None
         if bike is None:
+            if item.category != "parts":
+                raise NotFound("Component not found")
             return SearchContext("", "", item.name, part_type_name(item.part_type), item.category)
         return SearchContext(bike.brand, bike.model, item.name, row.subcategory or "", item.category)
     finally:

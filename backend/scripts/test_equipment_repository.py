@@ -325,3 +325,6 @@ def test_item_by_id_and_search_context(db):
         s.get(Equipment, orphan).part_type = "cassette"
         s.commit()
     assert el.search_context(orphan, kross) == ("", "", "Lonely part", "Cassette", "parts"), "the part type's name"
+    lonely_lock, _ = er.save_equipment_photos("", "Lonely lock", "locks", ["https://a/2.jpg"], element_name="Lonely lock")
+    with pytest.raises(el.NotFound, match="Component not found"):
+        el.search_context(lonely_lock)  # not a catalogue part: no bike-less paid run

@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app import main, models, parts_routes  # noqa: E402
 from app.cache import _normalise  # noqa: E402
 from app.equipment_models import Equipment, EquipmentComponent, EquipmentDetailPhoto  # noqa: E402
-from app.parts_finder import clean_found_part, parse_found, user_message  # noqa: E402
+from app.parts_finder import answer_text, clean_found_part, parse_found, user_message  # noqa: E402
 from app.parts_parser import to_parse_response  # noqa: E402
 from app.parts_repository import FoundPart, clean_key_specs, find_parts, save_found_parts  # noqa: E402
 from app.schemas import PartsParseResponse, PartsSearchRequest  # noqa: E402
@@ -151,6 +151,20 @@ def test_save_deduplicates_one_row(db):
         assert s.query(Equipment).count() == 1
 
 
+def test_save_answers_only_the_requested_type(db):
+    chain = _item("Shimano Deore XT CS-M8100", "Shimano", "Deore XT CS-M8100", part_type="chain")
+    got = save_found_parts([_found("Shimano", "Deore XT CS-M8100", "cassette"), _found()], requested_type="cassette")
+    assert chain not in {p.id for p in got} and len(got) == 1, "an existing row of another type is not answered"
+    with models.get_session() as s:
+        assert s.get(Equipment, chain).part_type == "chain", "and it is not changed"
+    assert len(save_found_parts([_found("Shimano", "Deore XT CS-M8100", "cassette")])) == 1, "no type asked: answered"
+
+
+def test_save_answers_in_the_ai_order(db):
+    got = save_found_parts([_found(model="Z Last"), _found(model="A First"), _found(model="M Middle")])
+    assert [p.model for p in got] == ["Z Last", "A First", "M Middle"], "rows written in name order, answered in AI order"
+
+
 def test_save_ignores_other_categories(db):
     _item("SRAM GX Eagle XG-1275", "SRAM", "GX Eagle XG-1275", category="locks")
     got = save_found_parts([_found()])
@@ -175,8 +189,10 @@ def test_clean_found_part():
     assert clean_found_part({"brand": "", "model": "Y"}, None) is None
     assert clean_found_part({"brand": "X", "model": 12}, None) is None
     assert clean_found_part("text", None) is None
-    long = clean_found_part({"brand": "B" * 300, "model": "M" * 600, "groupset": "G" * 200}, None)
-    assert (len(long.brand), len(long.model), len(long.groupset)) == (255, 512, 128)
+    long = clean_found_part({"brand": "B" * 100, "model": "M" * 600, "groupset": "G" * 200}, None)
+    assert (len(long.brand), len(long.model), len(long.groupset)) == (100, 154, 128), \
+        '"Brand Model" fits the equipment searches\' element_name (255)'
+    assert clean_found_part({"brand": "B" * 300, "model": "M"}, None) is None, "no room left for the model"
 
 
 def test_parse_found():
@@ -186,6 +202,15 @@ def test_parse_found():
     many = json.dumps([{"brand": "B", "model": f"M{i}"} for i in range(15)])
     assert len(parse_found(many, None)) == 10
     assert parse_found("no json at all", None) == []
+
+
+def test_answer_text_skips_a_citation_bracket():
+    answer = '{"parts": [{"brand": "SRAM", "model": "GX"}]}'
+    assert answer_text(["Szukam…", answer, "Sources: [1]"]) == answer, "a trailing [1] is not the answer"
+    assert answer_text(["x", '[{"brand": "B", "model": "M"}]']) == '[{"brand": "B", "model": "M"}]'
+    assert answer_text(['{"parts": [{"brand": "S', 'RAM", "model": "GX"}]}']) == \
+        '{"parts": [{"brand": "SRAM", "model": "GX"}]}', "split over blocks: joined"
+    assert answer_text([]) == ""
 
 
 def test_user_message_is_json_data():

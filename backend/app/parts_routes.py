@@ -86,7 +86,7 @@ async def _run_ai_search(req: PartsSearchRequest) -> list[PartResult]:
     if not found:
         return []
     try:
-        return await asyncio.to_thread(save_found_parts, found)
+        return await asyncio.to_thread(save_found_parts, found, req.part_type)
     except Exception as exc:  # noqa: BLE001 — logged in the repository
         raise HTTPException(status_code=503, detail="Could not save the found parts — try again later") from exc
 

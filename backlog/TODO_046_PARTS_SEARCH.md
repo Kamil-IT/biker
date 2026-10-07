@@ -45,7 +45,7 @@ Migracja `backend/scripts/migrate_equipment_part_search.py` (wzorzec `migrate_ph
 
 ### Widok części bez roweru
 
-- `app/equipment_lookup.py` `search_context`: część, której nie linkuje żaden rower, dostaje kontekst **bez roweru** (zamiast 404 „Component not found”); `element_type` = angielska nazwa typu części (np. „Cassette”). 404 „Equipment not found” zostaje.
+- `app/equipment_lookup.py` `search_context`: część (`category='parts'`), której nie linkuje żaden rower, dostaje kontekst **bez roweru** (zamiast 404 „Component not found”; inne kategorie bez roweru — nadal 404, po code review); `element_type` = angielska nazwa typu części (np. „Cassette”). 404 „Equipment not found” zostaje.
 - `searcher_client` wysyła `bike_company`/`bike_model` tylko, gdy są.
 - Searcher: `EquipmentSearchRequest` — rower opcjonalny (oba albo żaden); `user_message` obu finderów i `is_named_after_bike` działają bez roweru (prompt bez kontekstu roweru); `_link` pomijany bez roweru; zapis dalej po `(category, element_name)`.
 
@@ -85,4 +85,4 @@ Pen-testy na lokalnym backendzie (worktree, port 8003): **20/20**. Klucz API nie
 **Ryzyka zaakceptowane / do decyzji użytkownika:**
 - **Przycisk „Szukaj więcej z AI” to płatne wywołanie API (Haiku + `web_search`) dostępne anonimowo, bez limitu na IP.** Single-flight łączy tylko identyczne zapytania; różne zapytania płacą osobno, bez globalnego limitu współbieżności. Odpowiedzią jest planowany limit na IP (krok 2 deployu) — poza zakresem tego zadania.
 - **Zatrucie katalogu:** wyniki AI (także pod wpływem treści stron z `web_search`) zapisują się w współdzielonej tabeli `equipment` i są widoczne dla innych. Ograniczenia: walidacja jak wyżej, „tylko brakujące” — nic istniejącego nie jest nadpisywane.
-- **Wyszukiwanie szczegółów / zdjęć części bez roweru:** element bez linku do roweru (część z katalogu) jest teraz szukany przez searcher (płatny przebieg subskrypcji) zamiast 404. Wiersz musi istnieć (id), a nazwa pochodzi z bazy, nie od wywołującego; searcher czyści ją `prompt_value` i traktuje jako dane. Każdy istniejący id można było już wcześniej szukać, o ile linkował go rower.
+- **Wyszukiwanie szczegółów / zdjęć części bez roweru:** element kategorii `parts` bez linku do roweru (część z katalogu) jest teraz szukany przez searcher (inne kategorie bez roweru — nadal 404) (płatny przebieg subskrypcji) zamiast 404. Wiersz musi istnieć (id), a nazwa pochodzi z bazy, nie od wywołującego; searcher czyści ją `prompt_value` i traktuje jako dane. Każdy istniejący id można było już wcześniej szukać, o ile linkował go rower.
