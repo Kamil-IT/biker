@@ -12,8 +12,10 @@
   --color-charcoal:   #2B2620;
   --color-ink:        #4A3F35;
   --color-muted:      #9C8E82;
+  --color-muted-dark: #716559;   /* placeholders on sand: 4.6:1 (muted is 2.6:1) */
   --color-terra:      #C45C38;
   --color-terra-dark: #A34B2E;
+  --color-terra-light: #E27A55;   /* terra as text on charcoal: 5.1:1 (plain terra is 3.5:1) */
   --color-border:     #D6CBB9;
   --color-card:       #F5F1EA;
 }
@@ -63,23 +65,7 @@ body {
   to { transform: rotate(360deg); }
 }
 
-/* "Rower na Twoją miarę" teaser (TODO-041): one slow sweep across the sketch */
-@keyframes scan {
-  0%   { transform: translateX(-120px); opacity: 0; }
-  12%  { opacity: 1; }
-  88%  { opacity: 1; }
-  100% { transform: translateX(640px);  opacity: 0; }
-}
-
 /* ── Helper classes ─────────────────────────────────── */
-
-.scan {
-  animation: scan 7s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .scan { display: none; }
-}
 
 .shimmer {
   background: linear-gradient(

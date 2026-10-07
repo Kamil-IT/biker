@@ -516,6 +516,56 @@ Content-Type: application/json
 
 ---
 
+### `POST /v1/fit/frame-size`
+
+Recommended frame size (number, range, letters) for a rider's height, inseam and bike type (TODO-045). A pure calculation — no AI, no database, no generic cache, nothing stored. The backend computes the formula instantly and returns the recommendation in one response. The frontend calls it while the rider types, with a 300 ms debounce, so it must stay instant.
+
+```http
+POST http://localhost:8000/v1/fit/frame-size
+Content-Type: application/json
+
+{
+  "height_cm": 178,
+  "inseam_cm": 80,
+  "bike_type": "Road"
+}
+```
+
+**Response:**
+```json
+{
+  "bike_type": "Road",
+  "size": 52.8,
+  "unit": "cm",
+  "range_min": 50.8,
+  "range_max": 54.8,
+  "letter": "S",
+  "letters": ["S", "M"],
+  "confidence": "good",
+  "measurement_warning": false
+}
+```
+
+- `height_cm` — rider height in centimeters, 140–210 (required, float)
+- `inseam_cm` — inseam (inside-leg length, book-between-legs method) in centimeters, 60–110 (required, float)
+- `bike_type` — `Road`, `MTB`, `Gravel`, `Touring`, or `Hybrid/Commuter` (required, exact string)
+- Anything outside the range or NaN/Infinity is a **422**.
+
+The response includes:
+- `size` — the formula result, rounded to 1 decimal in the given `unit` (cm for Road/Gravel/Touring/Hybrid, in for MTB)
+- `unit` — `"cm"` or `"in"` (MTB only)
+- `range_min`, `range_max` — recommended minimum and maximum, also 1 decimal
+- `letter` — the letter of `size` (S/M/L/XL/XS) — the main recommendation
+- `letters` — all applicable letters from `range_min` to `range_max`, ascending (1–3 items)
+- `confidence` — `"good"` (Road/MTB) or `"medium"` (Gravel/Touring/Hybrid) — indicates formula reliability for that bike type
+- `measurement_warning` — `true` when `inseam / height` is outside the valid range 0.40–0.50 (the inseam measurement may be wrong); the result is still computed
+
+**Flow:** none — no outbound HTTP calls; pure calculation in `app/frame_size.py`.
+
+**Tests:** `scripts/test_frame_size.py` (pytest, pure function tests): each bike type, control example (178/80/Road → 52.8 cm, S, range 50.8–54.8, ["S","M"], good, no warning), letter boundaries and transitions, MTB in inches, 1–3 letter combos, inseam ratio at and outside 0.40/0.50, `measurement_warning` flags; `scripts/test_search.py` `case_fit_frame_size` (smoke, live server): 200 with the control example, MTB units, 422 for out-of-range values and unknown bike type, no generic-cache row, < 5 s.
+
+---
+
 ### `GET /v1/bike/popular`
 
 The hand-curated "Najpopularniejsze rowery" list the home page shows before the first search (TODO-034). One row per bike in `bike_popular` (`bike_id` FK → `bike.id` ON DELETE CASCADE, unique; `position` = display order, 1 first, deliberately not unique), written only by `scripts/seed_popular_bikes.py` (see [Seed the popular bikes](#seed-the-popular-bikes-bike_popular)). A pure DB read via `app/popular_repository.py` — **no** AI call, **no** generic cache, no TTL. The expert rating shown on each card is **not** part of this response: the frontend asks `POST /v1/bike/review` for every bike separately.

@@ -3,7 +3,7 @@ import SearchPage, { type SearchState } from './components/SearchPage'
 import BikeDetailsView from './components/BikeDetailsView'
 import EquipmentDetailsView from './components/EquipmentDetailsView'
 import TopTabs, { type Tab } from './components/TopTabs'
-import FitComingSoonPage from './components/FitComingSoonPage'
+import FitPage from './components/FitPage'
 import ContactPage from './components/ContactPage'
 import NotFoundPage from './components/NotFoundPage'
 import useRoute, { PATHS, bikePath, equipmentPath, searchPath, type Route } from './hooks/useRoute'
@@ -339,7 +339,7 @@ export default function App() {
 
       <main className="flex-1">
 
-        {route.name === 'fit' && <FitComingSoonPage onNavigate={navigate} />}
+        {route.name === 'fit' && <FitPage />}
         {route.name === 'contact' && <ContactPage />}
 
         {/* ── Home (/) and results (/search?…) ─────────── */}
