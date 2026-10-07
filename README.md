@@ -15,6 +15,7 @@ Before the first search the home page shows **Najpopularniejsze rowery** — the
    In the photo gallery slot the button also starts the on-demand photo search (`POST /v1/bike/photos/search` → the same `searcher/` service finds the manufacturer's product page with the Claude Code CLI, scrapes up to 8 photos from it with Playwright and stores them in `bike_detail_photos` — only for a bike that has none, stored photos are never replaced); it reads "Szukam zdjęć…" while it runs, then the gallery replaces it — or "Nie znaleziono zdjęć". In the **Used** offers card that same button also starts the on-demand OLX search (`POST /v1/bike/used/search` → the `searcher/` service, which runs the Claude Code CLI on your subscription and stores what it finds in `bike_offer`). The button reads "Szukam na OLX…" while it runs, then the real listings with photos replace it — or "Nie znaleziono ofert" when there are none. The **New** card also lists the stored centrumrowerowe.pl offers (`POST /v1/bike/centrumrowerowe`, a DB read of rows written by the local discovery enrichment; no button, the data is either stored or not). Its two search buttons are separate: **Poszukaj na Allegro** (`POST /v1/bike/allegro/search`) and **Poszukaj w Decathlonie** (`POST /v1/bike/decathlon/search`), each shown only while that source has no stored row for the bike; a click records the request and runs that one search ("Szukam na Allegro…" / "Szukam w Decathlonie…"), the rows replace the button, or it becomes a disabled "Nie znaleziono na Allegro" / "Nie znaleziono w Decathlonie" with the backend's `info` under it. Neither search stores photos (Allegro blocks every automated fetch with 403, so its photo scrape was dropped). Allegro is searched for every brand, and a used Allegro listing lands in the **Used** card by its `is_new` flag; Decathlon only for its house brands (Rockrider, Btwin, Triban, Van Rysel, Elops, Riverside, Stilus, Tilt; `backend/app/decathlon_brands.py`) — any other brand gets an instant empty Decathlon answer with no search spent (closes `TODO_ISSUE_010`)
 6. Click any component name in a bike's spec sheet (e.g. a derailleur, fork, or saddle) to open the **equipment** page for that item — an overview, component-tree spec sheet, photos, and an expert review for gear (helmets, lights, locks, apparel, and bike parts — the default category when the name matches no keyword). Equipment is informational only — no shopping/offer links. The click finds or creates the item's row (`POST /v1/equipment/resolve`, free); while the item has no stored details its details search runs **by itself** on every visit ("Szukam danych wyposażenia…"), and an item the search finds nothing for is stored as "Opis niedostępny dla tego produktu." so it is never searched again. Its photo search and its review stay behind their buttons
 7. The **Kontakt** tab's **Napisz do nas** form (optional name, e-mail, topic, message) is saved through `POST /v1/contact` into the `contact_message` table. Nobody is e-mailed, so read the messages with SQL (`SELECT * FROM contact_message ORDER BY created_at DESC`)
+8. The **Wyszukiwanie części** tab (`/parts`, TODO-046) is a parts catalogue that needs no bike: filters for part type (12: cassette, chain, rear derailleur, shifter, crankset, bottom bracket, brake, rotor, tyre, wheel, cockpit, seat), brand, model and groupset, parsed from free text the same way as the bike search (`POST /v1/parts/parse`, one Haiku call, 400 "Part not available in our database" when nothing is extracted). `POST /v1/parts/search` reads the `equipment` rows of category `parts` from the database only (no AI). Only under an **empty** list a "Szukaj więcej z AI" card offers, on a click, one Haiku + `web_search` call (`POST /v1/parts/search/ai`, never cached) that stores what it finds in `equipment` (`part_type`, `groupset`, `key_specs`), so the next similar search is a database hit; parts added by that call carry a "Nowe z AI" badge. A part tile opens `/equipment/{id}`; a part no bike links is searched by the equipment searcher without a bike.
 
 Every view has its own address — share it, open it in a new tab, reload it or go Back and you see the same thing:
 
@@ -25,6 +26,7 @@ Every view has its own address — share it, open it in a new tab, reload it or 
 | `/bike/{bike_id}` | bike details ("Nie znaleziono roweru" for an unknown id) |
 | `/equipment/{equipment_id}` | equipment page ("Nie znaleziono wyposażenia" for an unknown id) |
 | `/bike-for-your-fit` | "Rower na Twoją miarę" (old `/rower-na-twoja-miare` redirects here) |
+| `/parts` and `/parts?q=…&type=…&brand=…&model=…&group=…` | "Wyszukiwanie części": the start page, and the results of a parts search (opening the link runs the search at once) |
 | `/contact` | "Kontakt" (old `/kontakt` redirects here) |
 
 Back from a bike returns to the same results at the same scroll position without searching again. Details: `frontend/README.md` § Addresses.
@@ -74,6 +76,8 @@ python scripts/migrate_merge_equipment_detail.py --dry-run # once per existing d
 python scripts/migrate_merge_equipment_detail.py         # ... and rename equipment_detail_component to equipment_component (idempotent)
 python scripts/migrate_component_linkable.py --dry-run   # once per existing database (ISSUE-016, after the rename): show the true/false split of the component link flag ...
 python scripts/migrate_component_linkable.py             # ... then add bike_component.is_linkable and backfill it with the regex heuristic (idempotent)
+python scripts/migrate_equipment_part_search.py --dry-run # once per existing database (TODO-046, after the merge above): add equipment.part_type / groupset / key_specs ...
+python scripts/migrate_equipment_part_search.py           # ... for the parts catalogue (all nullable; idempotent)
 python scripts/purge_details_cache.py --dry-run          # once per database (TODO-041): count the dead '/v1/bike/details' generic-cache rows ... (then without --dry-run; production only on an explicit go)
 uvicorn app.main:app --reload --port 8000
 ```
@@ -105,6 +109,8 @@ uvicorn app.main:app --reload --port 8000
 > **Then run `migrate_merge_equipment_detail.py` once on every existing database** (TODO-044, after the rename; `--dry-run` first, idempotent, `--url` / `--db`): `equipment_detail` is merged into `equipment` (new `description`, `short_description`, `updated_at`, and the lookup `name` / `name_norm` = the element name from the bike's spec tree, unique with the category) and `equipment_detail_component` is renamed `equipment_component` (keyed on `equipment_id`). `company` / `model` of an equipment row are now the researched brand and model: empty (model = the name) until an equipment details search fills them, and only where missing. The new searcher refuses to start until it has run, the old backend breaks afterwards and its `create_all()` recreates the empty old tables (rerun the script: `repaired`). Production order: Cloud SQL backup, migration through the proxy (only on the user's explicit go), backend + searcher together, frontend. Details: `backend/app/DB_MIGRATION.md` § equipment_detail merged into equipment.
 >
 > **Then run `migrate_component_linkable.py` once on every existing database** (ISSUE-016, after the rename; `--dry-run` first — it prints the true/false distribution and the most frequent names of each class — idempotent, `--url` / `--db`). Component element names in the details view are links to the equipment view only when the new flag `bike_component.is_linkable` is true: the searcher's model decides for new searches, the regex heuristic `backend/app/linkable.py` backfills the stored rows and classifies the discovery scraper's rows ("None included", "Owner's Manual", "Alloy Platform Pedals" → no link). The new searcher refuses to start without the column and the new backend's details reads fail without it; the old backend keeps working on a migrated database (server default true). Production order: Cloud SQL backup, migration through the proxy (only on the user's explicit go), deploy backend + searcher together, then the frontend. Details: `backend/app/DB_MIGRATION.md` § Component link flag.
+>
+> **Then run `migrate_equipment_part_search.py` once on every existing database** (TODO-046, after `migrate_merge_equipment_detail.py`; `--dry-run` first, idempotent, `--url` / `--db`): `equipment` gains the nullable `part_type`, `groupset` and `key_specs` columns of the parts catalogue. The new searcher refuses to start without them; the old backend and searcher keep working on a migrated database. Run locally 2026-10-07 (`biker-pg` and `cache.db`); on Cloud SQL only on the user's explicit go (backup, migrate, backend + searcher together, frontend). See `backend/app/DB_MIGRATION.md`.
 
 ### Terminal 2 — Frontend
 
@@ -415,7 +421,7 @@ Manual test plan and results (13 of 13 cases pass in round 3, after the merge of
 
 | Command | What it does |
 |---|---|
-| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/contact`, `/v1/bike/popular`, `/v1/bike/used/olx`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`, `/v1/bike/allegro`, `/v1/bike/allegro/search`, `/v1/bike/centrumrowerowe`, `/v1/bike/photos`, `/v1/bike/photos/search`, `/v1/bike/details`, `/v1/bike/details/search`) |
+| `cd backend && python scripts/test_search.py` | Smoke-test `POST /v1/bike/search` (+ `/v1/bike/missing`, `/v1/contact`, `/v1/bike/popular`, `/v1/bike/used/olx`, `/v1/bike/used/search`, `/v1/bike/decathlon`, `/v1/bike/decathlon/search`, `/v1/bike/allegro`, `/v1/bike/allegro/search`, `/v1/bike/centrumrowerowe`, `/v1/bike/photos`, `/v1/bike/photos/search`, `/v1/bike/details`, `/v1/bike/details/search`, `/v1/parts/search`; `--ai` also `/v1/parts/parse` and `/v1/parts/search/ai`) |
 | `cd backend && python scripts/seed_popular_bikes.py` | Fill `bike_popular` — the home page's "Najpopularniejsze rowery" served by `GET /v1/bike/popular` (TODO-034) — with 3 bikes that have details, photos and a stored review (`bike_review`) with a real rating; `--dry-run`, `--count N`, repeatable `--bike "Brand\|Model"`; replaces the table contents |
 | `cd searcher && python scripts/test_searcher.py` | Smoke-test the searcher (`/health`, 401/422 on all six search routes and a stored-photos answer from the DB — free, no CLI run; the single paid live run lives in `backend/scripts/test_search.py` `case_decathlon_search`) |
 | `cd backend && python scripts/copy_review_cache_to_table.py` | One-off (TODO-037): copy the old generic-cache bike reviews into `bike_review` / `bike_review_source`; `--dry-run`, `--force`, `--db` / `--url`; idempotent |
@@ -463,6 +469,8 @@ biker/
 │   │   ├── equipment_repository.py    # Equipment data access (get_equipment_details, get_equipment_photos, save_equipment_details, save_equipment_photos, bike_has_component)
 │   │   ├── equipment_lookup.py        # /equipment/{id} pages: item by id + first linked bike, resolve (find-or-create + link), search context by id
 │   │   ├── equipment_categories.py    # Copy of the searcher's category inference (resolve picks the same category the searcher would)
+│   │   ├── parts_routes.py            # POST /v1/parts/parse, /search (DB read), /search/ai (Haiku + web_search, stored in equipment; TODO-046)
+│   │   ├── parts_repository.py / parts_finder.py / parts_parser.py / part_types.py   # parts catalogue: DB search + AI save, AI search, text parse, the 12 part types
 │   │   ├── equipment_models.py        # Equipment ORM: equipment (item + details), equipment_component, equipment_detail_photos; equipment_id FK on bike_component
 │   │   ├── component_tree.py          # Shared tree builder for bike and equipment spec trees
 │   │   ├── equipment_review_finder.py      # Equipment review (review/forum links only)
@@ -475,6 +483,7 @@ biker/
 │       ├── migrate_drop_search_tables.py  # One-off, idempotent: drop search_cache + search_bike_rating_cache (write-only per-search tables, TODO-043); --dry-run, --db, --url
 │       ├── migrate_equipment_tables.py    # One-off, idempotent: create equipment tables and add bike_component.equipment_id (TODO-042); --dry-run, --db, --url
 │       ├── migrate_merge_equipment_detail.py # One-off, idempotent: equipment_detail merged into equipment, equipment_detail_component renamed equipment_component (TODO-044); --dry-run, --db, --url
+│       ├── migrate_equipment_part_search.py # One-off, idempotent: add equipment.part_type / groupset / key_specs (TODO-046); --dry-run, --db, --url
 │       ├── seed_popular_bikes.py      # Fill bike_popular (home page "Najpopularniejsze rowery") with 3 bikes that have details + photos + a stored review; --dry-run, --count, --bike "Brand|Model"
 │       ├── test_search.py             # Smoke tests for all backend endpoints (bike search/details/by-id, offers, photos, review; equipment details/photos x2, resolve, by-id) — one happy path per endpoint, no AI
 │       ├── copy_review_cache_to_table.py  # One-off: generic-cache reviews -> bike_review tables (TODO-037)
@@ -489,10 +498,12 @@ biker/
         ├── types.ts                   # Shared TypeScript interfaces
         ├── searchQuery.ts             # /search?… query string <-> SearchPayload (canonical order, validated)
         ├── sortBikes.ts               # Search-result order for the "Sortuj" select: expert rating (unrated last) or name, both directions
+        ├── partsQuery.ts / partTypes.ts / sortParts.ts   # /parts?… query string; the 12 part types (Polish labels); name-only sort of the parts results (TODO-046)
         ├── hooks/
-        │   ├── useRoute.ts            # URL routing: /, /search?…, /bike/{id}, /equipment/{id}, /bike-for-your-fit, /contact; history state (from, scrollY)
+        │   ├── useRoute.ts            # URL routing: /, /search?…, /bike/{id}, /equipment/{id}, /bike-for-your-fit, /parts?…, /contact; history state (from, scrollY)
         │   ├── useBikeDetails.ts      # Bike details state + DB reads + on-demand searches; open by id (/v1/bike/by-id)
         │   ├── useEquipment.ts        # Equipment state; reads by id, automatic details search while nothing is stored
+        │   ├── usePartsSearch.ts      # Parts search state: parse, DB search, AI search, address <-> results (TODO-046)
         │   └── usePopularBikes.ts     # Home page: GET /v1/bike/popular once + one POST /v1/bike/review per bike (TODO-034)
         └── components/
             ├── SearchPage.tsx         # Hero + form; popular bikes on /, results on /search
@@ -504,6 +515,7 @@ biker/
             ├── LoadingCard.tsx        # Shimmer skeleton for search results
             ├── BikeDetailsView.tsx    # Bike details page: Overview, Offers, Review, Specs
             ├── RequestDataButton.tsx  # "Request data" button for empty bike-details sections (POST /v1/bike/missing); in the Used card also runs the OLX search, in the New card the Decathlon + Allegro searches at once
+            ├── PartsSearchPage.tsx / PartsSearchInput.tsx / PartCard.tsx / AiSearchCard.tsx / TileStage.tsx   # "Wyszukiwanie części" tab: page, form, part tile, "Szukaj więcej z AI" card, photo stage shared with ResultCard
             ├── EquipmentDetailsView.tsx   # Equipment details page: Overview, Review, Specs (no offers)
             └── BikeDetailsShared.tsx  # Shared building blocks for both detail views
 ├── searcher/                          # On-demand OLX + Decathlon + Allegro + photos + review searcher (TODO-031 / 032 / 033 / 035 / 036) — FastAPI on :8100, Claude Code CLI + Playwright (OLX listing photos, bike photos)
