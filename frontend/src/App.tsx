@@ -6,7 +6,9 @@ import TopTabs, { type Tab } from './components/TopTabs'
 import FitPage from './components/FitPage'
 import ContactPage from './components/ContactPage'
 import NotFoundPage from './components/NotFoundPage'
+import PartsSearchPage from './components/PartsSearchPage'
 import useRoute, { PATHS, bikePath, equipmentPath, searchPath, type Route } from './hooks/useRoute'
+import { usePartsSearch } from './hooks/usePartsSearch'
 import usePopularBikes from './hooks/usePopularBikes'
 import useCachedRatings from './hooks/useCachedRatings'
 import { useBikeDetails } from './hooks/useBikeDetails'
@@ -27,11 +29,13 @@ interface SearchResponse {
 const NO_MATCH_MSG = 'Nie mamy tego roweru w naszej bazie'
 
 const TAB_OF: Record<Route['name'], Tab> = {
-  home: 'search', search: 'search', bike: 'search', equipment: 'search', fit: 'fit', contact: 'contact',
+  home: 'search', search: 'search', bike: 'search', equipment: 'search', fit: 'fit', parts: 'parts', contact: 'contact',
 }
 
-// The parents the "Wróć" buttons go back to: a search address (or home) for a bike, a bike for equipment.
+// The parents the "Wróć" buttons go back to: a search address (or home) for a bike, a bike — or
+// the parts results it was opened from (TODO-046) — for equipment.
 const isSearchUrl = (url: string) => url === PATHS.home || url.startsWith('/search?')
+const isPartsUrl = (url: string | null) => !!url && (url === PATHS.parts || url.startsWith(`${PATHS.parts}?`))
 const bikeIdOf = (url: string | null): number | null => {
   const m = url ? /^\/bike\/(\d+)$/.exec(url) : null
   return m ? Number(m[1]) : null
@@ -87,8 +91,11 @@ export default function App() {
   )
 
   const details = useBikeDetails()
-  // Equipment view (/equipment/{id}, entered from a component name in a bike's spec tree).
+  // Equipment view (/equipment/{id}, entered from a component name in a bike's spec tree or
+  // from a tile of the parts search).
   const equipment = useEquipment()
+  // The "Wyszukiwanie części" tab (/parts, TODO-046): its own form, results and AI search.
+  const partsSearch = usePartsSearch(navigate)
 
   /* ── Search ───────────────────────────────────────── */
 
@@ -221,6 +228,9 @@ export default function App() {
       case 'equipment':
         if (route.id != null) equipment.enter(route.id, bikeIdOf(from))
         break
+      case 'parts':
+        partsSearch.enter(route.query)
+        break
     }
     // Runs per address only: the handlers read the state of the render the address changed in.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,6 +276,7 @@ export default function App() {
     setIsParsing(false)
     details.reset()
     equipment.reset()
+    partsSearch.reset(false)
     navigate(PATHS.home)
   }
 
@@ -281,18 +292,26 @@ export default function App() {
 
   const equipmentOpen = route.name === 'equipment' && routeId != null && equipment.opened?.id === routeId
   const equipmentMissing = route.name === 'equipment' && (routeId == null || (equipmentOpen && equipment.lookup === 'missing'))
-  // "Wróć" from equipment: the bike it was opened from, else the first bike containing it.
-  const equipmentBackBike = bikeIdOf(from) ?? equipment.item?.bike?.id ?? null
+  // "Wróć" from equipment: the parts results it was opened from, else the bike it was opened
+  // from, else the first bike containing it; a catalogue part no bike contains → the parts tab.
+  const equipmentFromParts = route.name === 'equipment' && isPartsUrl(from)
+  const equipmentBackBike = equipmentFromParts ? null : bikeIdOf(from) ?? equipment.item?.bike?.id ?? null
+  const equipmentInCatalogue = equipmentFromParts ||
+    (route.name === 'equipment' && equipmentBackBike == null && equipmentOpen && equipment.item?.bike === null)
   const equipmentBack = () => {
-    if (equipmentBackBike == null) navigate(PATHS.home)
-    else goBack(url => url === bikePath(equipmentBackBike), bikePath(equipmentBackBike))
+    if (equipmentFromParts && from) goBack(isPartsUrl, from)
+    else if (equipmentBackBike != null) goBack(url => url === bikePath(equipmentBackBike), bikePath(equipmentBackBike))
+    else navigate(equipmentInCatalogue ? (partsSearch.lastUrl ?? PATHS.parts) : PATHS.home)
   }
+  const equipmentBackLabel = equipmentFromParts && from !== PATHS.parts ? 'Wróć do wyników'
+    : equipmentBackBike != null ? 'Wróć do roweru' : 'Wróć'
 
   const title = (() => {
     switch (route.name) {
       case 'home':      return 'Biker — Znajdź swój idealny rower'
       case 'search':    return 'Wyniki wyszukiwania — Biker'
       case 'fit':       return 'Rower na Twoją miarę — Biker'
+      case 'parts':     return 'Wyszukiwanie części — Biker'
       case 'contact':   return 'Kontakt — Biker'
       case 'bike':
         if (shownBike) return `${shownBike.brand} ${shownBike.model} — Biker`
@@ -333,7 +352,12 @@ export default function App() {
           </span>
         </div>
         <div className="max-w-2xl mx-auto px-4 sm:px-6">
-          <TopTabs active={TAB_OF[route.name]} searchHref={lastSearchUrl ?? PATHS.home} onNavigate={navigate} />
+          <TopTabs
+            active={equipmentInCatalogue ? 'parts' : TAB_OF[route.name]}
+            searchHref={lastSearchUrl ?? PATHS.home}
+            partsHref={partsSearch.lastUrl ?? PATHS.parts}
+            onNavigate={navigate}
+          />
         </div>
       </header>
 
@@ -341,6 +365,15 @@ export default function App() {
 
         {route.name === 'fit' && <FitPage />}
         {route.name === 'contact' && <ContactPage />}
+
+        {/* ── Parts search (/parts, /parts?…) ──────────── */}
+        {route.name === 'parts' && (
+          <PartsSearchPage
+            showResults={route.query !== ''}
+            search={partsSearch}
+            onSelectPart={part => navigate(equipmentPath(part.id))}
+          />
+        )}
 
         {/* ── Home (/) and results (/search?…) ─────────── */}
         {(route.name === 'home' || route.name === 'search') && (
@@ -432,7 +465,7 @@ export default function App() {
               error={equipment.error}
               review={equipment.review}
               onRequestReview={equipment.requestReview}
-              backLabel={equipmentBackBike != null ? 'Wróć do roweru' : 'Wróć'}
+              backLabel={equipmentBackLabel}
               onBack={equipmentBack}
               onRetry={equipment.retry}
               detailsRun={equipment.detailsRun}

@@ -298,3 +298,58 @@ export interface FrameSizeResponse {
   confidence:          'good' | 'medium'
   measurement_warning: boolean
 }
+
+// ── Parts catalogue (TODO-046, the "Wyszukiwanie części" tab at /parts) ──
+
+// One of the 12 part-type slugs (partTypes.ts has the Polish labels).
+export type PartType =
+  | 'cassette' | 'chain' | 'rear_derailleur' | 'shifter' | 'crankset' | 'bottom_bracket'
+  | 'brake' | 'rotor' | 'tyre' | 'wheel' | 'cockpit' | 'seat'
+
+// POST /v1/parts/search and /v1/parts/search/ai body: at least one field.
+export interface PartsSearchPayload {
+  search?:    string
+  part_type?: PartType
+  brand?:     string
+  model?:     string
+  groupset?:  string
+}
+
+// The parts filters panel ('' = not set).
+export interface PartsFilters {
+  part_type: PartType | ''
+  brand:     string
+  model:     string
+  groupset:  string
+}
+
+export const EMPTY_PARTS_FILTERS: PartsFilters = { part_type: '', brand: '', model: '', groupset: '' }
+
+// POST /v1/parts/parse: what the free text names (400 when nothing).
+export interface PartsParseResponse {
+  part_type?: PartType | null
+  brand?:     string | null
+  model?:     string | null
+  groupset?:  string | null
+}
+
+// One catalogue part (an `equipment` row); the tile opens /equipment/{id}. `brand` is ""
+// for a row made by a click in a bike's spec tree (then `model` = the element name).
+export interface PartResult {
+  id:                number
+  part_type:         PartType | null
+  brand:             string
+  model:             string
+  name:              string
+  groupset:          string | null
+  key_specs:         string[]
+  short_description: string
+  photo:             string | null
+  // Added to the catalogue by this AI search ("Nowe z AI" on the tile).
+  is_new:            boolean
+}
+
+export interface PartsSearchResponse {
+  search: string
+  parts:  PartResult[]
+}

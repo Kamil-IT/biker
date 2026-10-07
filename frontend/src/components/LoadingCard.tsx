@@ -1,8 +1,10 @@
 interface LoadingCardProps {
   delay?: number
+  // The rating plate of a bike tile; the parts tiles have none (TODO-046).
+  plate?: boolean
 }
 
-export default function LoadingCard({ delay = 0 }: LoadingCardProps) {
+export default function LoadingCard({ delay = 0, plate = true }: LoadingCardProps) {
   const style = (extraDelay = 0) => ({
     animationDelay: `${delay + extraDelay}ms`,
   })
@@ -15,10 +17,12 @@ export default function LoadingCard({ delay = 0 }: LoadingCardProps) {
       {/* Photo stage + rating plate */}
       <div className="relative aspect-[4/3] overflow-hidden">
         <div className="shimmer absolute inset-0" style={style(0)} />
-        <div className="absolute top-3 left-3 flex items-baseline gap-1.5 px-2.5 pt-1.5 pb-1 bg-parchment border border-charcoal/10 rounded-[0.55rem]">
-          <b className="font-display font-extrabold text-[1.9rem] leading-[0.9] text-muted">—</b>
-          <span className="font-display font-semibold text-[0.95rem] text-muted">/ 10</span>
-        </div>
+        {plate && (
+          <div className="absolute top-3 left-3 flex items-baseline gap-1.5 px-2.5 pt-1.5 pb-1 bg-parchment border border-charcoal/10 rounded-[0.55rem]">
+            <b className="font-display font-extrabold text-[1.9rem] leading-[0.9] text-muted">—</b>
+            <span className="font-display font-semibold text-[0.95rem] text-muted">/ 10</span>
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col gap-2 flex-1 p-4 pb-5">
