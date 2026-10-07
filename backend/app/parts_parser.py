@@ -23,6 +23,7 @@ logger = logging.getLogger("biker.parts.parser")
 MODEL = "claude-haiku-4-5-20251001"
 _client = AsyncAnthropic()
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+TIMEOUT_S = 30.0  # a stuck parse reads as "nothing extracted", not a 10-minute wait
 
 
 def _text(value, max_len: int):
@@ -56,6 +57,7 @@ async def parse_parts_text(text: str) -> PartsParseResponse:
             extra_body={"temperature": 0},
             system=system_prompt,
             messages=[{"role": "user", "content": text}],
+            timeout=TIMEOUT_S,
         )
         raw = "".join(b.text for b in response.content if getattr(b, "type", "") == "text")
         return to_parse_response(extract_json(raw))

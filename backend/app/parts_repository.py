@@ -6,7 +6,8 @@ every given field must match (part_type equal; brand equal to company_norm, or,
 for a row whose company is still "", the name starting with the brand as a whole
 word; model a substring of model_norm or name_norm; groupset a substring of the
 stored groupset), `search` is not matched (like the bike search), sorted by brand
-then model. Normalisation is always Python's models.norm(), never SQL lower(), so
+then model. A request with none of the four (free text only) matches nothing — like
+the bike search's DB step — so the UI offers the AI search, which reads the text. Normalisation is always Python's models.norm(), never SQL lower(), so
 the match runs over the category's rows in Python (the catalogue is small).
 
 save_found_parts stores what POST /v1/parts/search/ai found: a new row per part
@@ -123,11 +124,14 @@ def _results(session, rows, new_ids: set[int]) -> list[PartResult]:
 
 
 def find_parts(req: PartsSearchRequest) -> list[PartResult]:
-    """Every 'parts' row matching all given fields (see the module docstring), sorted by brand then model.
+    """Every 'parts' row matching all given fields (see the module docstring), sorted by brand then model;
+    [] without reading the DB when only the free text is given (it is not matched).
 
     A DB error raises (the route answers 503) — an empty answer would offer a paid AI search instead.
     """
     brand, model, groupset = norm(req.brand), norm(req.model), norm(req.groupset)
+    if not (req.part_type or brand or model or groupset):
+        return []
     session = get_session()
     try:
         q = session.query(*_COLUMNS).filter(Equipment.category == PARTS_CATEGORY)

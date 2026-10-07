@@ -33,6 +33,7 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 MAX_PARTS = 10
 MAX_TOKENS = 4000
 WEB_SEARCH_MAX_USES = 4
+TIMEOUT_S = 120.0  # the UI promises "do ok. 40 s"; the SDK default (10 min) would hold the request far longer
 
 
 def _text(value, max_len: int) -> str:
@@ -104,6 +105,7 @@ async def find_parts_ai(req: PartsSearchRequest) -> list[FoundPart]:
         system=system_prompt,
         tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": WEB_SEARCH_MAX_USES}],
         messages=[{"role": "user", "content": user_message(req)}],
+        timeout=TIMEOUT_S,
     )
     if response.stop_reason == "max_tokens":
         logger.warning("parts search hit max_tokens=%d — JSON may be truncated", MAX_TOKENS)

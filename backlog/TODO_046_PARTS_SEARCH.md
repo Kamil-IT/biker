@@ -71,3 +71,18 @@ Migracja `backend/scripts/migrate_equipment_part_search.py` (wzorzec `migrate_ph
 2. `migrate_equipment_part_search.py` na Cloud SQL przez proxy.
 3. Backend + searcher razem (nowy searcher nie wystartuje bez kolumn; stary backend i searcher działają na zmigrowanej bazie — kolumny nullable).
 4. Frontend.
+
+## Przegląd bezpieczeństwa (`/sparc-security-review`, 2026-10-07)
+
+Pen-testy na lokalnym backendzie (worktree, port 8003): **20/20**. Klucz API nie pojawia się w logach ani odpowiedziach.
+
+- **Walidacja wejścia:** wszystkie pola z limitami (tekst 500, marka/model 255, grupa 128, `part_type` z enumu — także wielkość liter); puste / same spacje → 422. Wartości w kształcie SQL injection, `%`/`_`, bajt NUL i wielkie litery spoza ASCII są zwykłymi danymi (dopasowanie w Pythonie, ORM z parametrami) → 200, nic nie pasuje.
+- **Prompt injection:** w `/v1/parts/search/ai` zapytanie trafia do Haiku jako obiekt JSON w znacznikach `<query>` (cudzysłów ani nowa linia nie zamkną znacznika), prompt mówi, że pola to dane. W `/v1/parts/parse` tekst idzie jako treść wiadomości (jak `/v1/bike/parse`), ale odpowiedź jest twardo walidowana (enum typu, długości) i trafia tylko do pytającego (cache po jego własnym tekście).
+- **Odpowiedzi AI:** przycinane do szerokości kolumn, ≤ 10 części, ≤ 6 chipów po ≤ 40 znaków, typ spoza enumu odrzucany, część innego typu niż zapytany odrzucana; React escapuje cały tekst (brak `dangerouslySetInnerHTML`), kafelki nie mają zewnętrznych linków.
+- **Poprawione w przeglądzie:** (1) jawne timeouty wywołań Haiku — parse 30 s, wyszukiwanie AI 120 s (wcześniej domyślne 10 min SDK); (2) `/v1/parts/search` z samym tekstem zwracało cały katalog — teraz `[]` bez odczytu bazy (jak krok bazy w wyszukiwarce rowerów), więc UI proponuje wyszukiwanie AI.
+- **Błędy:** zły JSON od modelu → 200 `parts: []`; błąd API → 502 `Upstream error: …` (jak `/v1/bike/search`); Anthropic 400 (brak kredytów) → 400 z komunikatem Anthropic; błąd zapisu → 503.
+
+**Ryzyka zaakceptowane / do decyzji użytkownika:**
+- **Przycisk „Szukaj więcej z AI” to płatne wywołanie API (Haiku + `web_search`) dostępne anonimowo, bez limitu na IP.** Single-flight łączy tylko identyczne zapytania; różne zapytania płacą osobno, bez globalnego limitu współbieżności. Odpowiedzią jest planowany limit na IP (krok 2 deployu) — poza zakresem tego zadania.
+- **Zatrucie katalogu:** wyniki AI (także pod wpływem treści stron z `web_search`) zapisują się w współdzielonej tabeli `equipment` i są widoczne dla innych. Ograniczenia: walidacja jak wyżej, „tylko brakujące” — nic istniejącego nie jest nadpisywane.
+- **Wyszukiwanie szczegółów / zdjęć części bez roweru:** element bez linku do roweru (część z katalogu) jest teraz szukany przez searcher (płatny przebieg subskrypcji) zamiast 404. Wiersz musi istnieć (id), a nazwa pochodzi z bazy, nie od wywołującego; searcher czyści ją `prompt_value` i traktuje jako dane. Każdy istniejący id można było już wcześniej szukać, o ile linkował go rower.

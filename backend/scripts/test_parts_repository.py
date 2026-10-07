@@ -81,8 +81,9 @@ def test_filters_and_sorting(db):
     assert [p.id for p in find_parts(_req(model="rd-m7100"))] == [ids["clicked"]], "the name counts for the model"
     assert [p.id for p in find_parts(_req(groupset="deore"))] == [ids["chain"], ids["deore"], ids["xt"]]
     assert [p.id for p in find_parts(_req(part_type="cassette", brand="Shimano", groupset="xt"))] == [ids["xt"]]
-    assert find_parts(_req(search="cokolwiek")) == find_parts(_req(search="x")) and len(find_parts(_req(search="x"))) == 5, \
-        "free text is not matched; only category 'parts' is the catalogue"
+    assert find_parts(_req(search="Shimano kaseta")) == [], "free text alone matches nothing (not a checkable field)"
+    assert len(find_parts(_req(search="x", brand="shimano"))) == 4, "free text is ignored next to a checkable field"
+    assert ids["helmet"] not in {p.id for p in find_parts(_req(brand="shimano"))}, "only category 'parts'"
     assert find_parts(_req(part_type="rotor")) == []
 
 
