@@ -2,6 +2,8 @@ import re
 from typing import Annotated, Literal, Optional, get_args
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .part_types import PartType, part_type_name
+
 
 class SearchRequest(BaseModel):
     search:               Optional[str]  = None
@@ -566,5 +568,94 @@ class ParseResponse(BaseModel):
         silently populate no filters.
         """
         return all(v is None for v in self.model_dump().values())
+
+
+# ── Parts catalogue (TODO-046, the "Wyszukiwanie części" tab; routes in parts_routes.py) ──
+
+PARTS_SEARCH_MAX_LEN = 500
+PARTS_BRAND_MAX_LEN = 255
+PARTS_MODEL_MAX_LEN = 255
+PARTS_GROUPSET_MAX_LEN = 128  # equipment.groupset width
+
+
+def _blank_to_none(v):
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+class PartsParseRequest(BaseModel):
+    """POST /v1/parts/parse: free text, 1–500 characters after trimming (it reaches a Haiku prompt)."""
+    text: str = Field(max_length=PARTS_SEARCH_MAX_LEN)
+
+    @field_validator("text")
+    @classmethod
+    def not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("text must not be empty")
+        return v.strip()
+
+
+class PartsParseResponse(BaseModel):
+    part_type: Optional[PartType] = None
+    brand:     Optional[str] = None
+    model:     Optional[str] = None
+    groupset:  Optional[str] = None
+
+    def is_empty(self) -> bool:
+        """True when nothing was extracted — the route answers 400 (like ParseResponse)."""
+        return all(v is None for v in self.model_dump().values())
+
+
+class PartsSearchRequest(BaseModel):
+    """POST /v1/parts/search and /search/ai: at least one field. `search` is not matched in the DB."""
+    search:    Optional[str] = Field(default=None, max_length=PARTS_SEARCH_MAX_LEN)
+    part_type: Optional[PartType] = None
+    brand:     Optional[str] = Field(default=None, max_length=PARTS_BRAND_MAX_LEN)
+    model:     Optional[str] = Field(default=None, max_length=PARTS_MODEL_MAX_LEN)
+    groupset:  Optional[str] = Field(default=None, max_length=PARTS_GROUPSET_MAX_LEN)
+
+    @field_validator("search", "part_type", "brand", "model", "groupset", mode="before")
+    @classmethod
+    def strip_and_none(cls, v):
+        return _blank_to_none(v)
+
+    @model_validator(mode="after")
+    def at_least_one_field(self) -> "PartsSearchRequest":
+        if all(v is None for v in (self.search, self.part_type, self.brand, self.model, self.groupset)):
+            raise ValueError("Provide at least one search field")
+        return self
+
+    def enriched_query(self) -> str:
+        """"Type: Cassette, Brand: Shimano — kaseta 12 rzędów", the shape of SearchRequest.enriched_query()."""
+        parts: list[str] = []
+        if self.part_type: parts.append(f"Type: {part_type_name(self.part_type)}")
+        if self.brand:     parts.append(f"Brand: {self.brand}")
+        if self.model:     parts.append(f"Model: {self.model}")
+        if self.groupset:  parts.append(f"Groupset: {self.groupset}")
+        prefix = ", ".join(parts)
+        if prefix and self.search:
+            return f"{prefix} — {self.search}"
+        return prefix or self.search or ""
+
+
+class PartResult(BaseModel):
+    """One catalogue part (an `equipment` row of category 'parts'); the frontend opens /equipment/{id}."""
+    id: int
+    part_type: Optional[str] = None
+    brand: str          # equipment.company — "" until researched (a row made by a spec-tree click)
+    model: str
+    name: str
+    groupset: Optional[str] = None
+    key_specs: list[str] = []
+    short_description: str = ""
+    photo: Optional[str] = None  # first usable equipment_detail_photos URL (display_order, id); None = no photo
+    is_new: bool = False         # True only in a /v1/parts/search/ai answer, for a row that call created
+
+
+class PartsSearchResponse(BaseModel):
+    search: str
+    parts: list[PartResult]
 
 

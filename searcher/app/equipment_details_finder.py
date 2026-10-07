@@ -128,14 +128,17 @@ def _norm_name(value: str) -> str:
 
 def is_named_after_bike(bike_company: str, bike_model: str, element_name: str) -> bool:
     """True when the element carries the bike's own name ("Giant" "Revolt Advanced Pro" ->
-    "Giant Revolt Advanced Pro" or "Revolt Advanced Pro") — on a spec sheet that is the frame."""
+    "Giant Revolt Advanced Pro" or "Revolt Advanced Pro") — on a spec sheet that is the frame.
+    Always False without a bike (a catalogue part, TODO-046)."""
     name = _norm_name(element_name)
-    return bool(name) and name in (_norm_name(f"{bike_company} {bike_model}"), _norm_name(bike_model))
+    if not name or not _norm_name(bike_model):
+        return False
+    return name in (_norm_name(f"{bike_company} {bike_model}"), _norm_name(bike_model))
 
 
 def build_user_message(
     task: str, bike_company: str, bike_model: str, element_name: str, element_type: str | None, slug: str,
-    context: str,
+    context: str, catalogue_context: str = "identify the exact product by its name.",
 ) -> str:
     """The equipment searches' user message. Pure.
 
@@ -143,10 +146,19 @@ def build_user_message(
     sentence. A given element type is named ((listed under "Frame" on the spec sheet)); an
     element carrying the bike's own name gets a sentence saying it is that part of the bike
     (the frame when the type is unknown), so the model does not answer found: false for "not
-    a component". Every client-supplied value goes through prompt_value.
+    a component". Without a bike (a catalogue part from the parts search, TODO-046) there is
+    no bike sentence: the element type is the part type ("Cassette") and `catalogue_context`
+    follows. Every client-supplied value goes through prompt_value.
     """
     bike = prompt_value(f"{bike_company} {bike_model}")
     kind = prompt_value(element_type or "")
+    if not prompt_value(bike_model):
+        typed = f' (part type: "{kind}")' if kind else ""
+        return (
+            f'{task} the bike component or equipment item "{prompt_value(element_name)}"{typed} '
+            f"(category: {display_name(slug)}). It comes from a bicycle parts catalogue, not from a bike's "
+            f"spec sheet — {catalogue_context}"
+        )
     listed = f' (listed under "{kind}" on the spec sheet)' if kind else ""
     message = (
         f'{task} the bike component or equipment item "{prompt_value(element_name)}"{listed} '
@@ -168,6 +180,8 @@ def user_message(
     return build_user_message(
         "Find the specifications and an overview of", bike_company, bike_model, element_name, element_type, slug,
         "use the bike only as context to identify the item (for a generic name, the version fitted to that bike). "
+        "When the manufacturer documents the part, answer found: true.",
+        "identify the exact product by its name (maker and model code). "
         "When the manufacturer documents the part, answer found: true.",
     )
 

@@ -16,6 +16,7 @@ from app.schemas import (  # noqa: E402
     BikeCategory, BikeDescription, BikeSubcategory, ComponentElement, EquipmentDetailsRequest,
     EquipmentDetailsResponse, EquipmentPhotosRequest, SpecItem,
 )
+from migrate_equipment_part_search import migrate as migrate_part_search  # noqa: E402
 from migrate_equipment_tables import migrate as migrate_equipment_tables  # noqa: E402
 from migrate_merge_equipment_detail import migrate  # noqa: E402
 
@@ -238,6 +239,8 @@ def test_equipment_tables_script_leaves_the_old_layout_to_the_merge(tmp_path):
 def test_migrated_database_works_with_the_orm(tmp_path, monkeypatch):
     path = _old_db(tmp_path / "old.db")
     assert migrate(path, verbose=False)["status"] == "migrated"
+    # The next migration in the deploy order (TODO-046): today's ORM selects equipment.part_type & co.
+    assert migrate_part_search(path, verbose=False)["status"] == "migrated"
     monkeypatch.setattr(models, "_db_url", None)
     models.configure_db(path)
     try:

@@ -6,7 +6,7 @@ import PopularBikesSection from './PopularBikesSection'
 import SortSelect from './SortSelect'
 import { bikePath } from '../hooks/useRoute'
 import { PENDING_RATING, bikeKey } from '../ratings'
-import type { SortOrder } from '../sortBikes'
+import { SORT_OPTIONS, type SortOrder } from '../sortBikes'
 import type { Bike, ExpertRating, PopularBike, SearchFilters, SearchPayload } from '../types'
 
 export type SearchState = 'idle' | 'loading' | 'results' | 'error'
@@ -161,7 +161,7 @@ export default function SearchPage({
 
             {/* Sort — pointless for a single bike */}
             {state === 'results' && bikes.length > 1 && (
-              <SortSelect value={sortOrder} onChange={onSortChange} />
+              <SortSelect value={sortOrder} onChange={onSortChange} options={SORT_OPTIONS} />
             )}
 
             {/* Card list */}

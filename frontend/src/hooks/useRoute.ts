@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type MouseEvent } from 'react'
 import { canonicalQuery } from '../searchQuery'
+import { canonicalQuery as canonicalPartsQuery } from '../partsQuery'
 
 // Every view has its own address, so a link, a new tab, F5 and Back/Forward show the same
 // thing. A handful of fixed patterns does not need a router library: the History API plus a
@@ -10,10 +11,12 @@ export type Route =
   | { name: 'bike'; id: number | null }  // null: not a valid id — shown as "not found"
   | { name: 'equipment'; id: number | null }
   | { name: 'fit' }
+  | { name: 'parts'; query: string }    // TODO-046: canonical partsQuery.ts string; '' = the start page
   | { name: 'contact' }
 
-export const PATHS = { home: '/', fit: '/bike-for-your-fit', contact: '/contact' } as const
+export const PATHS = { home: '/', fit: '/bike-for-your-fit', parts: '/parts', contact: '/contact' } as const
 export const searchPath    = (query: string) => `/search?${query}`
+export const partsPath     = (query: string) => (query ? `${PATHS.parts}?${query}` : PATHS.parts)
 export const bikePath      = (id: number) => `/bike/${id}`
 export const equipmentPath = (id: number) => `/equipment/${id}`
 
@@ -29,7 +32,7 @@ const parseId = (s: string): number | null =>
 
 // The route of an address and its canonical form (trailing slashes dropped, old paths
 // mapped, search parameters normalised, anything unknown → "/"). /search without a usable
-// parameter is the home page.
+// parameter is the home page; /parts without one is the parts search's start page.
 function resolve(pathname: string, search: string): { route: Route; url: string } {
   const trimmed = pathname.replace(/\/+$/, '') || '/'
   const path = LEGACY[trimmed] ?? trimmed
@@ -40,6 +43,10 @@ function resolve(pathname: string, search: string): { route: Route; url: string 
   const item = /^\/(bike|equipment)\/([^/]+)$/.exec(path)
   if (item) return { route: { name: item[1] as 'bike' | 'equipment', id: parseId(item[2]) }, url: path }
   if (path === PATHS.fit) return { route: { name: 'fit' }, url: path }
+  if (path === PATHS.parts) {
+    const query = canonicalPartsQuery(search)
+    return { route: { name: 'parts', query }, url: partsPath(query) }
+  }
   if (path === PATHS.contact) return { route: { name: 'contact' }, url: path }
   return { route: { name: 'home' }, url: PATHS.home }
 }

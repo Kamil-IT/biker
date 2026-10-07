@@ -1,8 +1,8 @@
-import { useState } from 'react'
 import type { CSSProperties, MouseEvent } from 'react'
 import type { Bike, ExpertRating } from '../types'
 import { isPlainClick } from '../hooks/useRoute'
 import { bikeCategoryLabel } from '../specLabels'
+import TileStage from './TileStage'
 
 export type { Bike }
 
@@ -18,8 +18,6 @@ interface ResultCardProps {
   // a number, "—" while pending, "?" when there is none.
   expertRating: ExpertRating
 }
-
-const DEFAULT_STAGE_BG = '#FFFFFF'
 
 const formatScore = (score: number): string => {
   if (score === 10) return '10'
@@ -49,18 +47,6 @@ function BikeArt() {
 export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect, href, expertRating }: ResultCardProps) {
   const { brand, model, accessories, explanation } = bike
   const categoryLabel = bikeCategoryLabel(bike.category)
-  const photo = bike.photo ?? null
-  // The URL that failed to load: a different photo later gets a fresh try.
-  const [failedPhoto, setFailedPhoto] = useState<string | null>(null)
-  // One automatic retry per URL: the first error remounts the <img> (same URL), the second gives up.
-  const [retry, setRetry] = useState<{ url: string | null; count: number }>({ url: null, count: 0 })
-  const retries = retry.url === photo ? retry.count : 0
-  const handlePhotoError = () => {
-    if (photo == null) return
-    if (retries < 1) setRetry({ url: photo, count: retries + 1 })
-    else setFailedPhoto(photo)
-  }
-  const showPhoto = photo != null && photo !== failedPhoto
 
   // A pending or missing rating is 0 for the bar (empty). The numeral shows "—" while
   // pending and "?" when there is no rating.
@@ -98,29 +84,13 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
   const content = (
     <>
       {/* Photo stage: the photo is contained, never cropped, on its own edge colour */}
-      <div
-        className={`relative aspect-[4/3] overflow-hidden ${showPhoto ? '' : 'grid place-items-center'}`}
-        style={{ background: showPhoto ? (bike.photo_bg ?? DEFAULT_STAGE_BG) : '#E6DED1' }}
+      <TileStage
+        photo={bike.photo ?? null}
+        bg={bike.photo_bg}
+        alt={`${brand} ${model}`}
+        art={<BikeArt />}
+        emptyText="Brak zdjęcia. Poproś o nie w szczegółach roweru."
       >
-        {showPhoto ? (
-          <img
-            key={retries}
-            src={photo}
-            alt={`${brand} ${model}`}
-            loading="lazy"
-            decoding="async"
-            className="w-full h-full object-contain block"
-            onError={handlePhotoError}
-          />
-        ) : (
-          <div className="grid justify-items-center gap-2.5 p-4 text-center">
-            <BikeArt />
-            <p className="font-body text-[13px] leading-snug text-ink max-w-60">
-              Brak zdjęcia. Poproś o nie w szczegółach roweru.
-            </p>
-          </div>
-        )}
-
         {/* Rating plate */}
         <div
           className="absolute top-3 left-3 flex items-baseline gap-1.5 px-2.5 pt-1.5 pb-1 bg-parchment border border-charcoal/10 rounded-[0.55rem] shadow-[0_2px_10px_-4px_rgb(43_38_32/0.35)]"
@@ -160,7 +130,7 @@ export default function ResultCard({ bike, rank, isTop, animationDelay, onSelect
             } as CSSProperties}
           />
         </div>
-      </div>
+      </TileStage>
 
       {/* Body */}
       <div className="flex flex-col gap-2 flex-1 p-4 pb-5">

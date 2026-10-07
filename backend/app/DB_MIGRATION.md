@@ -497,6 +497,16 @@ The results tile shows the bike's cover photo with `object-fit: contain` inside 
 
 **Deploy order:** (1) Cloud SQL on-demand backup, (2) the script on Cloud SQL through the proxy - only on the user's explicit go, (3) backend and searcher together, (4) frontend.
 
+## Parts catalogue columns (`equipment.part_type` / `groupset` / `key_specs`, TODO-046, `scripts/migrate_equipment_part_search.py`)
+
+`equipment` gained three nullable columns for the parts catalogue (the "Wyszukiwanie części" tab): `part_type` (`VARCHAR(32)`, a slug of `app/part_types.py`, NULL = unknown), `groupset` (`VARCHAR(128)`) and `key_specs` (`TEXT`, a JSON list of <= 6 chips of <= 40 characters). `create_all()` never ALTERs an existing table, so every pre-existing database needs the script once, BEFORE the new backend or searcher runs on it (the new ORM selects the columns on every equipment read; the new searcher's `init_db()` refuses to start without them and names the script). The OLD backend and searcher keep working on a migrated database (the columns are nullable).
+
+`scripts/migrate_equipment_part_search.py` (`--dry-run`, `--db <sqlite file>`, `--url <sqlalchemy url>`, importable `migrate(url_or_path=None, dry_run=False, verbose=True) -> dict` with `status`, `rows_before/after`, `added`, `verified`, `error`) does it in ONE transaction (SQLite and PostgreSQL; PostgreSQL under `LOCK TABLE equipment IN SHARE ROW EXCLUSIVE MODE`): `ALTER TABLE equipment ADD COLUMN ...` for the columns that are missing only, then the row count is compared before and after and every added column must read NULL on every row; a mismatch rolls back with exit code 1. No backfill - the columns are filled by `POST /v1/parts/search/ai` (fill-only-missing). Idempotent: all three columns present -> `already-migrated`; no `equipment` table -> `absent` (`init_db()` creates it with the columns); a table still on the pre-TODO-044 layout (no `name` column) is refused - run `migrate_merge_equipment_detail.py` first. Statuses: `migrated`, `already-migrated`, `dry-run`, `absent`, `failed`. Tests: `scripts/test_migrate_equipment_part_search.py`.
+
+**Run 2026-10-07:** local `biker-pg` - 5 equipment rows, `migrated`, rerun `already-migrated`; the main checkout's `backend/cache.db` - 0 rows, `migrated`, rerun `already-migrated`. **Cloud SQL NOT run** - only on the user's explicit go.
+
+**Deploy order:** (1) Cloud SQL on-demand backup, (2) the script on Cloud SQL through the proxy, (3) backend and searcher together, (4) frontend.
+
 ## Benefits
 
 ✅ **Data Integrity** — Foreign keys, unique constraints, cascading deletes

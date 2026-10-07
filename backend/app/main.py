@@ -46,6 +46,8 @@ from .equipment_routes import router as equipment_router  # noqa: E402
 from .contact_routes import router as contact_router  # noqa: E402
 # The Rower na Twoją miarę tab's frame-size calculator (TODO-045), a pure calculation.
 from .fit_routes import router as fit_router  # noqa: E402
+# The Wyszukiwanie części tab's parts catalogue (TODO-046): parse, DB search, AI search.
+from .parts_routes import router as parts_router  # noqa: E402
 # The OLX used-bike search (TODO-031), the Decathlon search (TODO-032), the
 # Allegro search (TODO-033), the bike photo search and the bike review search
 # (TODO-037), the bike details search (TODO-041) and the equipment details / photo
@@ -79,6 +81,7 @@ app = FastAPI(title="Biker API", version="1.0.0", lifespan=lifespan)
 app.include_router(equipment_router)
 app.include_router(contact_router)
 app.include_router(fit_router)
+app.include_router(parts_router)
 
 
 @app.exception_handler(anthropic.BadRequestError)

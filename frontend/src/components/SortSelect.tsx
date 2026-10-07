@@ -1,13 +1,15 @@
 import { CaretDown } from '@phosphor-icons/react'
-import { SORT_OPTIONS, type SortOrder } from '../sortBikes'
 
-interface SortSelectProps {
-  value: SortOrder
-  onChange: (order: SortOrder) => void
+interface SortSelectProps<T extends string> {
+  value: T
+  onChange: (order: T) => void
+  // The bike results: expert rating or name, each both ways (sortBikes.ts SORT_OPTIONS);
+  // the parts results: name only (sortParts.ts PART_SORT_OPTIONS).
+  options: { value: T; label: string }[]
 }
 
-// "Sortuj" select above the search results: expert rating or name, each both ways.
-export default function SortSelect({ value, onChange }: SortSelectProps) {
+// "Sortuj" select above a result list.
+export default function SortSelect<T extends string>({ value, onChange, options }: SortSelectProps<T>) {
   return (
     <div className="flex items-center justify-end gap-2.5 mb-4">
       <label
@@ -20,7 +22,7 @@ export default function SortSelect({ value, onChange }: SortSelectProps) {
         <select
           id="results-sort"
           value={value}
-          onChange={e => onChange(e.target.value as SortOrder)}
+          onChange={e => onChange(e.target.value as T)}
           className="
             appearance-none cursor-pointer
             pl-3 pr-8 py-1.5
@@ -31,7 +33,7 @@ export default function SortSelect({ value, onChange }: SortSelectProps) {
             transition-colors duration-200
           "
         >
-          {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
         <CaretDown
           size={12}

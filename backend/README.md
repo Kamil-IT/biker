@@ -162,6 +162,11 @@ python scripts/migrate_photo_bg_color.py
 python scripts/backfill_photo_bg_color.py --dry-run
 python scripts/backfill_photo_bg_color.py
 
+# One-off per existing database (TODO-046, AFTER migrate_merge_equipment_detail.py - it refuses a pre-TODO-044 equipment table): add equipment.part_type / groupset / key_specs (all nullable) for the parts catalogue.
+# REQUIRED before the new searcher runs (it refuses to start without the columns); the OLD backend/searcher keep working on a migrated database (nullable).
+python scripts/migrate_equipment_part_search.py --dry-run
+python scripts/migrate_equipment_part_search.py
+
 # Once per database (TODO-041): delete the dead generic-cache rows of POST /v1/bike/details (--dry-run counts; production only on an explicit go)
 python scripts/purge_details_cache.py --dry-run
 python scripts/purge_details_cache.py
@@ -347,6 +352,10 @@ python scripts/migrate_rename_bike_component.py --url postgresql+psycopg://biker
 #### `equipment_detail` merged into `equipment` (`scripts/migrate_merge_equipment_detail.py`, TODO-044)
 
 `equipment_detail` is gone: `equipment` carries `description` (nullable, NULL = no details), `short_description`, `updated_at` and the lookup identity `name` / `name_norm` (the element name; `UNIQUE(category, name_norm)`), and `equipment_detail_component` is now `equipment_component` keyed on `equipment_id`. `company` / `model` are the researched brand and model, filled by the searcher's details save where missing. Same options as the other migrations (`--dry-run`, `--db`, `--url`, importable `migrate(...)`); one transaction, orphans to `equipment_component_orphans`, verified before commit; statuses `migrated` / `already-migrated` / `repaired` (empty leftovers recreated by an old backend are dropped) / `dry-run` / `absent` / `failed`. **Required on every existing database, AFTER `migrate_rename_bike_component.py`, BEFORE the new backend or searcher** (backup → migrate → backend + searcher together → frontend; production only on the user's explicit go). Details: `app/DB_MIGRATION.md`.
+
+#### Parts catalogue columns (`scripts/migrate_equipment_part_search.py`, TODO-046)
+
+`equipment` gained three nullable columns for the parts catalogue: `part_type` (`VARCHAR(32)`, a slug of `app/part_types.py`, NULL = unknown), `groupset` (`VARCHAR(128)`) and `key_specs` (`TEXT`, a JSON list of <= 6 chips). Same options as the other migrations (`--dry-run`, `--db`, `--url`, importable `migrate(...)`); one transaction (PostgreSQL under `LOCK TABLE ... SHARE ROW EXCLUSIVE`), adds only the missing columns, row count and all-NULL verified before commit; statuses `migrated` / `already-migrated` / `dry-run` / `absent` / `failed`. **Required on every existing database, AFTER `migrate_merge_equipment_detail.py`, BEFORE the new searcher** (it refuses to start without the columns; the old backend and searcher keep working on a migrated database). Production: backup -> migrate -> backend + searcher together -> frontend, only on the user's explicit go. Details: `app/DB_MIGRATION.md`.
 
 #### Details generic-cache purge (`scripts/purge_details_cache.py`)
 
@@ -1216,7 +1225,7 @@ Content-Type: application/json
 **Response:** the same shape as `/v1/equipment/details` — the details now stored (the placeholder after a not-found run), **including `equipment_id`**; the searcher's wrapper `equipment_id` / `saved` are dropped.
 
 - Either `equipment_id` (1 … 2147483647; `bike_id` optional, same range) or all of `bike_company`, `bike_model`, `element_name` (non-empty, ≤ 255); `category` optional, ≤ 32 (422 otherwise).
-- **By `equipment_id`** (`equipment_lookup.search_context`): **404** `"Equipment not found"` for an unknown id, **404** `"Component not found"` when no bike links the item. The context bike is `bike_id` when that bike links the item (the bike the view was opened from), else the first bike linking it (lowest `bike_component.id`); the searcher gets the item's **stored** `name` as `element_name` and its stored `category`, so it stores into this very row, plus the linking row's subcategory as `element_type`.
+- **By `equipment_id`** (`equipment_lookup.search_context`): **404** `"Equipment not found"` for an unknown id. The context bike is `bike_id` when that bike links the item (the bike the view was opened from), else the first bike linking it (lowest `bike_component.id`); the searcher gets the item's **stored** `name` as `element_name` and its stored `category`, so it stores into this very row, plus the linking row's subcategory as `element_type`. A **`parts`** item **no bike links** (a catalogue part from the parts search, TODO-046) is no longer a 404: it is searched **without a bike** - the searcher body has no `bike_company` / `bike_model` and `element_type` is the English name of its `part_type` (`"Cassette"`, `""` when unknown). An item of another category that no bike links stays **404** `"Component not found"` (no paid run).
 - **By bike + element**, order of checks, all **before** any searcher call: **404** `"Bike not found"` when the bike is not in `bike` (`offers_repository.bike_exists`), then **404** `"Component not found"` when that bike has no `bike_component` row whose element name matches (Python-normalised; `equipment_repository.bike_component_name`) — anonymous traffic cannot spend subscription runs on arbitrary strings. The searcher receives the element name **as stored on the bike**, not the caller's casing or whitespace, so a caller cannot choose the equipment row's name or the prompt text, plus that row's subcategory as `element_type` (≤ 255; the request has no such field, so the caller cannot set it). Fix 2026-10-02: a frame is often named exactly like the bike ("Giant Revolt Advanced Pro"), and without its type the searcher answered `found: false`. Stored equipment data is **not** read first; the UI offers the button only while nothing is stored.
 - **503** when `SEARCHER_URL` or `SEARCHER_API_KEY` is unset (`"Equipment details searcher is not configured"`), the searcher is unreachable / does not answer within `SEARCHER_TIMEOUT` (`"Equipment details searcher unavailable"`), or no search slot is free (`"Equipment details searcher is busy — try again in a moment"`; the in-flight cap `SEARCHER_MAX_INFLIGHT` and the searcher's slots are shared with **all eight** searcher routes, Cloud Run's 429 maps to the same 503) — nothing queues. Identical concurrent requests for the same bike + element share one search (single-flight key: path, bike company, bike model, element name — normalised; neither the category nor the element type is part of it).
 - **400** `{"detail": "<the CLI's notice>"}` when the Claude subscription limit is used up (TODO-038, the app-wide `searcher_limit_reached` handler).
@@ -1224,9 +1233,9 @@ Content-Type: application/json
 
 **Flow:**
 1. DB reads — by id: `equipment` (404 when missing), the linking `bike_component` row and its `bike` (404 when none); by bike + element: `bike` (404 when missing) and that bike's `bike_component` element names (404 when the element is missing).
-2. `POST {SEARCHER_URL}/v1/search/equipment/details` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{bike_company, bike_model, element_name, category?, element_type?}` — `element_type` = the element's stored subcategory, e.g. `"Frame"`, left out when empty), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once and writes the equipment tables + the bike link. The backend itself makes no Anthropic call.
+2. `POST {SEARCHER_URL}/v1/search/equipment/details` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{bike_company?, bike_model?, element_name, category?, element_type?}` — `element_type` = the element's stored subcategory, e.g. `"Frame"` (a catalogue part: its part type, e.g. `"Cassette"`), left out when empty; the bike pair is left out for a catalogue part no bike links), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once and writes the equipment tables + the bike link. The backend itself makes no Anthropic call.
 
-**Tests:** `scripts/test_search.py` `case_equipment_details_search` — an unknown bike, a known bike with an unknown element, an unknown `equipment_id` and an item no bike links are **404** before any searcher call (no paid run); `scripts/test_equipment_repository.py` covers `search_context`; `scripts/test_searcher_client_equipment.py` (pytest) covers the client and both search routes with a mocked transport (request, unwrapping, single-flight, busy 503/429, shared cap, 502, 400, 404 guards, 422).
+**Tests:** `scripts/test_search.py` `case_equipment_details_search` — an unknown bike, a known bike with an unknown element, an unknown `equipment_id` and a non-`parts` item no bike links are **404** before any searcher call (no paid run; a `parts` item no bike links is searched without a bike since TODO-046); `scripts/test_equipment_repository.py` covers `search_context`; `scripts/test_searcher_client_equipment.py` (pytest) covers the client and both search routes with a mocked transport (request, unwrapping, single-flight, busy 503/429, shared cap, 502, 400, 404 guards, 422).
 
 ---
 
@@ -1250,9 +1259,9 @@ Content-Type: application/json
 
 **Flow:**
 1. DB reads for the 404 guards (by id: `equipment` + the linking bike; by bike + element: `bike` and that bike's component element names).
-2. `POST {SEARCHER_URL}/v1/search/equipment/photos` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{bike_company, bike_model, element_name, category?, element_type?}` — `element_type` = the element's stored subcategory, e.g. `"Frame"`, left out when empty), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once (`WebSearch` only), opens the manufacturer page with Playwright once and writes `equipment_detail_photos` + the bike link. The backend makes no Anthropic call and launches no browser.
+2. `POST {SEARCHER_URL}/v1/search/equipment/photos` × 1 — the searcher service (header `X-Searcher-Key: $SEARCHER_API_KEY`, body `{bike_company?, bike_model?, element_name, category?, element_type?}` — `element_type` = the element's stored subcategory, e.g. `"Frame"` (a catalogue part: its part type), left out when empty; no bike pair for a catalogue part no bike links), waited for up to `SEARCHER_TIMEOUT`; it runs the `claude` CLI once (`WebSearch` only), opens the manufacturer page with Playwright once and writes `equipment_detail_photos` + the bike link. The backend makes no Anthropic call and launches no browser.
 
-**Tests:** `scripts/test_search.py` `case_equipment_photos_search` — the same four 404s, no paid run; `scripts/test_searcher_client_equipment.py` (pytest).
+**Tests:** `scripts/test_search.py` `case_equipment_photos_search` — the same 404s, no paid run; `scripts/test_searcher_client_equipment.py` (pytest).
 
 ---
 
@@ -1283,6 +1292,88 @@ Content-Type: application/json
 1. `POST https://api.anthropic.com/v1/messages` × 1 — Claude Haiku with `web_search_20250305` tool searches for 3–5 reviews, then synthesises a score 0–10, a 5–10 sentence explanation, and one source URL
 
 **Cache:** keyed on `{company, model}`; cached **only when `ref` is non-empty** (fallbacks are never cached).
+
+---
+
+### `POST /v1/parts/parse`
+
+Extract the parts-catalogue filters (part type, brand, model, groupset) from a free-text query (TODO-046). The "Wyszukiwanie części" tab calls it like the bike search calls `/v1/bike/parse`: a text-only submit fills the filters panel and waits for a second submit.
+
+```http
+POST http://localhost:8000/v1/parts/parse
+Content-Type: application/json
+
+{
+  "text": "kaseta Shimano Deore 12 rzędów"
+}
+```
+
+**Response:** `{ "part_type": "cassette", "brand": "Shimano", "model": "Deore", "groupset": null }` - `part_type` one of the 12 slugs (`cassette`, `chain`, `rear_derailleur`, `shifter`, `crankset`, `bottom_bracket`, `brake`, `rotor`, `tyre`, `wheel`, `cockpit`, `seat`; `app/part_types.py`) or `null` (anything else the model returns is dropped), the strings stripped and cut to the search lengths; unextracted fields are `null`.
+
+- `text` 1-500 characters after trimming (422 otherwise). **400** `{"detail": "Part not available in our database"}` when nothing could be extracted (every field `null`, an exception included) - the frontend warns above the search box and does not search. The check also runs on a cache hit; an empty parse is never cached. An Anthropic 400 (e.g. no credits) -> **400** with Anthropic's message (app-wide handler).
+- Cached in `endpoint_req_to_body_cache` under `/v1/parts/parse`, request key `{"text": ...}`, **happy path only**.
+
+**Flow:**
+1. Generic cache read (`/v1/parts/parse`) - a hit ends here.
+2. On a miss: `POST https://api.anthropic.com/v1/messages` x 1 - Anthropic Messages API, `claude-haiku-4-5-20251001`, no tools, system prompt `app/prompts/parts_parse.md`, 30 s timeout (a timeout counts as nothing extracted -> 400).
+3. A non-empty result is written to the generic cache.
+
+---
+
+### `POST /v1/parts/search`
+
+The catalogue search (TODO-046): a **pure DB read** of the `equipment` rows of category `'parts'` - no AI, no generic cache.
+
+```http
+POST http://localhost:8000/v1/parts/search
+Content-Type: application/json
+
+{
+  "part_type": "cassette",
+  "brand": "Shimano",
+  "model": "Deore",
+  "groupset": "Deore"
+}
+```
+
+**Response:** `{ "search": "Type: Cassette, Brand: Shimano, Model: Deore, Groupset: Deore", "parts": [ { id, part_type, brand, model, name, groupset, key_specs, short_description, photo, is_new } ] }`. `brand` / `model` are the stored (researched) company and model (`brand` is `""` for a row made by a spec-tree click), `key_specs` the chips (a list of <= 6 strings), `photo` the first usable `equipment_detail_photos` URL (`display_order, id`, the junk / thumbnail filter of the bike tiles; `null` without one), `is_new` is always `false` here.
+
+- Request: `search`, `part_type`, `brand`, `model`, `groupset` all optional, **at least one** (blank = absent; lengths 500 / 32 / 255 / 255 / 128; `part_type` one of the 12 slugs) - else 422.
+- Matching (`parts_repository.find_parts`, Python-normalised with `models.norm()`, never SQL `lower()`): every given **checkable** field must match - `part_type` equal; `brand` equal to `company_norm`, or, while `company` is still `""`, `name_norm` equal to the brand or starting with it as a whole word; `model` a substring of `model_norm` or `name_norm`; `groupset` a substring of the stored groupset. `search` (free text) is **not** matched. A request with **none** of `part_type` / `brand` / `model` / `groupset` (only `search`) answers `parts: []` at once without reading the DB, like the bike search's DB step - the frontend then offers the AI card, whose search does use the text. Sorted by brand, then model. No cap.
+- Nothing found -> **200** `parts: []`. A DB error -> **503** `"Parts search failed"` (an empty answer would offer a paid AI search for an outage).
+
+**Flow:** none - one DB read of `equipment` (category `parts`) and one `equipment_detail_photos` query for the whole list.
+
+---
+
+### `POST /v1/parts/search/ai`
+
+The AI catalogue search (TODO-046): same body as `/v1/parts/search`. The frontend calls it **only on a click** of "Szukaj więcej z AI", under an empty list, never automatically. What it finds is stored in `equipment` (the next similar query is a DB hit) and answered.
+
+```http
+POST http://localhost:8000/v1/parts/search/ai
+Content-Type: application/json
+
+{
+  "part_type": "cassette",
+  "brand": "Shimano"
+}
+```
+
+**Response:** same shape as `/v1/parts/search`, `parts` in the AI's order; `is_new: true` on the rows **created by this call**. Bad JSON from the model -> **200** `parts: []` (never a 502).
+
+- The model's answer is <= 10 parts `{brand, model, part_type, groupset, key_specs}`, cleaned (`parts_finder.clean_found_part`): the brand dropped from the start of the model, `part_type` one of the 12 slugs, strings cut to the column widths, <= 6 chips of <= 40 characters; with a `part_type` in the request a part of another type is dropped and an untyped one takes the requested type. The user's text reaches the prompt as a JSON object inside `<query>` tags (data, never instructions).
+- Stored via `parts_repository.save_found_parts` in one transaction: a new row (`category 'parts'`, `name` = "Brand Model", `company` / `model` from the AI, no description, so the equipment view searches its details by itself) by `INSERT ... ON CONFLICT DO NOTHING` on `uq_equipment_name`; an existing row - same `name_norm`, or same `company_norm` + `model_norm`, category `parts` - only gets a missing `part_type` / `groupset` / `key_specs` (**fill-only-missing**, nothing overwritten); nothing goes into `equipment_component`.
+- **Never cached** (the result is data stored in `equipment`). Identical concurrent queries (same normalised type / brand / model / groupset / text) share one call (single-flight).
+- **502** `"Upstream error: ..."` when the API call fails (a timeout included); **503** `"Could not save the found parts - try again later"` when the DB write fails; an Anthropic 400 -> **400** with Anthropic's message (app-wide handler).
+
+**Flow:**
+1. `POST https://api.anthropic.com/v1/messages` x 1 per distinct normalised query - Anthropic Messages API, `claude-haiku-4-5-20251001` with the `web_search_20250305` tool (`max_uses` 4), system prompt `app/prompts/parts_search.md`, 120 s timeout.
+2. DB writes to `equipment` (one transaction), then one read for the answer (+ one photos query).
+
+**Risk:** an anonymous paid API call with no per-IP limit (the deploy's "step 2" rate limit is the planned answer).
+
+**Tests:** `scripts/test_parts_repository.py` (pytest, temp SQLite), `scripts/test_search.py` `case_parts_search` (no API) and, with `--ai`, `case_parts_parse` + `case_parts_search_ai`.
 
 ---
 

@@ -21,7 +21,7 @@ def user_message(
     return build_user_message(
         "Find the official product page URL on the manufacturer's website for", bike_company, bike_model,
         element_name, element_type, slug, "use the bike only as context to identify the item.",
-    )
+    )  # without a bike: build_user_message's catalogue sentence ("identify the exact product by its name.")
 
 
 async def find_equipment_photos(

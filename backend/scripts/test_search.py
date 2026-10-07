@@ -18,8 +18,10 @@ it passes on a cold or aged database. Endpoints covered here:
            /v1/bike/review · /v1/bike/review/search (404 only — no paid run)
            /v1/equipment/details · /v1/equipment/photos (by id and by name)
            /v1/equipment/details/search · /v1/equipment/photos/search (404 only — no paid run)
+           /v1/parts/search (TODO-046: the parts catalogue, a DB read)
            /v1/bike/by-id · /v1/equipment/resolve · /v1/equipment/by-id (URL routing, no AI)
   --ai     /v1/bike/search (free text) · /v1/bike/parse · /v1/bike/ceneo
+           /v1/parts/parse · /v1/parts/search/ai (TODO-046; the AI search adds real parts to the catalogue)
 
 /v1/equipment/review (Anthropic API, generic cache) has its own focused script,
 test_equipment_review.py; the old test_equipment.py left with the in-backend
@@ -51,6 +53,8 @@ from app.schemas import (  # noqa: E402
 from app.repository import save_bike_details  # noqa: E402
 from app.schemas import EquipmentDetailsResponse  # noqa: E402
 from app import equipment_repository  # noqa: E402
+from app.equipment_models import Equipment, EquipmentDetailPhoto  # noqa: E402
+from app.models import get_session  # noqa: E402
 
 BASE = os.getenv("BIKER_API_URL", "http://localhost:8000").rstrip("/")
 SEARCH_URL = f"{BASE}/v1/bike/search"
@@ -80,6 +84,9 @@ EQUIP_PHOTOS_SEARCH_URL = f"{BASE}/v1/equipment/photos/search"
 BIKE_BY_ID_URL = f"{BASE}/v1/bike/by-id"
 EQUIP_BY_ID_URL = f"{BASE}/v1/equipment/by-id"
 EQUIP_RESOLVE_URL = f"{BASE}/v1/equipment/resolve"
+PARTS_SEARCH_URL = f"{BASE}/v1/parts/search"
+PARTS_PARSE_URL = f"{BASE}/v1/parts/parse"
+PARTS_AI_URL = f"{BASE}/v1/parts/search/ai"
 SEARCHER_URL = os.getenv("SEARCHER_URL", "").strip().rstrip("/")
 
 
@@ -1013,7 +1020,9 @@ def case_equipment_photos():
 
 def _equipment_search_404s(url: str) -> None:
     """Unknown bike -> 404 "Bike not found"; known bike + an element it does not have -> 404 "Component not found";
-    by id: unknown item -> 404 "Equipment not found", an item no bike links -> 404 "Component not found".
+    by id: unknown item -> 404 "Equipment not found", a non-parts item no bike links -> 404 "Component not found".
+    (A 'parts' item no bike links — a catalogue part — is searched WITHOUT a bike since TODO-046: a paid run,
+    so not here; scripts/test_equipment_repository.py covers its search context.)
 
     No live run: every searcher run is a paid subscription search (the suite's one
     live run is case_decathlon_search, same searcher_client code path)."""
@@ -1166,6 +1175,74 @@ def case_equipment_photos_search():
     _equipment_search_404s(EQUIP_PHOTOS_SEARCH_URL)
 
 
+FIX_PARTS_BRAND = "SmokePartsCo"
+FIX_PARTS_PHOTO = "https://example.com/smoke-parts/cassette-a.jpg"
+
+
+def _delete_parts_fixture() -> None:
+    with get_session() as s:
+        for item in s.query(Equipment).filter(Equipment.company_norm == FIX_PARTS_BRAND.lower()):
+            s.delete(item)  # ORM cascade: its photos go too
+        s.commit()
+
+
+def _seed_parts_fixture() -> dict:
+    """Three 'parts' rows of the fixture brand (two cassettes, one chain) + one photo; returns their ids by model."""
+    rows = {
+        "Cassette B 11-50": ("cassette", "Fixture B", ["11 rz.", "11-50T"]),
+        "Cassette A 10-51": ("cassette", "Fixture A", ["12 rz.", "10-51T", "Micro Spline"]),
+        "Chain C": ("chain", "Fixture A", []),
+    }
+    ids = {}
+    with get_session() as s:
+        for model, (part_type, groupset, chips) in rows.items():
+            item = Equipment(category="parts", name=f"{FIX_PARTS_BRAND} {model}", company=FIX_PARTS_BRAND, model=model,
+                             short_description="Opis testowy." if model.endswith("10-51") else "",
+                             part_type=part_type, groupset=groupset, key_specs=json.dumps(chips) if chips else None)
+            s.add(item)
+            s.flush()
+            ids[model] = item.id
+        s.add(EquipmentDetailPhoto(equipment_id=ids["Cassette A 10-51"], url=FIX_PARTS_PHOTO, display_order=0))
+        s.commit()
+    return ids
+
+
+def case_parts_search():
+    """/v1/parts/search (TODO-046) is a pure DB read of the 'parts' equipment rows: filters, sort by brand then model,
+    the first photo, no generic-cache row, < 5 s; no match -> 200 []; an empty body / a type outside the 12 -> 422."""
+    _delete_parts_fixture()
+    ids = _seed_parts_fixture()
+    try:
+        body = {"part_type": "cassette", "brand": FIX_PARTS_BRAND.upper(), "search": "kaseta 12 rzędów"}
+        t0 = time.perf_counter()
+        resp = _post(PARTS_SEARCH_URL, body, timeout=10)
+        elapsed = time.perf_counter() - t0
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]} (DB migrated? " \
+            "scripts/migrate_equipment_part_search.py)"
+        data = resp.json()
+        assert data["search"] == f"Type: Cassette, Brand: {FIX_PARTS_BRAND.upper()} — kaseta 12 rzędów", data
+        parts = data["parts"]
+        assert [p["id"] for p in parts] == [ids["Cassette A 10-51"], ids["Cassette B 11-50"]], parts
+        first = parts[0]
+        assert (first["brand"], first["model"], first["part_type"], first["groupset"], first["is_new"]) == (
+            FIX_PARTS_BRAND, "Cassette A 10-51", "cassette", "Fixture A", False), first
+        assert first["key_specs"] == ["12 rz.", "10-51T", "Micro Spline"] and first["photo"] == FIX_PARTS_PHOTO, first
+        assert first["short_description"] == "Opis testowy." and parts[1]["photo"] is None, parts
+        assert elapsed < 5.0, f"DB read took {elapsed:.2f}s — expected < 5s (AI ran?)"
+        assert not _cache_row_exists("/v1/parts/search", _norm_key(body)), "/v1/parts/search must not write a cache row"
+        resp = _post(PARTS_SEARCH_URL, {"brand": FIX_PARTS_BRAND, "groupset": "fixture a"}, timeout=10)
+        assert [p["id"] for p in resp.json()["parts"]] == [ids["Cassette A 10-51"], ids["Chain C"]], resp.text[:300]
+        resp = _post(PARTS_SEARCH_URL, {"brand": FIX_PARTS_BRAND, "model": "50"}, timeout=10)
+        assert [p["id"] for p in resp.json()["parts"]] == [ids["Cassette B 11-50"]], resp.text[:300]
+        resp = _post(PARTS_SEARCH_URL, {"brand": "No Such Parts Brand XYZ999"}, timeout=10)
+        assert resp.status_code == 200 and resp.json()["parts"] == [], resp.text[:200]
+        for bad in ({}, {"search": "   "}, {"part_type": "helmet"}):
+            resp = _post(PARTS_SEARCH_URL, bad, timeout=10)
+            assert resp.status_code == 422, f"{bad}: {resp.status_code} {resp.text[:200]}"
+    finally:
+        _delete_parts_fixture()
+
+
 # ── Cases that call the Anthropic API (--ai) ────────────────────────────────
 
 def case_search_free_text():
@@ -1191,6 +1268,33 @@ def case_parse():
     assert data.get("brand") == "Trek" and data.get("year") == 2022 and data.get("is_electric") is False, data
     typed = _post(PARSE_URL, {"text": "Szukam roweru szosowego"}, timeout=60)
     assert typed.status_code == 200 and typed.json().get("bike_type") == "Road", typed.text[:200]
+
+
+def case_parts_parse():
+    """/v1/parts/parse (TODO-046) — one Claude call; the answer is cached (happy path), an empty parse is a 400."""
+    text_ = "kaseta Shimano Deore 12 rzędów"
+    resp = _post(PARTS_PARSE_URL, {"text": text_}, timeout=60)
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+    data = resp.json()
+    assert data["part_type"] == "cassette" and data["brand"] == "Shimano", data
+    assert _cache_row_exists("/v1/parts/parse", _norm_key({"text": text_})), "the happy path is cached"
+    resp = _post(PARTS_PARSE_URL, {"text": "coś do roweru na zimę w Krakowie"}, timeout=60)
+    assert resp.status_code == 400 and resp.json() == {"detail": "Part not available in our database"}, resp.text[:200]
+
+
+def case_parts_search_ai():
+    """/v1/parts/search/ai (TODO-046) — one Haiku + web_search call; the parts it finds are stored (left in the
+    catalogue: they are real data) and the same query then hits the DB. No generic-cache row."""
+    body = {"part_type": "cassette", "brand": "SRAM", "groupset": "GX Eagle"}
+    resp = _post(PARTS_AI_URL, body, timeout=180)
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+    parts = resp.json()["parts"]
+    assert parts, "expected at least one real SRAM GX Eagle cassette"
+    assert all(p["part_type"] == "cassette" and p["brand"] and p["model"] and p["id"] for p in parts), parts
+    assert all(len(p["key_specs"]) <= 6 and all(len(c) <= 40 for c in p["key_specs"]) for p in parts), parts
+    found = _post(PARTS_SEARCH_URL, {"part_type": "cassette", "brand": "SRAM"}, timeout=10).json()["parts"]
+    assert {p["id"] for p in parts} <= {p["id"] for p in found}, "the next DB search finds what the AI stored"
+    assert not _cache_row_exists("/v1/parts/search/ai", _norm_key(body))
 
 
 # DEPRECATED endpoint, not used by the frontend or searcher; test kept until removal.
@@ -1228,8 +1332,11 @@ CASES = [
     (case_bike_by_id, False),
     (case_result_cover, False),
     (case_equipment_resolve_and_by_id, False),
+    (case_parts_search, False),
     (case_search_free_text, True),
     (case_parse, True),
+    (case_parts_parse, True),
+    (case_parts_search_ai, True),
     (case_ceneo, True),
 ]
 

@@ -382,8 +382,12 @@ def _equipment_body(
     bike_company: str, bike_model: str, element_name: str, category: str | None, element_type: str | None = None,
 ) -> dict:
     """The searcher's request body. `element_type` is the element's subcategory on the bike's spec sheet
-    (e.g. "Frame"), stripped and cut to 255 characters; left out when empty, like `category`."""
-    body = {"bike_company": bike_company, "bike_model": bike_model, "element_name": element_name}
+    (e.g. "Frame"; for a catalogue part the part type, e.g. "Cassette"), stripped and cut to 255 characters;
+    left out when empty, like `category`. The bike goes along only when there is one: a catalogue part no
+    bike links (TODO-046) is searched without bike_company / bike_model."""
+    body = {"element_name": element_name}
+    if bike_company.strip() and bike_model.strip():
+        body = {"bike_company": bike_company, "bike_model": bike_model, **body}
     if category:
         body["category"] = category
     element_type = (element_type or "").strip()[:ELEMENT_TYPE_MAX].strip()

@@ -1,5 +1,5 @@
 """Pydantic models for the searcher's HTTP API."""
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class BikeOffer(BaseModel):
@@ -148,10 +148,14 @@ class EquipmentSearchRequest(BaseModel):
     `element_name` is the element as it stands in that tree, `category` an optional slug or
     display name (inferred from the element name when absent or unknown), `element_type` the
     element's subcategory in that tree (e.g. "Frame"), optional — it tells the prompt what kind
-    of part an element named exactly like the bike is."""
+    of part an element named exactly like the bike is.
 
-    bike_company: str = Field(min_length=1, max_length=255)
-    bike_model: str = Field(min_length=1, max_length=255)
+    TODO-046: the bike is optional — both or neither. A catalogue part from the parts search
+    is linked to no bike: without one the prompt has no bike context, nothing is linked and
+    `element_type` carries the part type (e.g. "Cassette")."""
+
+    bike_company: str = Field(default="", max_length=255)
+    bike_model: str = Field(default="", max_length=255)
     element_name: str = Field(min_length=1, max_length=255)
     category: str | None = Field(default=None, max_length=32)
     element_type: str | None = Field(default=None, max_length=255)
@@ -159,7 +163,19 @@ class EquipmentSearchRequest(BaseModel):
     @field_validator("bike_company", "bike_model", "element_name", mode="before")
     @classmethod
     def strip_whitespace(cls, v):
+        if v is None:
+            return ""
         return v.strip() if isinstance(v, str) else v
+
+    @model_validator(mode="after")
+    def bike_both_or_neither(self) -> "EquipmentSearchRequest":
+        if bool(self.bike_company) != bool(self.bike_model):
+            raise ValueError("give both bike_company and bike_model, or neither")
+        return self
+
+    @property
+    def has_bike(self) -> bool:
+        return bool(self.bike_company and self.bike_model)
 
     @field_validator("category", "element_type", mode="before")
     @classmethod
