@@ -119,6 +119,34 @@ class ContactMessageResponse(BaseModel):
     ok: bool = True
 
 
+# Frame-size calculator (TODO-045). The bike types are a subset of the future BIKE_CATEGORIES
+# keys; the limits below bound what the formulas in app/frame_size.py were built for.
+FitBikeType = Literal["Road", "MTB", "Gravel", "Touring", "Hybrid/Commuter"]
+FIT_BIKE_TYPES = get_args(FitBikeType)
+FrameLetter = Literal["XS", "S", "M", "L", "XL"]
+FIT_HEIGHT_MIN_CM, FIT_HEIGHT_MAX_CM = 140, 210
+FIT_INSEAM_MIN_CM, FIT_INSEAM_MAX_CM = 60, 110
+
+
+class FrameSizeRequest(BaseModel):
+    """Rider measurements + bike type for POST /v1/fit/frame-size. Out of range, NaN/inf or an unknown type is a 422."""
+    height_cm: float = Field(ge=FIT_HEIGHT_MIN_CM, le=FIT_HEIGHT_MAX_CM, allow_inf_nan=False)
+    inseam_cm: float = Field(ge=FIT_INSEAM_MIN_CM, le=FIT_INSEAM_MAX_CM, allow_inf_nan=False)
+    bike_type: FitBikeType
+
+
+class FrameSizeResponse(BaseModel):
+    bike_type: FitBikeType
+    size: float  # the formula's result, 1 decimal, in `unit`
+    unit: Literal["cm", "in"]  # "in" for MTB
+    range_min: float
+    range_max: float
+    letter: FrameLetter  # the letter of `size` (main recommendation)
+    letters: list[FrameLetter]  # every letter from range_min's to range_max's, ascending (1-3 items)
+    confidence: Literal["good", "medium"]
+    measurement_warning: bool  # inseam / height outside 0.40-0.50 — the inseam was probably measured wrong
+
+
 class MissingDataRequest(BaseModel):
     company: str
     model: str

@@ -58,6 +58,7 @@ DETAILS_URL = f"{BASE}/v1/bike/details"
 DETAILS_SEARCH_URL = f"{BASE}/v1/bike/details/search"
 MISSING_URL = f"{BASE}/v1/bike/missing"
 CONTACT_URL = f"{BASE}/v1/contact"
+FRAME_SIZE_URL = f"{BASE}/v1/fit/frame-size"
 POPULAR_URL = f"{BASE}/v1/bike/popular"
 USED_URL = f"{BASE}/v1/bike/used/olx"
 USED_SEARCH_URL = f"{BASE}/v1/bike/used/search"
@@ -450,6 +451,31 @@ def case_contact():
         assert len(_contact_fixture_rows()) == 1, "a filled honeypot must not store a row"
     finally:
         _delete_contact_fixture()
+
+
+def case_fit_frame_size():
+    """/v1/fit/frame-size is a pure calculation (no AI, no DB, no cache): control example, MTB in inches, 422 for bad input (TODO-045)."""
+    body = {"height_cm": 178, "inseam_cm": 80, "bike_type": "Road"}
+    t0 = time.perf_counter()
+    resp = _post(FRAME_SIZE_URL, body, timeout=10)
+    elapsed = time.perf_counter() - t0
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+    assert resp.json() == {
+        "bike_type": "Road", "size": 52.8, "unit": "cm", "range_min": 50.8, "range_max": 54.8,
+        "letter": "S", "letters": ["S", "M"], "confidence": "good", "measurement_warning": False,
+    }, resp.json()
+    assert elapsed < 5.0, f"pure calculation took {elapsed:.2f}s — expected < 5s"
+    resp = _post(FRAME_SIZE_URL, {**body, "bike_type": "MTB"}, timeout=10)
+    assert resp.status_code == 200, f"MTB: expected 200, got {resp.status_code}: {resp.text[:200]}"
+    mtb = resp.json()
+    assert (mtb["size"], mtb["unit"], mtb["letter"], mtb["letters"]) == (18.1, "in", "M", ["M"]), mtb
+    for label, bad in (("height 139", {"height_cm": 139}), ("inseam 111", {"inseam_cm": 111}), ("type BMX", {"bike_type": "BMX"})):
+        resp = _post(FRAME_SIZE_URL, {**body, **bad}, timeout=10)
+        assert resp.status_code == 422, f"{label}: expected 422, got {resp.status_code}: {resp.text[:200]}"
+    resp = httpx.post(FRAME_SIZE_URL, content='{"height_cm": NaN, "inseam_cm": 80, "bike_type": "Road"}',
+                      headers={"Content-Type": "application/json"}, timeout=10)
+    assert resp.status_code == 422, f"NaN: expected 422, got {resp.status_code}: {resp.text[:200]}"
+    assert not _cache_row_exists("/v1/fit/frame-size", _norm_key(body)), "/v1/fit/frame-size must not write a generic-cache row"
 
 
 FIX_POP_BRAND, FIX_POP_MODEL_A, FIX_POP_MODEL_B = "Smoke Fixture", "Popular Bike A", "Popular Bike B"
@@ -1182,6 +1208,7 @@ CASES = [
     (case_details_search, False),
     (case_missing, False),
     (case_contact, False),
+    (case_fit_frame_size, False),
     (case_popular, False),
     (case_used, False),
     (case_used_search, False),

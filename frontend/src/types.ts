@@ -266,3 +266,35 @@ export interface ExpertRating {
   state:  'pending' | 'loaded' | 'error'
   rating: number | null
 }
+
+// "Rower na Twoją miarę" frame-size calculator (TODO-045): POST /v1/fit/frame-size. The
+// bike types are a subset of the search form's, so a later match against the bike
+// database needs no translation. The backend does all the maths; the page only shows it.
+export const FIT_BIKE_TYPES = ['Road', 'MTB', 'Gravel', 'Touring', 'Hybrid/Commuter'] as const
+export type FitBikeType = typeof FIT_BIKE_TYPES[number]
+
+export interface FrameSizeRequest {
+  height_cm: number
+  inseam_cm: number
+  bike_type: FitBikeType
+}
+
+// In scale order, smallest first.
+export const FRAME_SIZE_LETTERS = ['XS', 'S', 'M', 'L', 'XL'] as const
+export type FrameSizeLetter = typeof FRAME_SIZE_LETTERS[number]
+
+// `size` is in `unit` (centimetres, or inches for MTB); `letters` run from the letter of
+// `range_min` to the letter of `range_max`, ascending; `confidence: 'medium'` = the formula
+// for this bike type is only approximate; `measurement_warning` = the inseam looks off for
+// that height.
+export interface FrameSizeResponse {
+  bike_type:           FitBikeType
+  size:                number
+  unit:                'cm' | 'in'
+  range_min:           number
+  range_max:           number
+  letter:              FrameSizeLetter
+  letters:             FrameSizeLetter[]
+  confidence:          'good' | 'medium'
+  measurement_warning: boolean
+}
