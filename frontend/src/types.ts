@@ -267,10 +267,10 @@ export interface ExpertRating {
   rating: number | null
 }
 
-// "Rower na Twoją miarę" frame-size calculator (TODO-045): POST /v1/fit/frame-size. The
-// bike types are a subset of the search form's, so a later match against the bike
-// database needs no translation. The backend does all the maths; the page only shows it.
-export const FIT_BIKE_TYPES = ['Road', 'MTB', 'Gravel', 'Touring', 'Hybrid/Commuter'] as const
+// "Rower na Twoją miarę" frame-size calculator (TODO-045): POST /v1/fit/frame-size.
+// City/Cross/Hybrid stands for the City, Cross and Hybrid/Commuter bike categories. The
+// backend does all the maths; the page only shows it.
+export const FIT_BIKE_TYPES = ['Road', 'MTB', 'Gravel', 'Touring', 'City/Cross/Hybrid'] as const
 export type FitBikeType = typeof FIT_BIKE_TYPES[number]
 
 export interface FrameSizeRequest {
