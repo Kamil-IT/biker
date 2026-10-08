@@ -19,6 +19,8 @@ Talk to the user in Polish.
     `backend/app/bike_categories.py`, e.g. `trekkingowy` → `Trekking`), **no AI**, only while NULL, never
     overwritten. `process_queue.py` sets it for newly processed bikes, `enrich.py` (step `category`) fills
     the bikes processed before; an unmapped type stays NULL — report it, don't guess a category.
+    Exception: dirt/street bikes come with an empty `bike_type`; they got `Dirt/Street` by hand on 2026-10-08
+    (Kross Spade 1.0/2.0, Oxfeld Brat/Rizz RS, Marin Alcatraz 1/2/24) — set new ones the same way.
   - offer = each centrumrowerowe listing → `bike_offer` (`source='centrumrowerowe.pl'`, `is_new` true,
     price `1 099 zł`), **no AI**. Shown in the "Nowe" card via `POST /v1/bike/centrumrowerowe` (PR #151).
   - photos → `/v1/bike/photos/search`, only when the bike has none.
@@ -26,7 +28,8 @@ Talk to the user in Polish.
   - `short_description` → **Haiku** via `claude -p --model haiku` (subscription), only while empty.
   - review → `/v1/bike/review/search`, only when there is no `bike_review` row.
   - Paid searches go through the **deployed backend** (`https://biker-backend-ggkzq7ysyq-lm.a.run.app`).
-- Stop at **80 % of the 5 h window** or **85 % of the 7-day window** — whichever comes first.
+- Stop at **60 % of the 5 h window** (changed from 80 % on 2026-10-06; `run_loop.sh` passes `--stop-at 60` and
+  resumes once the window is below 50 %) or **85 % of the 7-day window** — whichever comes first.
   "Finish only what started" — never leave a half-written bike.
 - Skip the 55 bikes done/skipped before 2026-10-02: always pass `--since 2026-10-02T12:00`.
 
@@ -53,7 +56,7 @@ Talk to the user in Polish.
    - every write needs `--allow-remote`.
 3. **Run** — start the loop as a detached process (it does not depend on the session shell):
    `Start-Process "C:\Program Files\Git\usr\bin\bash.exe" -ArgumentList "-l","/c/Users/kamil_wolny/Projects/biker/webscraper/centrumrowerowe/run_loop.sh" -WindowStyle Hidden -PassThru`.
-   - Each round runs `enrich.py --allow-remote --batch 5 --since 2026-10-02T12:00`.
+   - Each round runs `enrich.py --allow-remote --batch 5 --stop-at 60 --since 2026-10-02T12:00`.
    - A 5 h stop waits for the window to reset, then continues.
    - A 7-day stop, an empty queue or any other stop ends the loop; `verify_discovery.py` then runs once.
    - Everything is logged to `runs/loop.log`.

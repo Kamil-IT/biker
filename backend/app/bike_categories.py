@@ -9,7 +9,7 @@ from typing import Optional
 BIKE_CATEGORIES = [
     "MTB", "Gravel", "Road", "Cyclocross", "Trekking", "Cross", "City", "Kids",
     "Youth", "Balance", "Triathlon", "Folding", "BMX", "Electric", "Electric cargo",
-    "Hybrid/Commuter", "Touring", "Cruiser",
+    "Dirt/Street", "Hybrid/Commuter", "Touring", "Cruiser",
 ]
 
 # centrumrowerowe.pl bike_type (Polish, looked up by strip().lower()) -> category.
