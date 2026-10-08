@@ -38,7 +38,7 @@ def test_gravel_subtracts_one_and_is_medium():
     assert (r.letter, r.confidence) == ("S", "medium")
 
 
-@pytest.mark.parametrize("bike_type", ["Touring", "Hybrid/Commuter"])
+@pytest.mark.parametrize("bike_type", ["Touring", "City/Cross/Hybrid"])
 def test_touring_and_hybrid_use_the_road_multiplier_but_are_medium(bike_type):
     r = compute_frame_size(178, 80, bike_type)  # 80 * 0.66 = 52.8
     assert (r.size, r.unit, r.range_min, r.range_max, r.letter) == (52.8, "cm", 50.8, 54.8, "S")
@@ -88,7 +88,7 @@ ORACLE_FORMULAS = {  # bike type -> (multiplier, offset, unit, half range)
     "MTB": ("0.226", "0", "in", "0.8"),
     "Gravel": ("0.65", "-1", "cm", "2"),
     "Touring": ("0.66", "0", "cm", "2"),
-    "Hybrid/Commuter": ("0.66", "0", "cm", "2"),
+    "City/Cross/Hybrid": ("0.66", "0", "cm", "2"),
 }
 ORACLE_LETTERS = {  # unit -> (letter, lower bound), ascending
     "cm": [("XS", None), ("S", Decimal("50")), ("M", Decimal("53")), ("L", Decimal("56")), ("XL", Decimal("59"))],
@@ -219,7 +219,7 @@ def test_endpoint_accepts_the_limits(height, inseam):
 @pytest.mark.parametrize("patch", [
     {"height_cm": 139.9}, {"height_cm": 210.1}, {"height_cm": 0}, {"height_cm": -170},
     {"inseam_cm": 59.9}, {"inseam_cm": 110.1}, {"inseam_cm": 111},
-    {"bike_type": "BMX"}, {"bike_type": "road"}, {"bike_type": ""},
+    {"bike_type": "BMX"}, {"bike_type": "road"}, {"bike_type": ""}, {"bike_type": "Hybrid/Commuter"},
     {"height_cm": "tall"}, {"inseam_cm": None}, {"bike_type": None},
 ])
 def test_endpoint_rejects_bad_fields_with_422(patch):

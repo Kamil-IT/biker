@@ -6,11 +6,11 @@ import FrameSketch from './FrameSketch'
 
 // The calculator's bike types, labelled as in the search form (SearchInput.tsx).
 const BIKE_TYPES: { value: FitBikeType; label: string }[] = [
-  { value: 'Road',            label: 'Szosowy' },
-  { value: 'MTB',             label: 'Górski (MTB)' },
-  { value: 'Gravel',          label: 'Gravel' },
-  { value: 'Hybrid/Commuter', label: 'Miejski / crossowy' },
-  { value: 'Touring',         label: 'Trekkingowy' },
+  { value: 'Road',              label: 'Szosowy' },
+  { value: 'MTB',               label: 'Górski (MTB)' },
+  { value: 'Gravel',            label: 'Gravel' },
+  { value: 'City/Cross/Hybrid', label: 'Miejski / crossowy' },
+  { value: 'Touring',           label: 'Trekkingowy' },
 ]
 
 const fieldClass =

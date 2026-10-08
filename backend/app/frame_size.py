@@ -26,7 +26,7 @@ FORMULAS: dict[str, Formula] = {
     "MTB": Formula(Decimal("0.226"), Decimal("0"), "in", Decimal("0.8"), "good"),
     "Gravel": Formula(Decimal("0.65"), Decimal("-1"), "cm", Decimal("2"), "medium"),
     "Touring": Formula(Decimal("0.66"), Decimal("0"), "cm", Decimal("2"), "medium"),
-    "Hybrid/Commuter": Formula(Decimal("0.66"), Decimal("0"), "cm", Decimal("2"), "medium"),
+    "City/Cross/Hybrid": Formula(Decimal("0.66"), Decimal("0"), "cm", Decimal("2"), "medium"),
 }
 
 LETTERS: tuple[FrameLetter, ...] = ("XS", "S", "M", "L", "XL")

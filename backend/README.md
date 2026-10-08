@@ -557,16 +557,16 @@ Content-Type: application/json
 
 - `height_cm` — rider height in centimeters, 140–210 (required, float)
 - `inseam_cm` — inseam (inside-leg length, book-between-legs method) in centimeters, 60–110 (required, float)
-- `bike_type` — `Road`, `MTB`, `Gravel`, `Touring`, or `Hybrid/Commuter` (required, exact string)
+- `bike_type` — `Road`, `MTB`, `Gravel`, `Touring`, or `City/Cross/Hybrid` (required, exact string)
 - Anything outside the range or NaN/Infinity is a **422**.
 
 The response includes:
-- `size` — the formula result, rounded to 1 decimal in the given `unit` (cm for Road/Gravel/Touring/Hybrid, in for MTB)
+- `size` — the formula result, rounded to 1 decimal in the given `unit` (cm for Road/Gravel/Touring/City/Cross/Hybrid, in for MTB)
 - `unit` — `"cm"` or `"in"` (MTB only)
 - `range_min`, `range_max` — recommended minimum and maximum, also 1 decimal
 - `letter` — the letter of `size` (S/M/L/XL/XS) — the main recommendation
 - `letters` — all applicable letters from `range_min` to `range_max`, ascending (1–3 items)
-- `confidence` — `"good"` (Road/MTB) or `"medium"` (Gravel/Touring/Hybrid) — indicates formula reliability for that bike type
+- `confidence` — `"good"` (Road/MTB) or `"medium"` (Gravel/Touring/City/Cross/Hybrid) — indicates formula reliability for that bike type
 - `measurement_warning` — `true` when `inseam / height` is outside the valid range 0.40–0.50 (the inseam measurement may be wrong); the result is still computed
 
 **Flow:** none — no outbound HTTP calls; pure calculation in `app/frame_size.py`.
