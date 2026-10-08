@@ -512,6 +512,8 @@ The new backend reads both layouts the same (`categories_for_search` matches a c
 
 Prod state read 2026-10-08 (read-only): 1957 bikes; 289 e-bikes by the shop's subsections -> MTB 119, Touring 132, City/Cross/Hybrid 34, Gravel 4; after both steps Road 122, MTB 475, Gravel 157, City/Cross/Hybrid 144, Touring 215, BMX 5, Folding 6, Kids 158, NULL 675 (532 rows change).
 
+**Run on the local `biker-pg` 2026-10-08** (after a rehearsal on a PostgreSQL copy, `biker_qa047`, dropped afterwards): `reclassify_ebikes.py` 5 → 4 MTB + 1 Gravel, rerun "nothing to do"; migration 723 bikes, 24 renamed, constraint added (a `Trekking` write is refused), rerun `already-migrated`; the new backend on the copy passed the smoke test (26 of 26 without searcher/API). The main checkout's `cache.db` has no `category` column (`migrate_bike_category.py` never ran there) and was left alone.
+
 **Deploy order:** (1) Cloud SQL on-demand backup, (2) `reclassify_ebikes.py --allow-remote`, then the migration, both through the proxy - only on the user's explicit go, (3) the backend (and the searcher - only its model copy changed), (4) the frontend.
 
 ## Parts catalogue columns (`equipment.part_type` / `groupset` / `key_specs`, TODO-046, `scripts/migrate_equipment_part_search.py`)
