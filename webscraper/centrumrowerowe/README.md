@@ -150,7 +150,7 @@ Summary on stdout, every finding in `runs/verify_<timestamp>.csv`, exit code 1 o
 | `bike_store.py` | storing helpers shared by the processor and the copy script |
 | `copy_to_db.py` | copy bikes + listings + details + photos into another database |
 | `enrich.py` | import loop: queue batch of 5 + fill offer / photos / details / short description (Haiku) / review, stops at 80 % (5 h) / 85 % (7 days) of the subscription |
-| `run_loop.sh` | rounds of `enrich.py` until the limit: waits out a 5 h stop, ends on the 7-day stop, then runs `verify_discovery.py` (log `runs/loop.log`) |
+| `run_loop.sh` | rounds of `enrich.py --stop-at 60` until the limit: waits out a 5 h stop (resumes below 50 %), ends on the 7-day stop, then runs `verify_discovery.py` (log `runs/loop.log`) |
 | `verify_discovery.py` | read-only completeness check of every discovered bike, CSV of findings, exit 1 on ERROR |
 | `db.py` | backend bootstrap (`sys.path`, `backend/.env`), `BikeDiscovery` + `BikeDiscoveryListing` models, `check_target()` |
 | `tests/` | pytest on saved product pages in `tests/fixtures/`, temp SQLite only |

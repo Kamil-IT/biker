@@ -665,6 +665,7 @@ const BIKE_CATEGORY_LABELS: Record<string, string> = {
   'BMX': 'BMX',
   'Electric': 'Elektryczny',
   'Electric cargo': 'Elektryczny cargo',
+  'Dirt/Street': 'Dirt / street',
   // legacy values
   'Hybrid/Commuter': 'Miejski/Hybrydowy',
   'Touring': 'Turystyczny',
