@@ -23,6 +23,7 @@ from .bike_finder import find_bikes  # noqa: E402
 from .bike_offer_ceneo_finder import find_ceneo_offers  # noqa: E402
 from .equipment_review_finder import find_equipment_review  # noqa: E402
 from .bike_parser import parse_free_text  # noqa: E402
+from .bike_categories import search_type_from_parse  # noqa: E402
 from .cache import init_cache, close_cache, get_cached, set_cached  # noqa: E402
 from .store import (  # noqa: E402
     init_store, save_search,
@@ -589,6 +590,9 @@ async def bike_parse(req: ParseRequest) -> ParseResponse:
     _fields = {"text": req.text, "v": "2"}  # v2 = with bike_type: older rows never had it
     cached = get_cached("/v1/bike/parse", _fields, ParseResponse)
     if cached is not None:
+        # A row cached before TODO-047 may hold an old type ("Hybrid/Commuter"): served as its
+        # code. The key stays v2 — a new key would re-run (and pay for) every cached parse.
+        cached.bike_type = search_type_from_parse(cached.bike_type)
         # Older builds cached all-None results; reject those on the hit path too
         # so a warm cache.db cannot serve a 200 the fresh path would refuse.
         _reject_empty_parse(cached, req.text)

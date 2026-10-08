@@ -14,6 +14,7 @@ from typing import Optional
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -236,7 +237,16 @@ class Bike(Base):
     )
     review = relationship("BikeReview", back_populates="bike", uselist=False, cascade="all, delete-orphan")
 
-    __table_args__ = (UniqueConstraint("brand", "model", name="uq_bike_brand_model"),)
+    # ck_bike_category = backend/app/bike_categories.py category_check_sql() (TODO-047); the searcher
+    # never sets a category, it only has to create the same table.
+    __table_args__ = (
+        UniqueConstraint("brand", "model", name="uq_bike_brand_model"),
+        CheckConstraint(
+            "category IS NULL OR category IN "
+            "('Road', 'MTB', 'Gravel', 'City/Cross/Hybrid', 'Touring', 'BMX', 'Folding', 'Kids')",
+            name="ck_bike_category",
+        ),
+    )
 
 
 class BikeOffer(Base):

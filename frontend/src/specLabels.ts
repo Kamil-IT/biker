@@ -647,29 +647,18 @@ export function translateLabel(text: string): string {
   return text
 }
 
-/* Bike category (backend enum, English) → Polish label. Unknown value is shown
- * as is, empty/missing → '' (the caller then renders nothing). */
+/* Bike category (backend/app/bike_categories.py BIKE_CATEGORIES, TODO-047) → Polish label,
+ * the same as the search form's "Typ roweru" options. Unknown value is shown as is,
+ * empty/missing → '' (the caller then renders nothing). */
 const BIKE_CATEGORY_LABELS: Record<string, string> = {
-  'MTB': 'MTB',
-  'Gravel': 'Gravel',
   'Road': 'Szosowy',
-  'Cyclocross': 'Przełajowy',
-  'Trekking': 'Trekkingowy',
-  'Cross': 'Crossowy',
-  'City': 'Miejski',
-  'Kids': 'Dziecięcy',
-  'Youth': 'Młodzieżowy',
-  'Balance': 'Biegowy',
-  'Triathlon': 'Triathlonowy',
-  'Folding': 'Składany',
+  'MTB': 'Górski (MTB)',
+  'Gravel': 'Gravel',
+  'City/Cross/Hybrid': 'Miejski / crossowy',
+  'Touring': 'Trekkingowy',
   'BMX': 'BMX',
-  'Electric': 'Elektryczny',
-  'Electric cargo': 'Elektryczny cargo',
-  'Dirt/Street': 'Dirt / street',
-  // legacy values
-  'Hybrid/Commuter': 'Miejski/Hybrydowy',
-  'Touring': 'Turystyczny',
-  'Cruiser': 'Cruiser',
+  'Folding': 'Składany',
+  'Kids': 'Dziecięcy',
 }
 
 export function bikeCategoryLabel(category?: string | null): string {

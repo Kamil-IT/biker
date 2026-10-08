@@ -34,7 +34,7 @@ def test_mapped_type_fills_a_null_category(temp_db):
     row_id, bike_id = bike_with_row("trekkingowy")
     assert enrich.missing(bike_id, row_id)["category"] is True
     out = enrich_free(row_id, bike_id)
-    assert out["category"] == "Trekking" and category(bike_id) == "Trekking"
+    assert out["category"] == "Touring" and category(bike_id) == "Touring"
     assert enrich.missing(bike_id, row_id)["category"] is False
 
 

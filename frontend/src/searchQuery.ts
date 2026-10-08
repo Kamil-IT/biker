@@ -16,6 +16,13 @@ export function payloadToQuery(payload: SearchPayload): string {
   return q.toString()
 }
 
+// Bike types an older address may carry → the category code they became (TODO-047), so
+// the form shows the option and the address is rewritten to the code.
+const OLD_BIKE_TYPES: Record<string, string> = {
+  'Hybrid/Commuter': 'City/Cross/Hybrid',
+  'Cruiser':         'City/Cross/Hybrid',
+}
+
 // Unknown parameters, blank values, a year outside 1900–2100 and an is_electric other than
 // true/false are dropped, so an edited address never sends the backend something it refuses.
 export function queryToPayload(query: string): SearchPayload {
@@ -26,7 +33,7 @@ export function queryToPayload(query: string): SearchPayload {
   if (search) payload.search = search
   for (const key of ['brand', 'model', 'wheel_size', 'frame_size', 'bike_type'] as const) {
     const value = text(key)
-    if (value) payload[key] = value
+    if (value) payload[key] = key === 'bike_type' ? (OLD_BIKE_TYPES[value] ?? value) : value
   }
   const year = text('year')
   if (year && /^\d{4}$/.test(year) && +year >= 1900 && +year <= 2100) payload.year = +year

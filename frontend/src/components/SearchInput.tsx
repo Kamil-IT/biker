@@ -25,17 +25,18 @@ const FRAME_SIZES = ['XS', 'S', 'M', 'L', 'XL', 'XXL']
 // only `label` is translated.
 interface Option { value: string; label: string }
 
-// The backend matches a type against bike.category (backend/app/bike_categories.py
-// SEARCH_BIKE_TYPES / SEARCH_TYPE_CATEGORIES): Hybrid/Commuter = City, Cross;
-// Touring = Trekking; the rest 1:1. Keep the two lists in step.
+// The values are the bike.category codes 1:1 (backend/app/bike_categories.py
+// BIKE_CATEGORIES, enforced by the database since TODO-047). Keep the two lists in step;
+// the labels match specLabels.ts BIKE_CATEGORY_LABELS.
 const BIKE_TYPES: Option[] = [
-  { value: 'Road',            label: 'Szosowy' },
-  { value: 'MTB',             label: 'Górski (MTB)' },
-  { value: 'Gravel',          label: 'Gravel' },
-  { value: 'Hybrid/Commuter', label: 'Miejski / crossowy' },
-  { value: 'Touring',         label: 'Trekkingowy' },
-  { value: 'BMX',             label: 'BMX' },
-  { value: 'Folding',         label: 'Składany' },
+  { value: 'Road',              label: 'Szosowy' },
+  { value: 'MTB',               label: 'Górski (MTB)' },
+  { value: 'Gravel',            label: 'Gravel' },
+  { value: 'City/Cross/Hybrid', label: 'Miejski / crossowy' },
+  { value: 'Touring',           label: 'Trekkingowy' },
+  { value: 'BMX',               label: 'BMX' },
+  { value: 'Folding',           label: 'Składany' },
+  { value: 'Kids',              label: 'Dziecięcy' },
 ]
 
 export default function SearchInput({
