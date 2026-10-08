@@ -98,9 +98,9 @@ run prints "already migrated". Run on the local PostgreSQL `biker-pg` on 2026-09
 The loop used for the full import into Cloud SQL (2026-10-02). Each round claims up to `--batch` (5)
 pending bikes and processes them exactly like `process_queue.py` (shop page, no AI), then takes up to
 5 bikes (`done`/`skipped` with a bike) that still miss something and fills, per bike: `bike.category`
-from the discovery `bike_type` (Polish shop type → English category via `backend/app/bike_categories.py`,
-`bike_store.set_category_if_null`, no AI; only while NULL — an unmapped type stays NULL and does not keep
-the bike open); one
+from the discovery `bike_type` (Polish shop type → category code via `backend/app/bike_categories.py`,
+`bike_store.set_category_if_null`, no AI; only while NULL — an unmapped type, e.g. `elektryczny`, stays NULL
+and does not keep the bike open; `process_queue.py` types an e-bike from its page instead); one
 `bike_offer` per centrumrowerowe listing (`source = 'centrumrowerowe.pl'`, `is_new` true, price as
 `1 099 zł`, no AI — served by `POST /v1/bike/centrumrowerowe` in the "Nowe" card);
 photos via `POST {backend}/v1/bike/photos/search` **only when the bike has none**; details via
@@ -136,6 +136,20 @@ empty turns its ERROR into a WARN. `--recheck N` (default 20) re-fetches N rando
 compares component rows and description (when still the shop's) and the photo count with the DB.
 Summary on stdout, every finding in `runs/verify_<timestamp>.csv`, exit code 1 on any ERROR.
 
+### 7. `reclassify_ebikes.py` — give the e-bikes their type (TODO-047, one-off)
+
+`bike.category` holds the eight codes of `backend/app/bike_categories.py` (`ck_bike_category`);
+`Electric` / `Electric cargo` named no type. The script reads each such bike's product page (and each
+NULL-category bike whose `bike_type` is `elektryczny`): the JSON-LD `Product.category`
+(`Rowery > Elektryczne > Trekkingowe`) → `category_from_shop_path` (Trekkingowe / SUV → Touring, MTB → MTB,
+Miejskie / Crossowe / Cargo → City/Cross/Hybrid, Szosowe i gravelowe → Gravel, Młodzieżowe → Kids).
+Listings newest first, URL allowlist and redirects as in `process_queue.py`, `--delay` (0.5 s) between
+pages, `--limit N`, `--dry-run` (prints, writes nothing), `--allow-remote`. A write lands only while the
+category is unchanged; unresolved bikes are listed and left alone; idempotent. Run it BEFORE
+`backend/scripts/migrate_bike_category_codes.py`, which refuses leftover `Electric` rows.
+New e-bikes need no script: `product_parser` keeps `ParsedBike.shop_category` and the processor falls
+back to it when the name's type maps to nothing.
+
 ## Files
 
 | file | role |
@@ -152,6 +166,7 @@ Summary on stdout, every finding in `runs/verify_<timestamp>.csv`, exit code 1 o
 | `enrich.py` | import loop: queue batch of 5 + fill offer / photos / details / short description (Haiku) / review, stops at 80 % (5 h) / 85 % (7 days) of the subscription |
 | `run_loop.sh` | rounds of `enrich.py --stop-at 60` until the limit: waits out a 5 h stop (resumes below 50 %), ends on the 7-day stop, then runs `verify_discovery.py` (log `runs/loop.log`) |
 | `verify_discovery.py` | read-only completeness check of every discovered bike, CSV of findings, exit 1 on ERROR |
+| `reclassify_ebikes.py` | one-off (TODO-047): `Electric` bikes → their type from the product page's category path |
 | `db.py` | backend bootstrap (`sys.path`, `backend/.env`), `BikeDiscovery` + `BikeDiscoveryListing` models, `check_target()` |
 | `tests/` | pytest on saved product pages in `tests/fixtures/`, temp SQLite only |
 

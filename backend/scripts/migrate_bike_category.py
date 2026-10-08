@@ -45,12 +45,11 @@ from app.models import DEFAULT_DB_PATH  # noqa: E402
 TABLE = "bike"
 COLUMN = "category"
 
-_FALLBACK_MAP = {
-    "mtb": "MTB", "gravel": "Gravel", "szosowy": "Road", "przełajowy": "Cyclocross",
-    "trekkingowy": "Trekking", "crossowy": "Cross", "miejski": "City", "dziecięcy": "Kids",
-    "młodzieżowy": "Youth", "biegowy": "Balance", "jeździk dziecięcy": "Balance",
-    "triathlonowy": "Triathlon", "składak": "Folding", "bmx": "BMX", "elektryczny": "Electric",
-    "elektryczny cargo": "Electric cargo",
+_FALLBACK_MAP = {  # the TODO-047 codes; e-bikes get theirs from webscraper/centrumrowerowe/reclassify_ebikes.py
+    "mtb": "MTB", "gravel": "Gravel", "szosowy": "Road", "przełajowy": "Gravel",
+    "trekkingowy": "Touring", "crossowy": "City/Cross/Hybrid", "miejski": "City/Cross/Hybrid",
+    "dziecięcy": "Kids", "młodzieżowy": "Kids", "biegowy": "Kids", "jeździk dziecięcy": "Kids",
+    "triathlonowy": "Road", "składak": "Folding", "bmx": "BMX", "elektryczny cargo": "City/Cross/Hybrid",
 }
 try:
     from app.bike_categories import category_from_discovery  # noqa: E402

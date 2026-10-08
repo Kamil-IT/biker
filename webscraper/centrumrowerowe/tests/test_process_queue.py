@@ -24,6 +24,7 @@ class StubParsed:
     def __init__(self, brand="Romet", model="Wagant 3"):
         self.brand, self.model, self.raw_name = brand, model, f"Rower trekkingowy {brand} {model}"
         self.bike_type, self.is_electric, self.frame_sizes = "trekkingowy", False, ["17\"", "19\""]
+        self.shop_category = "Rowery > Trekkingowe"
         self.photos = ["https://example.com/a.jpg", "https://example.com/b.jpg"]
         self.components = [BikeCategory(category="Wheels", subcategories=[BikeSubcategory(
             subcategory="Wheels", elements=[ComponentElement(
@@ -150,7 +151,7 @@ def test_existing_details_and_photos_skipped_unchanged(temp_db):
     assert row.status == SKIPPED and row.bike_id == bike_rows()[0][0]
     assert (row.company, row.model) == ("Romet", "Wagant 3")
     assert len(bike_rows()) == 1
-    assert repository.get_bike_details("Romet", "Wagant 3") == before.model_copy(update={"category": "Trekking"})  # only the NULL category is back-filled
+    assert repository.get_bike_details("Romet", "Wagant 3") == before.model_copy(update={"category": "Touring"})  # only the NULL category is back-filled
     assert stored_photos("Romet", "Wagant 3") == ["https://x/orig.jpg"]  # never replaced
 
 
@@ -159,7 +160,7 @@ def test_existing_details_without_photos_get_the_shop_photos(temp_db):
     before = repository.get_bike_details("Romet", "Wagant 3")
     add_row()
     assert claim_and_process(stub_parse()) == [SKIPPED]
-    assert repository.get_bike_details("Romet", "Wagant 3") == before.model_copy(update={"category": "Trekking"})  # only the NULL category is back-filled
+    assert repository.get_bike_details("Romet", "Wagant 3") == before.model_copy(update={"category": "Touring"})  # only the NULL category is back-filled
     assert stored_photos("Romet", "Wagant 3") == ["https://example.com/a.jpg", "https://example.com/b.jpg"]
 
 

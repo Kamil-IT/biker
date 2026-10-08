@@ -15,12 +15,14 @@ Talk to the user in Polish.
 - Insert **straight into GCP Cloud SQL** — no local run + `copy_to_db.py`.
 - Batches of **5** bikes.
 - AI **only when something is missing**:
-  - category → `bike.category` from the discovery `bike_type` (Polish shop type → English category via
-    `backend/app/bike_categories.py`, e.g. `trekkingowy` → `Trekking`), **no AI**, only while NULL, never
+  - category → `bike.category` from the discovery `bike_type` (Polish shop type → category code via
+    `backend/app/bike_categories.py`, e.g. `trekkingowy` → `Touring`; an e-bike's type comes from the
+    product page's category path, TODO-047), **no AI**, only while NULL, never
     overwritten. `process_queue.py` sets it for newly processed bikes, `enrich.py` (step `category`) fills
     the bikes processed before; an unmapped type stays NULL — report it, don't guess a category.
     Exception: dirt/street bikes come with an empty `bike_type`; they got `Dirt/Street` by hand on 2026-10-08
-    (Kross Spade 1.0/2.0, Oxfeld Brat/Rizz RS, Marin Alcatraz 1/2/24) — set new ones the same way.
+    (Kross Spade 1.0/2.0, Oxfeld Brat/Rizz RS, Marin Alcatraz 1/2/24), which TODO-047 maps to `MTB` — set new
+    ones to `MTB` (`ck_bike_category` refuses anything but the eight codes).
   - offer = each centrumrowerowe listing → `bike_offer` (`source='centrumrowerowe.pl'`, `is_new` true,
     price `1 099 zł`), **no AI**. Shown in the "Nowe" card via `POST /v1/bike/centrumrowerowe` (PR #151).
   - photos → `/v1/bike/photos/search`, only when the bike has none.

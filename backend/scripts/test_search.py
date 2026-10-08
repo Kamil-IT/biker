@@ -251,7 +251,7 @@ def _seed_bike_details(brand: str, model: str, short: str, components: list, tex
 
 
 def _set_category(brand: str, model: str, category: str) -> None:
-    """Set bike.category directly (nothing in the app writes it; migrate_bike_category.py backfills)."""
+    """Set bike.category directly (a code of app/bike_categories.py: ck_bike_category refuses anything else)."""
     conn = _DB()
     try:
         conn.execute("UPDATE bike SET category = ? WHERE brand = ? AND model = ?", (category, brand, model))
@@ -307,7 +307,13 @@ def case_search_db_hit():
 
 
 FIX_CAT_BRAND = "Smoke Fixture"
-FIX_CAT_BIKES = {"Category City Bike": "City", "Category Gravel Bike": "Gravel", "Category Null Bike": None}
+FIX_CAT_BIKES = {
+    "Category City Bike": "City/Cross/Hybrid", "Category Gravel Bike": "Gravel",
+    "Category Kids Bike": "Kids", "Category Null Bike": None,
+}
+# The values a City/Cross/Hybrid search may return: the code, plus the old values on a
+# database not yet through migrate_bike_category_codes.py (TODO-047).
+CCH_VALUES = ("City/Cross/Hybrid", "City", "Cross", "Hybrid/Commuter", "Cruiser")
 
 
 def case_search_category():
@@ -331,15 +337,18 @@ def case_search_category():
         return {b["model"] for b in bikes if b["brand"] == FIX_CAT_BRAND and b["model"] in FIX_CAT_BIKES}
 
     try:
-        # Hybrid/Commuter matches City / Cross; brand AND category; a NULL category never matches.
-        both = search({"brand": FIX_CAT_BRAND, "bike_type": "Hybrid/Commuter"})
-        assert [(b["model"], b["category"]) for b in both] == [("Category City Bike", "City")], both
+        # The code (and an old address's Hybrid/Commuter) matches; brand AND category; NULL never matches.
+        both = search({"brand": FIX_CAT_BRAND, "bike_type": "City/Cross/Hybrid"})
+        assert [(b["model"], b["category"]) for b in both] == [("Category City Bike", "City/Cross/Hybrid")], both
+        old = search({"brand": FIX_CAT_BRAND, "bike_type": "Hybrid/Commuter"})
+        assert [b["model"] for b in old] == ["Category City Bike"], old
         assert fixtures(search({"brand": FIX_CAT_BRAND, "bike_type": "Gravel"})) == {"Category Gravel Bike"}
+        assert fixtures(search({"brand": FIX_CAT_BRAND, "bike_type": "Kids"})) == {"Category Kids Bike"}
 
-        # Category alone: every result is in the mapped categories, the fixture among them.
-        only = search({"bike_type": "Hybrid/Commuter"})
+        # Category alone: every result is in the category, the fixture among them.
+        only = search({"bike_type": "City/Cross/Hybrid"})
         assert fixtures(only) == {"Category City Bike"}, only
-        bad = [b for b in only if b["category"] not in ("City", "Cross", "Hybrid/Commuter")]
+        bad = [b for b in only if b["category"] not in CCH_VALUES]
         assert not bad, f"bikes outside the category: {bad[:3]}"
 
         # No category: bikes without one are still found.
@@ -1058,7 +1067,7 @@ def case_bike_by_id():
     chips; an unknown id -> 404, a non-positive id -> 422. Search and popular answers carry the same id."""
     _delete_bike(FIX_ID_BRAND, FIX_ID_MODEL)
     _seed_bike_details(FIX_ID_BRAND, FIX_ID_MODEL, FIX_SHORT, _full_components())
-    _set_category(FIX_ID_BRAND, FIX_ID_MODEL, "Trekking")
+    _set_category(FIX_ID_BRAND, FIX_ID_MODEL, "Touring")
     try:
         found = _post(SEARCH_URL, {"brand": FIX_ID_BRAND, "model": FIX_ID_MODEL.upper()}, timeout=60)
         assert found.status_code == 200, found.text[:200]
@@ -1070,7 +1079,7 @@ def case_bike_by_id():
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
         assert resp.json() == {"id": bike_id, "brand": FIX_ID_BRAND, "model": FIX_ID_MODEL,
                                "accessories": FIX_CHIPS, "explanation": FIX_SHORT,
-                               "category": "Trekking", "photo": None, "photo_bg": None}, resp.json()
+                               "category": "Touring", "photo": None, "photo_bg": None}, resp.json()
         assert time.perf_counter() - t0 < 5.0
         resp = _post(BIKE_BY_ID_URL, {"bike_id": 999999999}, timeout=10)
         assert resp.status_code == 404 and resp.json() == {"detail": "Bike not found"}, resp.text[:200]

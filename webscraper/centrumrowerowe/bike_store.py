@@ -69,9 +69,9 @@ def _exact_bike_id(brand: str, model: str) -> Optional[int]:
         return bike.id if bike is not None else None
 
 
-def set_category_if_null(bike_id: int, bike_type: Optional[str]) -> None:
-    """bike.category from the discovery bike_type, only while it is NULL (never overwrites)."""
-    category = category_from_discovery(bike_type)
+def set_category_if_null(bike_id: int, bike_type: Optional[str], shop_path: Optional[str] = None) -> None:
+    """bike.category from the discovery bike_type (else the shop category path), only while NULL (never overwrites)."""
+    category = category_from_discovery(bike_type, shop_path)
     if category is None:
         return
     with tx() as s:
@@ -81,7 +81,8 @@ def set_category_if_null(bike_id: int, bike_type: Optional[str]) -> None:
 
 
 def store_details(brand: str, model: str, make_response: Callable[[str, str], BikeDetailsResponse],
-                  find_id: FindId = find_bike_id, bike_type: Optional[str] = None) -> tuple[str, int, str, str, Optional[BikeDetailsResponse]]:
+                  find_id: FindId = find_bike_id, bike_type: Optional[str] = None,
+                  shop_path: Optional[str] = None) -> tuple[str, int, str, str, Optional[BikeDetailsResponse]]:
     """Store details for a bike unless it already has some.
 
     Returns (KEPT, bike_id, stored brand, stored model, None) when details exist — of any age,
@@ -94,7 +95,7 @@ def store_details(brand: str, model: str, make_response: Callable[[str, str], Bi
     if bike_id is not None:
         brand, model, has_details = bike_state(bike_id)
         if has_details:
-            set_category_if_null(bike_id, bike_type)
+            set_category_if_null(bike_id, bike_type, shop_path)
             return KEPT, bike_id, brand, model, None
     response = make_response(brand, model)
     # save_bike_details swallows its own errors (WARNING log, rollback) and returns False then.
@@ -103,7 +104,7 @@ def store_details(brand: str, model: str, make_response: Callable[[str, str], Bi
     saved = _exact_bike_id(brand, model)
     if saved is None:
         raise RuntimeError("save_bike_details stored nothing (bike row not found after the save)")
-    set_category_if_null(saved, bike_type)
+    set_category_if_null(saved, bike_type, shop_path)
     return WRITTEN, saved, brand, model, response
 
 

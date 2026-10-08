@@ -295,7 +295,7 @@ def process_row(row_id: int, fetch: Fetch = http_fetch, parse=None, claimed_at: 
 
         outcome, bike_id, company, model, response = store_details(
             parsed.brand, parsed.model, parsed.to_details_response,
-            bike_type=parsed.bike_type)
+            bike_type=parsed.bike_type, shop_path=parsed.shop_category)
         # Photos are independent of details: stored whenever the bike has none, never replaced.
         photos = store_photos(bike_id, company, model, parsed.photos)
         if outcome == KEPT:  # existing details (AI- or earlier-parsed) win; nothing overwritten
@@ -350,7 +350,7 @@ def dry_run(limit: int, source: Optional[str], retry_failed: bool, delay: float,
                 print(f"{pid}: ERROR {_error_text(exc)}")
                 continue
             n_specs = sum(len(el.specs) for c in p.components for sub in c.subcategories for el in sub.elements)
-            print(f"{pid}: {p.brand!r} {p.model!r} type={p.bike_type!r} electric={p.is_electric} "
+            print(f"{pid}: {p.brand!r} {p.model!r} type={p.bike_type!r} shop={p.shop_category!r} electric={p.is_electric} "
                   f"sizes={p.frame_sizes} photos={len(p.photos)} categories={len(p.components)} specs={n_specs}")
             break
     print(f"dry run: {len(bikes)} bikes, nothing written")

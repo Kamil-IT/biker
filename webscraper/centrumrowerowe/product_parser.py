@@ -93,6 +93,9 @@ class ParsedBike:
     components: list[BikeCategory] = field(default_factory=list)
     frame_sizes: list[str] = field(default_factory=list)
     is_electric: bool = False
+    # JSON-LD Product.category, e.g. "Rowery > Elektryczne > Trekkingowe" — the type of an
+    # e-bike, whose name ("Rower elektryczny …") names none (TODO-047)
+    shop_category: str = ""
 
     def to_details_response(self, company: str, model: str) -> BikeDetailsResponse:
         text = self.description
@@ -471,4 +474,11 @@ def parse_product(html: str, url: str) -> ParsedBike:
         components=components,
         frame_sizes=frame_sizes,
         is_electric=any(c.category == sm.ELECTRIC for c in components),
+        shop_category=_text(product.get("category")),
     )
+
+
+def shop_category(html: str) -> str:
+    """JSON-LD Product.category of a product page ('' when there is none) — no spec table needed."""
+    product = _product_ld(BeautifulSoup(html or "", "html.parser"))
+    return _text(product.get("category")) if product is not None else ""

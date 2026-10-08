@@ -17,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import bike_parser, main, models, repository, store  # noqa: E402
 from app.bike_categories import (  # noqa: E402
-    BIKE_CATEGORIES, SEARCH_BIKE_TYPES, categories_for_search, category_for_ai_result, search_type_from_parse,
+    BIKE_CATEGORIES, LEGACY_CATEGORIES, POLISH_TO_CATEGORY, SEARCH_BIKE_TYPES, categories_for_search,
+    category_for_ai_result, category_from_discovery, category_from_shop_path, search_type_from_parse,
 )
 from app.cache import set_cached  # noqa: E402
 from app.schemas import BikeResult, ParseResponse, SearchRequest  # noqa: E402
@@ -63,18 +64,26 @@ def _fail_ai(monkeypatch):
 
 # ── bike_categories mapping ────────────────────────────────────────────────
 
-def test_form_values_are_categories():
-    assert set(SEARCH_BIKE_TYPES) <= set(BIKE_CATEGORIES), "every form value must be a known category"
-    assert "Cruiser" not in SEARCH_BIKE_TYPES
+CCH = "City/Cross/Hybrid"
+
+
+def test_form_values_are_the_categories():
+    assert SEARCH_BIKE_TYPES == BIKE_CATEGORIES == (
+        "Road", "MTB", "Gravel", CCH, "Touring", "BMX", "Folding", "Kids")
+    assert all(len(c) <= 32 for c in BIKE_CATEGORIES), "bike.category is VARCHAR(32)"
+    assert set(LEGACY_CATEGORIES.values()) <= set(BIKE_CATEGORIES)
+    assert set(POLISH_TO_CATEGORY.values()) <= set(BIKE_CATEGORIES)
 
 
 @pytest.mark.parametrize("bike_type, expected", [
-    ("Road", {"road"}), ("MTB", {"mtb"}), ("Gravel", {"gravel"}), ("BMX", {"bmx"}), ("Folding", {"folding"}),
-    ("Hybrid/Commuter", {"city", "cross", "hybrid/commuter"}),
-    ("Touring", {"trekking", "touring"}),
-    ("touring", {"trekking", "touring"}),  # an edited address: casing does not matter
-    ("Cruiser", {"cruiser"}),              # an old address: matches exactly itself
-    ("Unknown thing", {"unknown thing"}),
+    ("Road", {"road", "triathlon"}), ("MTB", {"mtb", "dirt/street"}), ("Gravel", {"gravel", "cyclocross"}),
+    ("BMX", {"bmx"}), ("Folding", {"folding"}), ("Kids", {"kids", "youth", "balance"}),
+    (CCH, {"city/cross/hybrid", "city", "cross", "hybrid/commuter", "cruiser"}),
+    ("Touring", {"touring", "trekking"}),
+    ("touring", {"touring", "trekking"}),                        # an edited address: casing does not matter
+    ("Hybrid/Commuter", {"city/cross/hybrid", "city", "cross", "hybrid/commuter", "cruiser"}),  # an old address
+    ("Unknown thing", {"unknown thing"}),                        # matches nothing -> AI fallback
+    ("Electric", {"electric"}),                                  # not a type any more
     (None, set()), ("", set()), ("  ", set()),
 ])
 def test_categories_for_search(bike_type, expected):
@@ -82,19 +91,49 @@ def test_categories_for_search(bike_type, expected):
 
 
 @pytest.mark.parametrize("bike_type, expected", [
-    ("Hybrid/Commuter", "City"), ("Touring", "Trekking"), ("MTB", "MTB"), ("road", "Road"),
-    ("Cruiser", "Cruiser"), ("Unknown thing", None), (None, None), ("", None),
+    (CCH, CCH), ("Hybrid/Commuter", CCH), ("Touring", "Touring"), ("Trekking", "Touring"), ("MTB", "MTB"),
+    ("road", "Road"), ("Cruiser", CCH), ("kids", "Kids"), ("Electric", None), ("Unknown thing", None),
+    (None, None), ("", None),
 ])
 def test_category_for_ai_result(bike_type, expected):
     assert category_for_ai_result(bike_type) == expected
 
 
 @pytest.mark.parametrize("value, expected", [
-    ("Road", "Road"), ("mtb", "MTB"), (" Hybrid/Commuter ", "Hybrid/Commuter"),
-    ("Trekking", None), ("Cruiser", None), ("Electric", None), ("", None), (None, None), (3, None),
+    ("Road", "Road"), ("mtb", "MTB"), (" City/Cross/Hybrid ", CCH), ("Hybrid/Commuter", CCH),
+    ("Trekking", "Touring"), ("Kids", "Kids"), ("Electric", None), ("", None), (None, None), (3, None),
 ])
 def test_search_type_from_parse(value, expected):
     assert search_type_from_parse(value) == expected
+
+
+@pytest.mark.parametrize("path, expected", [
+    ("Rowery > Elektryczne > Trekkingowe", "Touring"),
+    ("Rowery > Elektryczne > SUV", "Touring"),
+    ("Rowery > Elektryczne > Miejskie", CCH),
+    ("Rowery > Elektryczne > Crossowe", CCH),
+    ("Rowery > Elektryczne > Cargo", CCH),
+    ("Rowery > Elektryczne > Szosowe i gravelowe", "Gravel"),
+    ("Rowery > Elektryczne > Górskie MTB > MTB Hardtail", "MTB"),
+    ("Rowery > Elektryczne > Młodzieżowe", "Kids"),
+    ('Rowery > Górskie MTB > MTB 29"', "MTB"),
+    ("Rowery > Trekkingowe", "Touring"),
+    ("Rowery > Triathlonowe i czasowe", "Road"),
+    ("Rowery > Dirt/Street", "MTB"),
+    ("Rowery > Biegowe > Jeździki", "Kids"),
+    ("Rowery > Elektryczne", None), ("", None), (None, None),
+])
+def test_category_from_shop_path(path, expected):
+    assert category_from_shop_path(path) == expected
+
+
+def test_category_from_discovery_name_first_then_path():
+    assert category_from_discovery("trekkingowy") == "Touring"
+    assert category_from_discovery("Jeździk dziecięcy") == "Kids"
+    assert category_from_discovery("elektryczny") is None, "an e-bike's name names no type"
+    assert category_from_discovery("elektryczny", "Rowery > Elektryczne > Górskie MTB") == "MTB"
+    assert category_from_discovery("szosowy", "Rowery > Elektryczne > Miejskie") == "Road", "the name wins"
+    assert category_from_discovery("elektryczny cargo") == CCH
 
 
 # ── repository.find_bikes_by_details ───────────────────────────────────────
@@ -103,22 +142,33 @@ def test_search_type_from_parse(value, expected):
 def bikes(db):
     _add("Kross", "Level", "MTB")
     _add("Kross", "Vento", "Road")
-    _add("Kross", "Evado", "Cross")
-    _add("Kross", "Trans", "Trekking")
+    _add("Kross", "Evado", CCH)
+    _add("Kross", "Trans", "Touring")
     _add("Kross", "Unknown", None)
+    _add("Kross", "Lea JR", "Kids")
     _add("Romet", "Rambler", "MTB")
-    _add("Romet", "Gazela", "City")
+    _add("Romet", "Gazela", CCH)
 
 
 def test_category_only_search_reads_the_db(bikes):
     assert _names(repository.find_bikes_by_details(SearchRequest(bike_type="MTB"))) == ["Level", "Rambler"]
+    assert _names(repository.find_bikes_by_details(SearchRequest(bike_type="Kids"))) == ["Lea JR"]
 
 
-def test_category_search_maps_hybrid_and_touring(bikes):
-    found = repository.find_bikes_by_details(SearchRequest(bike_type="Hybrid/Commuter"))
-    assert _names(found) == ["Evado", "Gazela"]
-    assert {b.category for b in found} == {"Cross", "City"}
+def test_category_search_by_code_and_old_value(bikes):
+    found = repository.find_bikes_by_details(SearchRequest(bike_type=CCH))
+    assert _names(found) == ["Evado", "Gazela"] and {b.category for b in found} == {CCH}
+    assert _names(repository.find_bikes_by_details(SearchRequest(bike_type="Hybrid/Commuter"))) == ["Evado", "Gazela"]
     assert _names(repository.find_bikes_by_details(SearchRequest(bike_type="Touring"))) == ["Trans"]
+
+
+def test_unknown_category_matches_nothing(bikes):
+    assert repository.find_bikes_by_details(SearchRequest(bike_type="Electric")) == []
+
+
+def test_old_values_are_refused_by_the_constraint(db):
+    with pytest.raises(Exception):
+        _add("Kross", "Old", "Trekking")
 
 
 def test_category_is_anded_with_brand(bikes):
@@ -144,14 +194,20 @@ def test_year_and_free_text_alone_still_skip_the_db(bikes):
 def test_save_search_stamps_only_null_categories(db):
     _add("Trek", "FX 2", None)
     _add("Trek", "Marlin 5", "MTB")
-    store.save_search("Type: Hybrid/Commuter", [
+    store.save_search("Type: City/Cross/Hybrid", [
         BikeResult(brand="trek", model="fx 2", accessories=[], explanation=""),
         BikeResult(brand="Trek", model="Marlin 5", accessories=[], explanation=""),
         BikeResult(brand="Trek", model="Dual Sport", accessories=[], explanation=""),
-    ], bike_type="Hybrid/Commuter")
-    assert _category("Trek", "FX 2") == "City", "an existing NULL category gets the stamp"
+    ], bike_type=CCH)
+    assert _category("Trek", "FX 2") == CCH, "an existing NULL category gets the stamp"
     assert _category("Trek", "Marlin 5") == "MTB", "a stored category is never overwritten"
-    assert _category("Trek", "Dual Sport") == "City", "a new bike gets the stamp"
+    assert _category("Trek", "Dual Sport") == CCH, "a new bike gets the stamp"
+
+
+def test_save_search_stamps_the_code_of_an_old_value(db):
+    store.save_search("Type: Touring", [BikeResult(brand="Trek", model="520", accessories=[], explanation="")],
+                      bike_type="Trekking")
+    assert _category("Trek", "520") == "Touring"
 
 
 def test_save_search_without_or_unknown_category_stamps_nothing(db):
@@ -167,7 +223,7 @@ def test_route_category_db_hit_makes_no_ai_call(client, bikes, monkeypatch):
     resp = client.post("/v1/bike/search", json={"bike_type": "Touring"})
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert [(b["model"], b["category"]) for b in body["bikes"]] == [("Trans", "Trekking")]
+    assert [(b["model"], b["category"]) for b in body["bikes"]] == [("Trans", "Touring")]
     assert body["search"] == "Type: Touring"
 
 
@@ -215,9 +271,21 @@ def test_parser_keeps_a_form_bike_type(monkeypatch):
     assert parsed.bike_type == "MTB" and parsed.brand == "Kross"
 
 
-def test_parser_drops_any_other_bike_type(monkeypatch):
-    parsed = _parse_with(monkeypatch, {"bike_type": "Trekking"})
+def test_parser_maps_an_old_value_and_drops_any_other(monkeypatch):
+    assert _parse_with(monkeypatch, {"bike_type": "Trekking"}).bike_type == "Touring"
+    parsed = _parse_with(monkeypatch, {"bike_type": "Electric"})
     assert parsed.bike_type is None and parsed.is_empty()
+
+
+def test_parse_route_serves_a_cached_old_value_as_its_code(client, monkeypatch):
+    text = "rower miejski"
+    set_cached("/v1/bike/parse", {"text": text, "v": "2"}, ParseResponse(bike_type="Hybrid/Commuter"))
+
+    async def must_not_run(_text):
+        raise AssertionError("the cached row must be served")
+    monkeypatch.setattr(main, "parse_free_text", must_not_run)
+    resp = client.post("/v1/bike/parse", json={"text": text})
+    assert resp.status_code == 200 and resp.json()["bike_type"] == CCH
 
 
 def test_type_only_parse_is_not_empty():

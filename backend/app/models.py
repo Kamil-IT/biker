@@ -4,6 +4,7 @@ from typing import Optional
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -24,6 +25,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
 from pathlib import Path
 import os
+
+from .bike_categories import category_check_sql
 
 Base = declarative_base()
 _engine: Optional[Engine] = None
@@ -131,7 +134,8 @@ class Bike(Base):
     # two-sentence Polish summary, "" = none.
     description = Column(Text, nullable=True)
     short_description = Column(Text, nullable=False, default="", server_default="")
-    # Bike category (backend/app/bike_categories.py), NULL = unknown; added by scripts/migrate_bike_category.py
+    # Bike category (backend/app/bike_categories.py), NULL = unknown; added by scripts/migrate_bike_category.py,
+    # limited to BIKE_CATEGORIES by ck_bike_category (scripts/migrate_bike_category_codes.py, TODO-047)
     category = Column(String(32), nullable=True)
 
     # Relationships
@@ -155,7 +159,10 @@ class Bike(Base):
     )
     review = relationship("BikeReview", back_populates="bike", uselist=False, cascade="all, delete-orphan")
 
-    __table_args__ = (UniqueConstraint("brand", "model", name="uq_bike_brand_model"),)
+    __table_args__ = (
+        UniqueConstraint("brand", "model", name="uq_bike_brand_model"),
+        CheckConstraint(category_check_sql(), name="ck_bike_category"),
+    )
 
 
 class BikeDetailPhoto(Base):

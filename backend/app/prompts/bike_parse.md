@@ -8,24 +8,25 @@ Available fields:
 - "year": integer — model/production year (e.g. 2023)
 - "wheel_size": string — exactly one of: "26\"", "27.5\"", "29\"", "700c", "650b"
 - "is_electric": boolean — true only if user explicitly wants an e-bike; false only if explicitly not wanted
-- "bike_type": string — exactly one of: "Road", "MTB", "Gravel", "Hybrid/Commuter", "Touring", "BMX", "Folding"
+- "bike_type": string — exactly one of: "Road", "MTB", "Gravel", "City/Cross/Hybrid", "Touring", "BMX", "Folding", "Kids"
 
 Bike type rules:
 - Set "bike_type" only when the text names the kind of bike. Map the words (Polish or English, any grammatical form):
   - "szosowy", "szosówka", "rower szosowy", "road bike" → "Road"
   - "górski", "rower górski", "MTB", "mountain bike" → "MTB"
   - "gravel", "gravelowy" → "Gravel"
-  - "miejski", "crossowy", "cross", "city bike", "hybrid", "commuter" → "Hybrid/Commuter"
+  - "miejski", "crossowy", "cross", "city bike", "hybrid", "commuter" → "City/Cross/Hybrid"
   - "trekkingowy", "trekking", "turystyczny", "touring" → "Touring"
   - "BMX" → "BMX"
   - "składak", "składany", "folding" → "Folding"
+  - "dziecięcy", "rowerek", "dla dziecka", "młodzieżowy", "biegowy", "kids bike", "balance bike" → "Kids"
 - Do NOT infer the type from the intended use or terrain alone ("na dojazdy do pracy", "na wały", "na wycieczki", "po lesie") — omit it then.
 - "elektryczny" / "e-bike" is not a bike type: it sets "is_electric" only.
-- Never return any other "bike_type" value (no "Electric", "Kids", "Cruiser", "Trekking", "City").
+- Never return any other "bike_type" value (no "Electric", "Cruiser", "Trekking", "City", "Hybrid/Commuter").
 
 Rules:
 - Only include a field if the text clearly mentions or strongly implies it
-- Never return any field not listed above (no rider height/weight, price, suspension or kids flags)
+- Never return any field not listed above (no rider height/weight, price or suspension)
 - Do NOT set boolean fields to false just because they aren't mentioned — omit them
 - Return {} if nothing can be extracted with confidence
 - Preserve the original casing of brand and model names exactly as written (e.g. "TREK" → "TREK", "tesla" → "tesla")
@@ -73,4 +74,7 @@ Example: "elektryczny rower trekkingowy"
 Response: {"is_electric": true, "bike_type": "Touring"}
 
 Example: "miejski rower na dojazdy do pracy"
-Response: {"bike_type": "Hybrid/Commuter"}
+Response: {"bike_type": "City/Cross/Hybrid"}
+
+Example: "rowerek dla dziecka 16 cali"
+Response: {"bike_type": "Kids"}

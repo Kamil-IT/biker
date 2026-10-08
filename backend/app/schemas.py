@@ -121,9 +121,9 @@ class ContactMessageResponse(BaseModel):
     ok: bool = True
 
 
-# Frame-size calculator (TODO-045). City/Cross/Hybrid stands for the City, Cross and
-# Hybrid/Commuter categories of app/bike_categories.py; the limits below bound what the
-# formulas in app/frame_size.py were built for.
+# Frame-size calculator (TODO-045). The bike types are a subset of app/bike_categories.py
+# BIKE_CATEGORIES (TODO-047); the limits below bound what the formulas in app/frame_size.py
+# were built for.
 FitBikeType = Literal["Road", "MTB", "Gravel", "Touring", "City/Cross/Hybrid"]
 FIT_BIKE_TYPES = get_args(FitBikeType)
 FrameLetter = Literal["XS", "S", "M", "L", "XL"]
